@@ -20,6 +20,8 @@ type DriveFile = {
   modifiedTime: string;
   headRevisionId: string;
   trashed: boolean;
+  /** Earlier contents by revision id (Drive's version history). */
+  revisions: Record<string, string>;
 };
 
 type Upload = { at: number; method: string; name: string; appProperties: Record<string, string>; content: string };
@@ -32,6 +34,10 @@ export class MockDrive {
   configured = true;
   /** Answer uploads with 503 (Drive unreachable). */
   failUploads = false;
+  /** Answer uploads with 503 once this many more have succeeded. */
+  failUploadsAfter: number | null = null;
+  /** Revision ids the mock Drive no longer keeps. */
+  purgedRevisions = new Set<string>();
   /** Called for each file query that names an `osKey`, before filtering. */
   onKeyQuery: ((kind: string, key: string) => void) | null = null;
   private n = 0;
@@ -48,6 +54,7 @@ export class MockDrive {
       modifiedTime: now,
       headRevisionId: `r${this.n}`,
       trashed: false,
+      revisions: {},
       ...f,
     };
     this.files.set(file.id, file);
@@ -55,8 +62,14 @@ export class MockDrive {
   }
 
   meta(f: DriveFile) {
-    const { content: _content, ...rest } = f;
-    return rest;
+    const { content: _content, revisions: _revisions, ...rest } = f;
+    return { ...rest, webViewLink: `https://drive.google.com/file/d/${f.id}/view` };
+  }
+
+  /** Contents of a file's revisions, oldest first, ending with the current one. */
+  history(id: string): string[] {
+    const f = this.files.get(id)!;
+    return [...Object.values(f.revisions), f.content];
   }
 }
 
@@ -121,18 +134,33 @@ export async function mockServer(page: Page, drive: MockDrive) {
       return json(route, 200, { user: { emailAddress: EMAIL, displayName: "Bat Person", permissionId: ACCOUNT_ID } });
     }
 
+    const rev = /\/files\/([^/]+)\/revisions\/([^/]+)$/.exec(path);
+    if (rev && method === "GET") {
+      const file = drive.files.get(decodeURIComponent(rev[1]));
+      const rid = decodeURIComponent(rev[2]);
+      if (!file || drive.purgedRevisions.has(rid)) return json(route, 404, { error: "not found" });
+      const body = rid === file.headRevisionId ? file.content : file.revisions[rid];
+      if (body === undefined) return json(route, 404, { error: "not found" });
+      return route.fulfill({ status: 200, contentType: "text/yaml", headers: CORS, body });
+    }
+
     const upload = path.startsWith("/upload/drive/v3/files");
     const idMatch = /\/files\/([^/]+)$/.exec(path);
     const id = idMatch ? decodeURIComponent(idMatch[1]) : null;
 
     if (upload) {
       if (drive.failUploads) return json(route, 503, { error: "unavailable" });
+      if (drive.failUploadsAfter !== null) {
+        if (drive.failUploadsAfter <= 0) return json(route, 503, { error: "unavailable" });
+        drive.failUploadsAfter--;
+      }
       const { meta, content } = parseMultipart(req.postData() ?? "", req.headers()["content-type"]);
       const props = (meta.appProperties ?? {}) as Record<string, string>;
       drive.uploads.push({ at: Date.now(), method, name: String(meta.name), appProperties: props, content });
       let file: DriveFile;
       if (id) {
         file = drive.files.get(id)!;
+        file.revisions[file.headRevisionId] = file.content;
         file.content = content;
         file.name = String(meta.name);
         file.appProperties = { ...file.appProperties, ...props };

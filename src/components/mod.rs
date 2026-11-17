@@ -1,5 +1,6 @@
 pub mod analysis_panel;
 pub mod annotation_storage;
+pub mod merge_notice;
 pub mod annotation_label_editor;
 pub mod app;
 pub mod axis_drag;

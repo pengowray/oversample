@@ -327,6 +327,7 @@ fn AnnotationsList() -> impl IntoView {
                     <div class="setting-group">
                         <div class="setting-group-title">"Annotations"</div>
                         <crate::components::annotation_storage::AnnotationStorage />
+                        <crate::components::merge_notice::MergeNoticeView />
                         <div class="annotation-tree"
                             on:dragover=move |ev: web_sys::DragEvent| {
                                 ev.prevent_default();

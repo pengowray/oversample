@@ -1,6 +1,6 @@
 [package]
 name = "oversample-desktop"
-version = "0.5.218"
+version = "0.5.219"
 edition = "2021"
 license = "GPL-3.0-only"
 

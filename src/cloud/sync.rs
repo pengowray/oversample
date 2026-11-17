@@ -29,6 +29,7 @@
 
 use super::drive::{self, DriveError, DriveFile};
 use super::google_auth;
+use super::rules::merge::{self, Conflict, MergeBase, Side};
 use super::rules::{self, Action, DriveSide, FileCopy, Kind};
 use super::store::{self, Store};
 use crate::annotations::AnnotationSet;
@@ -80,6 +81,64 @@ struct Memory {
     /// The old per-browser record has been moved in (once per account).
     #[serde(default)]
     migrated: bool,
+    /// Merges of copies that both changed, not yet seen by the user, by
+    /// sync key (shown when the file is open).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    merges: BTreeMap<String, MergeNotice>,
+}
+
+/// What a merge of two changed copies did, for the notice shown with the
+/// file (`components::annotation_storage`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct MergeNotice {
+    /// What the Drive copy's changes brought in.
+    pub added: usize,
+    pub removed: usize,
+    pub changed: usize,
+    /// Changes both copies made, and whose was kept.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<NoticeConflict>,
+    /// No base was known: annotations deleted in one copy may be back.
+    #[serde(default)]
+    pub without_base: bool,
+    /// This browser's copy from before the merge went to Drive first, so it
+    /// is in the Drive file's version history.
+    #[serde(default)]
+    pub before_in_history: bool,
+    /// When that copy reached Drive (ISO 8601), to find it in the list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_at: Option<String>,
+    /// The file's page in Google Drive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drive_link: Option<String>,
+}
+
+/// One change both copies made.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NoticeConflict {
+    pub what: ConflictWhat,
+    /// The annotation's name, or the program's tag.
+    #[serde(default)]
+    pub name: String,
+    /// This browser's version was kept (else the Drive copy's).
+    pub kept_here: bool,
+    /// For a program run in both copies: how many annotations of the other
+    /// run were removed.
+    #[serde(default)]
+    pub count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConflictWhat {
+    /// Changed in both copies.
+    BothChanged,
+    /// Deleted in one copy and changed in the other: kept.
+    ChangedAndDeleted,
+    /// A program (call detection, a classifier, a Xeno-canto import) was run
+    /// in both copies: one run was kept.
+    RunTwice,
+    LowestBatHz,
+    NoiseProfile,
 }
 
 /// The old per-browser record.
@@ -125,6 +184,13 @@ struct Sync {
     /// comparison of all files skips keys uploaded after its Drive listing
     /// was made, since that listing is out of date for them.
     uploaded_at: HashMap<String, u64>,
+    /// Per key, this browser's copy from before a merge that dropped some of
+    /// it: uploaded before the merge, so that it stays in the Drive file's
+    /// version history.
+    before_merge: HashMap<String, String>,
+    /// Per key, the fingerprint of the base summary stored for it (so an
+    /// unchanged one is not written again).
+    base_fps: HashMap<String, String>,
     /// Keys whose Drive copy belongs to a different recording (same name and
     /// size). They are neither uploaded nor downloaded.
     blocked: HashSet<String>,
@@ -264,6 +330,261 @@ async fn refresh_seen(sync_key: &str) -> Option<Seen> {
         return v;
     }
     seen(sync_key)
+}
+
+// ── Merge bases and notices ─────────────────────────────────────────────
+
+/// Folder of the base summaries (`merge::MergeBase`), one file per
+/// annotation key: what each key's Drive copy held when last synced.
+fn bases_dir() -> Option<String> {
+    account_dir().map(|d| format!("{d}/bases"))
+}
+
+/// Store `set` as the base of `sync_key` (an annotation key), if it is not
+/// the one stored already.
+fn note_base(sync_key: &str, set: &AnnotationSet) {
+    let (kind, key) = split(sync_key);
+    if kind != BATM {
+        return;
+    }
+    let base = MergeBase::of(set);
+    if with(|s| s.base_fps.get(sync_key) == Some(&base.fp)) {
+        return;
+    }
+    let Some(dir) = bases_dir() else {
+        return;
+    };
+    let Ok(json) = serde_json::to_string(&base) else {
+        return;
+    };
+    with(|s| s.base_fps.insert(sync_key.to_string(), base.fp.clone()));
+    let name = format!("{key}.json");
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Err(e) = store::write(&dir, &name, &json).await {
+            log::warn!("Google Drive: could not store the merge base of {name}: {e}");
+        }
+    });
+}
+
+/// The stored base of `sync_key`, if it is the one with fingerprint `fp`.
+async fn read_base(sync_key: &str, fp: &str) -> Option<MergeBase> {
+    let (_, key) = split(sync_key);
+    let text = store::read(&bases_dir()?, &format!("{key}.json")).await?;
+    serde_json::from_str::<MergeBase>(&text)
+        .ok()
+        .filter(|b| b.fp == fp)
+}
+
+/// The base of `sync_key` with fingerprint `fp`: stored here, or else the
+/// revision of the Drive file last seen, read from Drive's version history
+/// (Drive keeps old revisions of uploaded files only for a while).
+async fn merge_base(
+    sync_key: &str,
+    fp: &str,
+    drive: &DriveCopy,
+) -> Result<Option<MergeBase>, DriveError> {
+    if let Some(b) = read_base(sync_key, fp).await {
+        return Ok(Some(b));
+    }
+    let Some(last) = seen(sync_key) else {
+        return Ok(None);
+    };
+    let Some(rev) = last.rev.filter(|_| last.id == drive.file.id) else {
+        return Ok(None);
+    };
+    let Some(text) = drive::revision(&last.id, &rev).await? else {
+        return Ok(None);
+    };
+    Ok(yaml_serde::from_str::<AnnotationSet>(&text)
+        .ok()
+        .map(|set| MergeBase::of(&set))
+        .filter(|b| b.fp == fp))
+}
+
+/// Keep `notice` for `sync_key` until the user dismisses it.
+fn add_merge_notice(sync_key: &str, notice: MergeNotice) {
+    let sk = sync_key.to_string();
+    with(|s| s.memory.merges.insert(sk.clone(), notice.clone()));
+    publish();
+    wasm_bindgen_futures::spawn_local(async move {
+        update_memory(move |m| {
+            m.merges.insert(sk.clone(), notice.clone());
+        })
+        .await;
+    });
+}
+
+/// Note in the notice of `sync_key` that this browser's copy from before
+/// the merge reached Drive.
+fn note_before_in_history(sync_key: &str) {
+    let sk = sync_key.to_string();
+    if !with(|s| s.memory.merges.contains_key(&sk)) {
+        return;
+    }
+    let at = crate::annotations::now_iso8601();
+    let at2 = at.clone();
+    with(|s| {
+        if let Some(n) = s.memory.merges.get_mut(&sk) {
+            n.before_in_history = true;
+            n.before_at = Some(at2);
+        }
+    });
+    publish();
+    wasm_bindgen_futures::spawn_local(async move {
+        update_memory(move |m| {
+            if let Some(n) = m.merges.get_mut(&sk) {
+                n.before_in_history = true;
+                n.before_at = Some(at.clone());
+            }
+        })
+        .await;
+    });
+}
+
+/// The merge notice of the annotation set under `key`, if any (reactive).
+pub fn merge_notice(key: &str) -> Option<MergeNotice> {
+    if let Some(v) = with(|s| s.version.clone()) {
+        v.track();
+    }
+    with(|s| s.memory.merges.get(&batm_key(key)).cloned())
+}
+
+/// The user has read the merge notice of `key`.
+pub fn dismiss_merge_notice(key: &str) {
+    let sk = batm_key(key);
+    with(|s| s.memory.merges.remove(&sk));
+    publish();
+    wasm_bindgen_futures::spawn_local(async move {
+        update_memory(move |m| {
+            m.merges.remove(&sk);
+        })
+        .await;
+    });
+}
+
+/// The notice for a three-way merge. `a` is this browser's copy, `b` the
+/// Drive copy.
+fn notice_of(report: &merge::MergeReport, drive_link: Option<String>) -> MergeNotice {
+    let conflicts = report
+        .conflicts
+        .iter()
+        .map(|c| match c {
+            Conflict::BothChanged { label, kept, .. } => NoticeConflict {
+                what: ConflictWhat::BothChanged,
+                name: label.clone(),
+                kept_here: *kept == Side::A,
+                count: 0,
+            },
+            Conflict::ChangedAndDeleted {
+                label, deleted_on, ..
+            } => NoticeConflict {
+                what: ConflictWhat::ChangedAndDeleted,
+                name: label.clone(),
+                kept_here: *deleted_on == Side::B,
+                count: 0,
+            },
+            Conflict::GeneratedTwice { tag, kept, dropped } => NoticeConflict {
+                what: ConflictWhat::RunTwice,
+                name: tag.clone(),
+                kept_here: *kept == Side::A,
+                count: *dropped,
+            },
+            Conflict::LowestBatHz { kept } => NoticeConflict {
+                what: ConflictWhat::LowestBatHz,
+                name: String::new(),
+                kept_here: *kept == Side::A,
+                count: 0,
+            },
+            Conflict::NoiseProfile { kept } => NoticeConflict {
+                what: ConflictWhat::NoiseProfile,
+                name: String::new(),
+                kept_here: *kept == Side::A,
+                count: 0,
+            },
+        })
+        .collect();
+    // Changes the Drive copy won in a conflict are listed as conflicts, not
+    // counted again.
+    let won_by_drive = report
+        .conflicts
+        .iter()
+        .filter(|c| match c {
+            Conflict::BothChanged { kept, .. } => *kept == Side::B,
+            Conflict::ChangedAndDeleted { deleted_on, .. } => *deleted_on == Side::A,
+            _ => false,
+        })
+        .count();
+    MergeNotice {
+        added: report.from_b.added,
+        removed: report.from_b.removed,
+        changed: report.from_b.changed.saturating_sub(won_by_drive),
+        conflicts,
+        without_base: false,
+        before_in_history: false,
+        before_at: None,
+        drive_link,
+    }
+}
+
+/// Both copies of an annotation set, merged.
+struct Merged {
+    set: AnnotationSet,
+    notice: Option<MergeNotice>,
+    /// This browser's copy before the merge, as uploaded to Drive, when the
+    /// merge dropped some of it.
+    before: Option<String>,
+}
+
+/// Merge this browser's copy (`local`) with the Drive copy. With the base
+/// (`base_fp`) known, annotation by annotation; without it, the Drive copy
+/// plus the local annotations it lacks (deleted annotations can come back,
+/// and the user is told when both copies brought something).
+async fn merge_copies(
+    sync_key: &str,
+    base_fp: Option<&str>,
+    drive: &DriveCopy,
+    local: &AnnotationSet,
+    drive_set: AnnotationSet,
+) -> Result<Merged, DriveError> {
+    let link = drive.file.web_view_link.clone();
+    let base = match base_fp {
+        Some(fp) => merge_base(sync_key, fp, drive).await?,
+        None => None,
+    };
+    if let Some(base) = base {
+        let (set, report) = merge::merge3(&base, local, &drive_set);
+        let before = if report.dropped_from(Side::A) {
+            rules::drive_text(local)
+        } else {
+            None
+        };
+        return Ok(Merged {
+            set,
+            notice: Some(notice_of(&report, link)),
+            before,
+        });
+    }
+    let ids = |s: &AnnotationSet| -> HashSet<String> {
+        s.annotations
+            .iter()
+            .map(|a| a.id.as_str().to_string())
+            .collect()
+    };
+    let (in_local, in_drive) = (ids(local), ids(&drive_set));
+    let from_drive = in_drive.difference(&in_local).count();
+    let from_here = in_local.difference(&in_drive).count();
+    let set = rules::merge_annotation_sets(drive_set, local);
+    let notice = (base_fp.is_some() || (from_drive > 0 && from_here > 0)).then(|| MergeNotice {
+        added: from_drive,
+        without_base: true,
+        drive_link: link,
+        ..MergeNotice::default()
+    });
+    Ok(Merged {
+        set,
+        notice,
+        before: None,
+    })
 }
 
 fn seen(sync_key: &str) -> Option<Seen> {
@@ -805,6 +1126,7 @@ fn clear_session() {
         s.checking.clear();
         s.uploading.clear();
         s.uploaded_at.clear();
+        s.base_fps.clear();
         s.blocked.clear();
         s.reconciling = false;
         s.folder_busy = false;
@@ -1248,9 +1570,10 @@ async fn upload(gen: u64, sync_key: String) -> Result<(), DriveError> {
         drop_pending(&sync_key, pending.seq);
         return Ok(());
     };
-    let last = seen(&sync_key);
+    let mut last = seen(&sync_key);
     if last.as_ref().is_some_and(|l| l.fp == fp) {
         drop_pending(&sync_key, pending.seq);
+        with(|s| s.before_merge.remove(&sync_key));
         return Ok(());
     }
 
@@ -1263,7 +1586,43 @@ async fn upload(gen: u64, sync_key: String) -> Result<(), DriveError> {
         return Ok(());
     }
     with(|s| s.uploads_running += 1);
-    let result = upload_inner(gen, &sync_key, &kind, &key, &pending, last).await;
+    // A merge dropped some of this browser's copy: that copy goes up first,
+    // so it stays in the Drive file's version history. If the upload after
+    // it fails, the base is that copy, so the next comparison uploads the
+    // merge (only this browser changed since).
+    let mut result = Ok(None);
+    let mut before_failed = false;
+    if let Some(before) = with(|s| s.before_merge.get(&sync_key).cloned()) {
+        let p = Pending {
+            name: pending.name.clone(),
+            text: before.clone(),
+            seq: 0,
+        };
+        match upload_inner(gen, &sync_key, &kind, &key, &p, last.clone()).await {
+            Ok(Some(file)) => {
+                let before_set = yaml_serde::from_str::<AnnotationSet>(&before).ok();
+                let entry = Seen {
+                    id: file.id,
+                    rev: file.head_revision_id,
+                    fp: fingerprint_of(&kind, &before).unwrap_or_default(),
+                };
+                set_seen(&sync_key, Some(entry.clone()));
+                if let Some(set) = &before_set {
+                    note_base(&sync_key, set);
+                }
+                with(|s| s.before_merge.remove(&sync_key));
+                note_before_in_history(&sync_key);
+                last = Some(entry);
+            }
+            other => {
+                result = other;
+                before_failed = true;
+            }
+        }
+    }
+    if !before_failed {
+        result = upload_inner(gen, &sync_key, &kind, &key, &pending, last).await;
+    }
     with(|s| {
         s.uploads_running = s.uploads_running.saturating_sub(1);
         s.uploading.remove(&sync_key);
@@ -1284,6 +1643,11 @@ async fn upload(gen: u64, sync_key: String) -> Result<(), DriveError> {
                     fp,
                 }),
             );
+            if kind == BATM {
+                if let Ok(set) = yaml_serde::from_str::<AnnotationSet>(&pending.text) {
+                    note_base(&sync_key, &set);
+                }
+            }
             drop_pending(&sync_key, pending.seq);
             set_problem(None);
         }
@@ -1394,16 +1758,35 @@ pub(crate) mod local {
         super::store::read(&account_annotations()?, key).await
     }
 
-    /// Write a set into the account's cache, under the file's lock.
-    pub async fn write(key: &str, text: &str) -> Result<(), String> {
+    /// Write a set into the account's cache only if the copy there still
+    /// has the content fingerprint `expected` (`None`: no copy), under the
+    /// file's lock. `Ok(false)`: it changed since, nothing was written.
+    pub async fn write_if_unchanged(
+        key: &str,
+        expected: Option<String>,
+        text: &str,
+    ) -> Result<bool, String> {
         if desktop() {
-            return crate::opfs::tauri_save_central(key, text).await;
+            return crate::opfs::tauri_save_central(key, text)
+                .await
+                .map(|_| true);
         }
         let dir = account_annotations().ok_or("not signed in")?;
         let lock = super::store::file_lock(&dir, key);
         let (key, text) = (key.to_string(), text.to_string());
         super::store::with_lock(&lock, move || {
-            Box::pin(async move { super::store::write(&dir, &key, &text).await })
+            Box::pin(async move {
+                let now = super::store::read(&dir, &key)
+                    .await
+                    .and_then(|t| {
+                        yaml_serde::from_str::<crate::annotations::AnnotationSet>(&t).ok()
+                    })
+                    .map(|s| super::rules::content_fingerprint(&s));
+                if now != expected {
+                    return Ok(false);
+                }
+                super::store::write(&dir, &key, &text).await.map(|_| true)
+            })
         })
         .await
         .unwrap_or(Err("lock".into()))
@@ -1700,37 +2083,17 @@ async fn check_annotations(
         side,
         base.as_deref(),
     );
-    // `decide` needs the Drive copy's time only when both copies changed;
-    // read it then.
-    let action = match (&action, &drive, &local, &local_fp) {
-        (Action::Upload | Action::Download, Some(d), Some(l), Some(lfp))
-            if base.as_deref().is_some_and(|b| b != d.fp && b != lfp) =>
-        {
-            let text = drive_text(d).await?;
-            let at = yaml_serde::from_str::<AnnotationSet>(&text)
-                .ok()
-                .and_then(|s| s.modified_at);
-            rules::decide(
-                Kind::Annotations,
-                Some(FileCopy {
-                    fingerprint: lfp,
-                    modified_at: l.modified_at.as_deref(),
-                }),
-                Some(FileCopy {
-                    fingerprint: &d.fp,
-                    modified_at: at.as_deref(),
-                }),
-                base.as_deref(),
-            )
-        }
-        _ => action,
-    };
     if !alive(gen) {
         return Ok(());
     }
 
     match (action, drive) {
-        (Action::Nothing, Some(d)) => set_seen(&sk, Some(seen_from(&d))),
+        (Action::Nothing, Some(d)) => {
+            set_seen(&sk, Some(seen_from(&d)));
+            if let Some(l) = &local {
+                note_base(&sk, l);
+            }
+        }
         (Action::Nothing, None) => {}
         (Action::Upload, d) => {
             match &d {
@@ -1781,6 +2144,22 @@ async fn check_annotations(
                 with(|s| s.blocked.insert(sk.clone()));
                 return Ok(());
             }
+            // Both changed: merge them (three-way when the base is known).
+            let merged = match (action, &local) {
+                (Action::Merge, Some(l)) => {
+                    Some(merge_copies(&sk, base.as_deref(), &d, l, drive_set.clone()).await?)
+                }
+                _ => None,
+            };
+            if !alive(gen) {
+                return Ok(());
+            }
+            let base_set = drive_set.clone();
+            let (out, notice, before) = match merged {
+                Some(m) => (m.set, m.notice, m.before),
+                None => (drive_set, None, None),
+            };
+            let out_fp = rules::content_fingerprint(&out);
             // What was seen of Drive is recorded once the local copy holds
             // it; if the local write fails, the next comparison downloads
             // again instead of uploading the old local copy.
@@ -1795,33 +2174,21 @@ async fn check_annotations(
                         start_check(sk);
                         return Ok(());
                     }
-                    if !crate::opfs::adopt_drive_copy(
-                        state,
-                        file_id,
-                        drive_set,
-                        action == Action::Merge,
-                    ) {
-                        with(|s| s.blocked.insert(sk.clone()));
+                    // Before the adopted set's own save queues its upload.
+                    if let Some(b) = before {
+                        with(|s| s.before_merge.insert(sk.clone(), b));
+                    }
+                    if !crate::opfs::adopt_drive_copy(state, file_id, out, false) {
+                        with(|s| {
+                            s.before_merge.remove(&sk);
+                            s.blocked.insert(sk.clone());
+                        });
                         return Ok(());
                     }
-                    // Before the adopted set's own save reaches the upload
-                    // queue (it waits for the local write).
                     set_seen(&sk, Some(seen_from(&d)));
+                    note_base(&sk, &base_set);
                 }
                 None => {
-                    let out = if action == Action::Merge {
-                        match &local {
-                            Some(l) => rules::merge_annotation_sets(drive_set, l),
-                            None => drive_set,
-                        }
-                    } else {
-                        drive_set
-                    };
-                    let out_fp = if action == Action::Merge {
-                        rules::content_fingerprint(&out)
-                    } else {
-                        d.fp.clone()
-                    };
                     // The copy on this device keeps the recording's path (the
                     // desktop app's central copies hold it); Drive never
                     // gets it.
@@ -1832,9 +2199,19 @@ async fn check_annotations(
                     let Some(device_text) = yaml_of(&on_device) else {
                         return Ok(());
                     };
-                    if let Err(e) = local::write(&key, &device_text).await {
-                        log::warn!("Google Drive: could not store {key} locally: {e}");
-                        return Ok(());
+                    // Only over the copy that was compared: a save since (in
+                    // another tab) is compared again instead of lost.
+                    match local::write_if_unchanged(&key, local_fp.clone(), &device_text).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            drop(_checking);
+                            start_check(sk);
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            log::warn!("Google Drive: could not store {key} locally: {e}");
+                            return Ok(());
+                        }
                     }
                     let upload_text = rules::drive_text(&out);
                     // Desktop: a .batm beside the recording is rewritten too.
@@ -1849,12 +2226,19 @@ async fn check_annotations(
                         _ => {}
                     }
                     set_seen(&sk, Some(seen_from(&d)));
+                    note_base(&sk, &base_set);
                     if let (true, Some(text)) = (out_fp != d.fp, upload_text) {
+                        if let Some(b) = before {
+                            with(|s| s.before_merge.insert(sk.clone(), b));
+                        }
                         let name = format!("{}.batm", out.file_identity.filename);
                         let seq = next_save_seq();
                         with(|s| s.pending.insert(sk.clone(), Pending { name, text, seq }));
                     }
                 }
+            }
+            if let Some(n) = notice {
+                add_merge_notice(&sk, n);
             }
         }
         (Action::Download | Action::Merge, None) | (Action::RemoveLocal, _) => {}
@@ -1900,6 +2284,13 @@ async fn base_for(sync_key: &str, drive: Option<&DriveCopy>) -> Option<String> {
         && d.file.head_revision_id == last.rev
     {
         set_seen(sync_key, Some(seen_from(d)));
+        if let Some(set) = d
+            .text
+            .as_deref()
+            .and_then(|t| yaml_serde::from_str::<AnnotationSet>(t).ok())
+        {
+            note_base(sync_key, &set);
+        }
         return Some(d.fp.clone());
     }
     None

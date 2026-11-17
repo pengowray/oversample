@@ -10177,3 +10177,58 @@ button.canvas-overflow-action-btn.disabled {
 .annotation-storage-drive.drive-warning {
     color: #fc8;
 }
+/* After a merge of this browser's copy with the Google Drive copy
+   (merge_notice.rs): same size and grey as the storage line above, so it
+   reads as part of it. Amber only for the lines where this browser's version
+   was dropped; no box or border, the heading and the Dismiss button set it
+   apart. */
+.merge-notice {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    margin-top: 4px;
+    padding: 0 16px 10px;
+    font-size: 11px;
+    color: #999;
+    line-height: 1.4;
+}
+.merge-notice-heading {
+    color: #ccc;
+}
+.merge-notice-count {
+    margin-top: 2px;
+}
+.merge-notice-row.lost {
+    color: #fc8;
+}
+.merge-notice a {
+    color: #8cf;
+    text-decoration: none;
+}
+.merge-notice a:hover,
+.merge-notice a:focus-visible {
+    text-decoration: underline;
+}
+/* "Show all N conflicts": a link-style toggle, 24px tall for the click
+   target checks. */
+.merge-notice-more {
+    min-height: 24px;
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    color: #8cf;
+    cursor: pointer;
+}
+.merge-notice-more:hover,
+.merge-notice-more:focus-visible {
+    text-decoration: underline;
+}
+/* Grey and small like Group and Ungroup below: dismissing is not the
+   panel's main action. 24px tall for the click target checks. */
+.merge-notice-dismiss {
+    margin-top: 2px;
+    min-height: 24px;
+    padding: 2px 8px;
+}

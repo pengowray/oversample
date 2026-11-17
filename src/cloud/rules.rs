@@ -9,8 +9,10 @@
 //! - Equal content on both sides: nothing to do.
 //! - Only the local copy changed since the base: upload.
 //! - Only the Drive copy changed since the base: download.
-//! - Both changed: the copy with the later `modified_at` (the time stamped
-//!   inside the file) wins.
+//! - Both changed: annotation sets are merged annotation by annotation
+//!   against the base (`merge::merge3`; the base is kept as a summary of
+//!   hashes, `merge::MergeBase`), and the user is told. Projects: the copy
+//!   with the later `modified_at` (the time stamped inside the file) wins.
 //! - No base (the first comparison of this key since sign-in on this device):
 //!   annotation sets are merged, so that nothing is lost: the Drive copy is
 //!   kept and the local annotations it does not have are added to it.
@@ -20,15 +22,15 @@
 //! empty or untouched set: a set with no annotations of its own adds nothing,
 //! so the result equals the Drive copy and nothing is uploaded.
 //!
-//! The fingerprint covers only what a user changes: the annotations, the
-//! file's own lowest bat frequency and its noise profile (without the time
-//! the profile was last written). Timestamps, the app version, the file
-//! identity and the audio metadata are left out, because they change on
-//! saves that are not edits.
+//! The fingerprint used for these decisions (`content_fingerprint`) covers
+//! the whole set except what changes on every save or differs between
+//! devices for the same recording (see its notes).
 
 use crate::annotations::{Annotation, AnnotationSet};
 use crate::project::BatProject;
 use serde::Serialize;
+
+pub mod merge;
 
 /// What the app does with one file key after comparing the two copies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,8 +41,10 @@ pub enum Action {
     Upload,
     /// Replace the local copy with the Drive copy.
     Download,
-    /// Keep the Drive copy and add the local annotations it does not have
-    /// (see [`merge_annotation_sets`]). Annotation sets only.
+    /// Annotation sets only. Both copies changed since the base: merge them
+    /// annotation by annotation (`merge::merge3`). With no base (the first
+    /// comparison on this device): keep the Drive copy and add the local
+    /// annotations it does not have ([`merge_annotation_sets`]).
     Merge,
     /// The Drive file was deleted, and the copy on this device is the one
     /// last synced: remove it from the account's cache on this device.
@@ -132,7 +136,10 @@ pub fn decide_with(
     match (local_changed, drive_changed) {
         (true, false) => Action::Upload,
         (false, _) => Action::Download,
-        (true, true) => later_wins(local, drive),
+        (true, true) => match kind {
+            Kind::Annotations => Action::Merge,
+            Kind::Project => later_wins(local, drive),
+        },
     }
 }
 
@@ -668,30 +675,32 @@ mod tests {
     }
 
     #[test]
-    fn both_edited_later_time_wins() {
+    fn both_edited_annotation_sets_are_merged_and_projects_take_the_later() {
         let base = "base";
+        for (l, d) in [(T2, T1), (T1, T2), (T1, T1)] {
+            assert_eq!(
+                decide(
+                    Kind::Annotations,
+                    Some(copy("l", l)),
+                    Some(copy("d", d)),
+                    Some(base)
+                ),
+                Action::Merge
+            );
+        }
         assert_eq!(
             decide(
-                Kind::Annotations,
+                Kind::Project,
                 Some(copy("l", T2)),
                 Some(copy("d", T1)),
                 Some(base)
             ),
             Action::Upload
         );
-        assert_eq!(
-            decide(
-                Kind::Annotations,
-                Some(copy("l", T1)),
-                Some(copy("d", T2)),
-                Some(base)
-            ),
-            Action::Download
-        );
         // A tie keeps the Drive copy.
         assert_eq!(
             decide(
-                Kind::Annotations,
+                Kind::Project,
                 Some(copy("l", T1)),
                 Some(copy("d", T1)),
                 Some(base)

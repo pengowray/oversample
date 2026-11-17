@@ -287,7 +287,7 @@ pub fn kind_name(kind: &AnnotationKind) -> &'static str {
     }
 }
 
-fn label_of(kind: &AnnotationKind) -> Option<&str> {
+pub(crate) fn label_of(kind: &AnnotationKind) -> Option<&str> {
     match kind {
         AnnotationKind::Region(r) => r.label.as_deref(),
         AnnotationKind::Marker(m) => m.label.as_deref(),

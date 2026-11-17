@@ -701,5 +701,147 @@ test.describe("Google Drive copies", () => {
     await expect.poll(() => onDrive.trashed, { timeout: 15_000 }).toBe(true);
     expect(drive.uploads).toEqual([]);
   });
-});
 
+  // ── Both copies changed ──────────────────────────────────────────────────
+
+  /** Change a Drive file as another device would: a new revision. */
+  function editOnDrive(drive: MockDrive, id: string, content: string) {
+    const f = drive.files.get(id)!;
+    f.revisions[f.headRevisionId] = f.content;
+    f.content = content;
+    f.headRevisionId = `${f.headRevisionId}~`;
+    f.modifiedTime = new Date().toISOString();
+  }
+
+  const annotationIds = (yaml: string) => [...yaml.matchAll(/^- id: (\S+)$/gm)].map((m) => m[1]);
+
+  /** The set without the annotation `id` (a list entry runs to the next "- " or unindented line). */
+  function withoutAnnotation(yaml: string, id: string): string {
+    const lines = yaml.split("\n");
+    const start = lines.indexOf(`- id: ${id}`);
+    let end = start + 1;
+    while (end < lines.length && lines[end].startsWith("  ")) end++;
+    lines.splice(start, end - start);
+    return lines.join("\n");
+  }
+
+  function withRegion(yaml: string, id: string, start: number): string {
+    const at = new Date().toISOString();
+    const entry =
+      `- id: ${id}\n  type: Region\n  time_start: ${start}\n  time_end: ${start + 0.3}\n  freq_low: 20000.0\n  freq_high: 40000.0\n` +
+      `  created_at: ${at}\n  modified_at: ${at}\n`;
+    return yaml.replace(/^annotations:\n/m, `annotations:\n${entry}`);
+  }
+
+  const batmFile = (drive: MockDrive) => [...drive.files.values()].find((f) => f.appProperties.osKind === "batm")!;
+
+  async function openAnnotationsPanel(page: Page) {
+    const show = page.locator('button[title="Show info panel"]');
+    if (await show.isVisible()) await show.click();
+    await page.locator(".sidebar-tab-dropdown").click();
+    await page.locator(".sidebar-tab-option", { hasText: "Annotations" }).dispatchEvent("mousedown");
+  }
+
+  test("both copies changed: the changes are merged, the user is told, and it settles", async ({ page }) => {
+    const drive = new MockDrive();
+    await mockServer(page, drive);
+    await page.goto("/");
+    await open(page, "merge-clean.wav", noiseWav(96_000, 8, 8181));
+    await annotate(page, 0.2, 0.4);
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
+    const file = batmFile(drive);
+    // Another device adds a region; this browser adds one too.
+    editOnDrive(drive, file.id, withRegion(file.content, "from-other", 3.0));
+    await annotate(page, 0.5, 0.6);
+    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(2);
+    expect(regionsIn(file.content)).toBe(3);
+    expect(file.content).toContain("from-other");
+    await expect.poll(async () => (await snap(page)).regions.length).toBe(3);
+
+    await openAnnotationsPanel(page);
+    const notice = page.locator(".right-sidebar .merge-notice");
+    await expect(notice).toContainText("Merged with the Google Drive copy");
+    await expect(notice).toContainText("From Google Drive: 1 annotation added");
+    await expect(notice).not.toContainText("earlier version");
+    // Nothing more goes up: both sides now hold the merge.
+    await page.waitForTimeout(7_000);
+    expect(drive.uploads).toHaveLength(2);
+    await notice.getByRole("button", { name: "Dismiss" }).click();
+    await expect(notice).toHaveCount(0);
+  });
+
+  test("a merge that drops part of this browser's copy uploads that copy first, so Drive keeps it as a version", async ({ page }) => {
+    const drive = new MockDrive();
+    await mockServer(page, drive);
+    await page.goto("/");
+    await open(page, "merge-drop.wav", noiseWav(96_000, 8, 8282));
+    await annotate(page, 0.2, 0.3);
+    await annotate(page, 0.5, 0.6);
+    await expect.poll(() => regionsIn(batmFile(drive)?.content ?? ""), { timeout: 20_000 }).toBe(2);
+    await page.waitForTimeout(1_000);
+    const file = batmFile(drive);
+    const [keep, gone] = annotationIds(file.content);
+    // No stored base: the app reads the revision it last saw from Drive's history.
+    await page.evaluate(async (dir) => {
+      const root = await navigator.storage.getDirectory();
+      const account = await (await root.getDirectoryHandle("oversample-accounts")).getDirectoryHandle(dir);
+      await account.removeEntry("bases", { recursive: true });
+    }, ACCOUNT_ID);
+    const uploadsBefore = drive.uploads.length;
+    // Another device deletes one region; this browser adds one.
+    editOnDrive(drive, file.id, withoutAnnotation(file.content, gone));
+    await annotate(page, 0.8, 0.9);
+    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(uploadsBefore + 2);
+    const [before, merged] = drive.uploads.slice(uploadsBefore);
+    // First this browser's copy as it was (3 regions), then the merge.
+    expect(regionsIn(before.content)).toBe(3);
+    expect(before.content).toContain(gone);
+    expect(regionsIn(merged.content)).toBe(2);
+    expect(merged.content).toContain(keep);
+    expect(merged.content).not.toContain(gone);
+    expect(file.content).toBe(merged.content);
+    expect(drive.history(file.id)).toContain(before.content);
+    await expect.poll(async () => (await snap(page)).regions.length).toBe(2);
+
+    await openAnnotationsPanel(page);
+    const notice = page.locator(".right-sidebar .merge-notice");
+    await expect(notice).toContainText("From Google Drive: 1 annotation removed");
+    await expect(notice).toContainText("from before the merge are saved in Google Drive as an earlier version from");
+    await expect(notice.getByRole("link", { name: "Open in Google Drive" })).toHaveAttribute(
+      "href",
+      `https://drive.google.com/file/d/${file.id}/view`,
+    );
+    await page.waitForTimeout(7_000);
+    expect(drive.uploads).toHaveLength(uploadsBefore + 2);
+  });
+
+  test("if the merge's upload fails after this browser's copy went up, the next try puts the merge on Drive", async ({ page }) => {
+    const drive = new MockDrive();
+    await mockServer(page, drive);
+    await page.goto("/");
+    await open(page, "merge-fail.wav", noiseWav(96_000, 8, 8383));
+    await annotate(page, 0.2, 0.3);
+    await annotate(page, 0.5, 0.6);
+    await expect.poll(() => regionsIn(batmFile(drive)?.content ?? ""), { timeout: 20_000 }).toBe(2);
+    await page.waitForTimeout(1_000);
+    const file = batmFile(drive);
+    const [, gone] = annotationIds(file.content);
+    const uploadsBefore = drive.uploads.length;
+    editOnDrive(drive, file.id, withoutAnnotation(file.content, gone));
+    // The copy from before the merge goes up; the merge itself fails.
+    drive.failUploadsAfter = 1;
+    await annotate(page, 0.8, 0.9);
+    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(uploadsBefore + 1);
+    await openSettings(page);
+    await expect(page.locator(".drive-settings")).toContainText("Can't reach Google Drive", { timeout: 20_000 });
+    expect(file.content).toContain(gone);
+
+    drive.failUploadsAfter = null;
+    await page.getByRole("button", { name: "Retry" }).click();
+    await expect.poll(() => file.content.includes(gone), { timeout: 30_000 }).toBe(false);
+    expect(regionsIn(file.content)).toBe(2);
+    await page.waitForTimeout(7_000);
+    expect(file.content).not.toContain(gone);
+    expect(regionsIn(file.content)).toBe(2);
+  });
+});

@@ -16,7 +16,8 @@ use std::collections::BTreeMap;
 
 const API: &str = "https://www.googleapis.com/drive/v3";
 const UPLOAD_API: &str = "https://www.googleapis.com/upload/drive/v3";
-const FILE_FIELDS: &str = "id,name,createdTime,modifiedTime,headRevisionId,appProperties";
+const FILE_FIELDS: &str =
+    "id,name,createdTime,modifiedTime,headRevisionId,appProperties,webViewLink";
 const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
 /// Type given to uploaded files, so Drive shows them as text.
 const FILE_MIME: &str = "text/yaml";
@@ -41,6 +42,9 @@ pub struct DriveFile {
     pub app_properties: BTreeMap<String, String>,
     #[serde(default)]
     pub trashed: bool,
+    /// The file's page in Google Drive.
+    #[serde(default)]
+    pub web_view_link: Option<String>,
 }
 
 impl DriveFile {
@@ -272,6 +276,22 @@ pub async fn metadata(id: &str) -> Result<Option<DriveFile>, DriveError> {
 pub async fn download(id: &str) -> Result<String, DriveError> {
     let url = format!("{API}/files/{}?alt=media", http::encode(id));
     Ok(call("GET", &url, None, None).await?.body)
+}
+
+/// The content of one earlier revision of a file, or `None` if Drive no
+/// longer keeps it (old revisions of uploaded files are removed after a
+/// while).
+pub async fn revision(id: &str, revision_id: &str) -> Result<Option<String>, DriveError> {
+    let url = format!(
+        "{API}/files/{}/revisions/{}?alt=media",
+        http::encode(id),
+        http::encode(revision_id)
+    );
+    match call("GET", &url, None, None).await {
+        Ok(reply) => Ok(Some(reply.body)),
+        Err(DriveError::Refused(404)) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// The text of a multipart upload: JSON metadata, then the file content.
