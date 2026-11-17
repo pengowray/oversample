@@ -343,23 +343,30 @@ fn publish() {
     }
 }
 
-/// Whether uploads wait: Drive no longer shows the "Oversample" folder, or
-/// most of the files synced before (`reconcile_inner`). Nothing is created
-/// on Drive until a comparison of all files passes again.
+/// Whether uploads wait: Drive no longer shows the "Oversample" folder
+/// (`reconcile_inner`), and an upload would make a new one. Nothing is
+/// created on Drive until a comparison of all files passes again.
 fn uploads_held() -> bool {
     app_state().is_some_and(|state| {
         matches!(
             state.drive.problem().get_untracked(),
-            Some(DriveProblem::FolderMissing | DriveProblem::FilesMissing(_))
+            Some(DriveProblem::FolderMissing)
         )
     })
 }
 
-/// Show `problem` in the Drive group, or none. Clearing leaves a held state
-/// (`uploads_held`) in place: only a comparison of all files that passes,
-/// or a new session, ends it (`clear_problem`).
+/// Show `problem` in the Drive group, or none. Clearing leaves the problems
+/// found by a comparison of all files (`FolderMissing`, `FilesMissing`) in
+/// place: only a comparison that passes, or a new session, ends them
+/// (`clear_problem`).
 fn set_problem(problem: Option<DriveProblem>) {
-    if problem.is_none() && uploads_held() {
+    let from_comparison = app_state().is_some_and(|state| {
+        matches!(
+            state.drive.problem().get_untracked(),
+            Some(DriveProblem::FolderMissing | DriveProblem::FilesMissing(_))
+        )
+    });
+    if problem.is_none() && from_comparison {
         return;
     }
     clear_or_set_problem(problem);
@@ -971,9 +978,12 @@ pub fn file_drive_state(state: AppState, key: &str) -> Option<FileDriveState> {
             FileDriveState::Uploading
         } else if s.pending.contains_key(&sk) {
             match problem {
-                Some(p) => FileDriveState::Problem(p),
-                None if s.checked.contains(&sk) => FileDriveState::Waiting,
-                None => FileDriveState::Checking,
+                // Files missing on Drive do not stop this one's upload.
+                Some(p) if !matches!(p, DriveProblem::FilesMissing(_)) => {
+                    FileDriveState::Problem(p)
+                }
+                _ if s.checked.contains(&sk) => FileDriveState::Waiting,
+                _ => FileDriveState::Checking,
             }
         } else if s.checked.contains(&sk) {
             FileDriveState::Saved
@@ -2234,7 +2244,9 @@ async fn reconcile_inner(gen: u64) -> Result<(), DriveError> {
     let gone = with(|s| std::mem::take(&mut s.gone));
     if !gone.is_empty() {
         if !rules::removals_allowed(folder_visible, synced_before, gone.len()) {
-            set_problem(Some(DriveProblem::FilesMissing(gone.len())));
+            clear_or_set_problem(Some(DriveProblem::FilesMissing(gone.len())));
+            // Other files still go up.
+            restart_waiting_uploads();
             publish();
             return Ok(());
         }

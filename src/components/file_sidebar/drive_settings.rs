@@ -67,8 +67,8 @@ fn problem_text(p: DriveProblem) -> String {
         DriveProblem::Refused => REFUSED.to_string(),
         DriveProblem::FolderMissing => FOLDER_MISSING.to_string(),
         DriveProblem::FilesMissing(n) => format!(
-            "{n} files are missing from the Oversample folder in Google Drive. Copying to Drive is paused. \
-             Everything is still saved in this browser. If you didn't delete them, check Drive's trash."
+            "{n} files are missing from the Oversample folder in Google Drive. They are still saved in \
+             this browser. If you didn't delete them, check Drive's trash."
         ),
     }
 }

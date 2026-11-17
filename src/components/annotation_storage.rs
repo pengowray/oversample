@@ -33,8 +33,12 @@ fn drive_text(s: FileDriveState) -> (&'static str, bool) {
         FileDriveState::Problem(DriveProblem::Unreachable) => ("Can't reach Google Drive", true),
         FileDriveState::Problem(DriveProblem::Full) => ("Google Drive is full", true),
         FileDriveState::Problem(DriveProblem::Refused) => ("Google Drive rejected a change", true),
-        FileDriveState::Problem(DriveProblem::FolderMissing | DriveProblem::FilesMissing(_)) => {
+        FileDriveState::Problem(DriveProblem::FolderMissing) => {
             ("Google Drive copying paused", true)
+        }
+        // Not shown per file (`sync::file_drive_state`).
+        FileDriveState::Problem(DriveProblem::FilesMissing(_)) => {
+            ("Waiting to upload to Google Drive", false)
         }
         FileDriveState::NotCopied => ("Not copied to Google Drive", true),
     }

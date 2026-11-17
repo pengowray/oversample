@@ -388,6 +388,44 @@ test.describe("Google Drive copies", () => {
     expect([a, b, p].every((f) => !f.trashed)).toBe(true);
   });
 
+  test("migration: a file whose local copy gained a hash since its upload is updated once on Drive, and not changed here", async ({ page }) => {
+    const drive = new MockDrive();
+    drive.signedIn = false;
+    const set = (hash: string) =>
+      `version: 3\nid: set-h\napp_version: 0.5.200\nmodified_at: 2026-11-01T10:00:00.000Z\n` +
+      `file_identity:\n  filename: h.wav\n  file_size: 100\n${hash}annotations:\n` +
+      `- id: r-h\n  type: Region\n  time_start: 1.0\n  time_end: 2.0\n` +
+      `  created_at: 2026-11-01T10:00:00.000Z\n  modified_at: 2026-11-01T10:00:00.000Z\n`;
+    const local = set("  full_blake3: " + "ab".repeat(32) + "\n");
+    const root = drive.add({ name: "Oversample", mimeType: "application/vnd.google-apps.folder", appProperties: { osFolder: "root" } });
+    const h = drive.add({ name: "h.wav.batm", parents: [root.id], appProperties: { osKind: "batm", osKey: "h.wav_100.batm" }, content: set("") });
+    await mockServer(page, drive);
+    await page.goto("/");
+    await writeFiles(page, [[`${DEVICE}h.wav_100.batm`, local]]);
+    await page.evaluate(
+      ([id, rev]) =>
+        localStorage.setItem(
+          "oversample_drive_seen",
+          JSON.stringify({ account: "bat.person@example.com", files: { "batm:h.wav_100.batm": { id, rev, fp: "old-style" } } }),
+        ),
+      [h.id, h.headRevisionId],
+    );
+    const filesBefore = drive.files.size;
+    drive.signedIn = true;
+    await page.reload();
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
+    const up = drive.uploads[0];
+    expect(up.method).toBe("PATCH");
+    expect(up.content).toContain("full_blake3");
+    expect(regionsIn(up.content)).toBe(1);
+    expect(drive.files.get(h.id)!.content).toBe(up.content);
+    // The local copy moved unchanged, and nothing else went up or was made.
+    expect((await savedFiles(page))[`${ACCOUNT}h.wav_100.batm`]).toBe(local);
+    await page.waitForTimeout(7_000);
+    expect(drive.uploads).toHaveLength(1);
+    expect(drive.files.size).toBe(filesBefore);
+  });
+
   test("a file deleted on Drive leaves this browser, also when it is open", async ({ page }) => {
     const drive = new MockDrive();
     await mockServer(page, drive);
@@ -482,7 +520,7 @@ test.describe("Google Drive copies", () => {
     await compareAll(page);
     await openSettings(page);
     await expect(page.locator(".drive-settings")).toContainText(
-      "3 files are missing from the Oversample folder in Google Drive. Copying to Drive is paused.",
+      "3 files are missing from the Oversample folder in Google Drive. They are still saved in this browser.",
       { timeout: 15_000 },
     );
     expect(inStore(await savedFiles(page), ACCOUNT)).toHaveLength(3);
