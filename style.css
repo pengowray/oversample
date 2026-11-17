@@ -9856,7 +9856,6 @@ button.canvas-overflow-action-btn.disabled {
     pointer-events: none;
     /* Here and not on .tour-hand, so a flipped hand keeps its shadow below. */
     filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.6));
-    animation: tour-gesture-drag 2.8s ease-in-out infinite;
 }
 .tour-gesture[hidden] {
     display: none;
@@ -9880,7 +9879,6 @@ button.canvas-overflow-action-btn.disabled {
     --tour-hand-lean: rotate(-24deg);
     transform-origin: 46% 4.6%;
     transform: var(--tour-hand-lean);
-    animation: tour-hand-press 2.8s ease-in-out infinite;
 }
 .tour-gesture-above .tour-hand {
     --tour-hand-lean: scaleY(-1) rotate(-24deg);
@@ -9889,25 +9887,9 @@ button.canvas-overflow-action-btn.disabled {
     fill: none;
     stroke-width: 3;
 }
-@keyframes tour-gesture-drag {
-    0% { opacity: 0; transform: translate(0, 0); }
-    10%, 24% { opacity: 1; transform: translate(0, 0); }
-    68%, 82% { opacity: 1; transform: translate(var(--tour-drag-x), var(--tour-drag-y)); }
-    94%, 100% { opacity: 0; transform: translate(var(--tour-drag-x), var(--tour-drag-y)); }
-}
-/* Smaller while the finger is down on the strip. */
-@keyframes tour-hand-press {
-    0%, 10% { transform: var(--tour-hand-lean) scale(1.18); }
-    24%, 68% { transform: var(--tour-hand-lean) scale(1); }
-    82%, 100% { transform: var(--tour-hand-lean) scale(1.18); }
-}
-/* Reduced motion: the hand rests on the strip without moving. */
-@media (prefers-reduced-motion: reduce) {
-    .tour-gesture,
-    .tour-hand {
-        animation: none;
-    }
-}
+/* The drag and the press are animated from js/hfr-tour.js, which knows how
+   far the hand travels. With reduced motion it starts neither, and the hand
+   rests on the strip. */
 
 /* Settings: a checkbox label long enough to wrap. Wrapping keeps the box at
    the right edge, in line with the other Settings checkboxes. */

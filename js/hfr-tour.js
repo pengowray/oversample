@@ -97,13 +97,66 @@
     // How long after a press that did not finish the step the hand returns.
     var GESTURE_RETURN_MS = 1200;
 
-    var gesture = null; // { el, kind, node, timer }
+    // One round of the drag: fade in, press, drag, lift off, fade out.
+    var GESTURE_MS = 2800;
+    // The hand is this much larger while the finger is off the strip.
+    var HAND_LIFTED = ' scale(1.18)';
+
+    var gesture = null; // { el, kind, node, timer, anims, animKey }
+
+    function stopAnims() {
+        if (!gesture || !gesture.anims) return;
+        gesture.anims.forEach(function (a) { a.cancel(); });
+        gesture.anims = null;
+        gesture.animKey = null;
+    }
 
     function removeGesture() {
         if (!gesture) return;
         clearTimeout(gesture.timer);
+        stopAnims();
         gesture.node.remove();
         gesture = null;
+    }
+
+    // Move the hand along its drag. The distances are written into the
+    // keyframes as numbers. As CSS variables read by a stylesheet @keyframes
+    // rule they reached the browser after the animation had started, and
+    // Chromium (the Android app) then drew the hand pressing and lifting in
+    // one place.
+    function animateGesture(g) {
+        var key = [g.dx, g.dy, g.above].join(',');
+        if (gesture.animKey === key) return;
+        stopAnims();
+        // Reduced motion: the hand rests on the strip without moving.
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        var hand = gesture.node.firstChild;
+        if (!hand || !gesture.node.animate) return;
+        var from = 'translate(0px, 0px)';
+        var to = 'translate(' + g.dx + 'px, ' + g.dy + 'px)';
+        var lean = (g.above ? 'scaleY(-1) ' : '') + 'rotate(-24deg)';
+        var ease = 'ease-in-out';
+        var opts = { duration: GESTURE_MS, iterations: Infinity };
+        gesture.anims = [
+            gesture.node.animate([
+                { offset: 0, opacity: 0, transform: from, easing: ease },
+                { offset: 0.10, opacity: 1, transform: from, easing: ease },
+                { offset: 0.24, opacity: 1, transform: from, easing: ease },
+                { offset: 0.68, opacity: 1, transform: to, easing: ease },
+                { offset: 0.82, opacity: 1, transform: to, easing: ease },
+                { offset: 0.94, opacity: 0, transform: to, easing: ease },
+                { offset: 1, opacity: 0, transform: to },
+            ], opts),
+            hand.animate([
+                { offset: 0, transform: lean + HAND_LIFTED, easing: ease },
+                { offset: 0.10, transform: lean + HAND_LIFTED, easing: ease },
+                { offset: 0.24, transform: lean, easing: ease },
+                { offset: 0.68, transform: lean, easing: ease },
+                { offset: 0.82, transform: lean + HAND_LIFTED, easing: ease },
+                { offset: 1, transform: lean + HAND_LIFTED },
+            ], opts),
+        ];
+        gesture.animKey = key;
     }
 
     function popoverRect() {
@@ -171,8 +224,7 @@
         s.setProperty('--tour-hand-size', g.size + 'px');
         s.setProperty('--tour-hand-left', -g.size * HAND_TIP_X + 'px');
         s.setProperty('--tour-hand-top', -g.size * 1.3 * HAND_TIP_Y + 'px');
-        s.setProperty('--tour-drag-x', g.dx + 'px');
-        s.setProperty('--tour-drag-y', g.dy + 'px');
+        animateGesture(g);
     }
 
     function showGesture(el, kind) {
@@ -182,7 +234,7 @@
         node.className = 'tour-gesture';
         node.innerHTML = HAND_SVG;
         document.body.appendChild(node);
-        gesture = { el: el, kind: kind, node: node, timer: 0 };
+        gesture = { el: el, kind: kind, node: node, timer: 0, anims: null, animKey: null };
         placeGesture();
     }
 
@@ -203,6 +255,8 @@
         g.timer = setTimeout(function () {
             if (gesture !== g) return;
             placeGesture();
+            // Start again from the press.
+            if (g.anims) g.anims.forEach(function (a) { a.currentTime = 0; });
             g.node.hidden = false;
         }, GESTURE_RETURN_MS);
     }
