@@ -1055,6 +1055,13 @@ pub fn compute_hashes(state: AppState, file_id: u64, kinds: Vec<HashKind>) {
     wasm_bindgen_futures::spawn_local(run_hash_job(state, file_id, kinds, None));
 }
 
+/// As `compute_hashes`, returning when the hashes are in the file's identity
+/// (or could not be computed). For a caller about to delete the file the
+/// hashes are read from.
+pub async fn compute_hashes_now(state: AppState, file_id: u64, kinds: Vec<HashKind>) {
+    run_hash_job(state, file_id, kinds, None).await;
+}
+
 /// For a small file (`SMALL_FILE_THRESHOLD`), compute every kind of hash it
 /// has a saved value of and no computed one, so the saved value is compared
 /// with the file. The Info panel calls this when it shows the file's hashes.

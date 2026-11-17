@@ -213,33 +213,42 @@ pub async fn open(state: AppState, written: Written, name: &str) -> Result<(), S
             let opened =
                 crate::components::file_sidebar::read_and_load_file(file, state, load_id).await;
             // A copy that is read from its file keeps it until it is closed.
-            // So does a large copy that was decoded into memory: its hashes
-            // other than the spot hash are computed from the file when the
-            // Info panel asks for them. A small copy has all its hashes by
-            // now, and its file is deleted.
-            let keeps_file = state.library.files().with_untracked(|files| {
+            // One that was decoded into memory needs its file no longer, and
+            // the file is deleted: a copy can be hundreds of megabytes, and
+            // the browser's storage is limited.
+            let copy = state.library.files().with_untracked(|files| {
                 files
                     .last()
-                    .filter(|f| {
-                        f.name == name
-                            && (f.file_handle.is_some()
-                                || f.audio.metadata.file_size as u64
-                                    >= crate::file_identity::SMALL_FILE_THRESHOLD)
-                    })
-                    .map(|f| f.id)
+                    .filter(|f| f.name == name)
+                    .map(|f| (f.id, f.file_handle.is_some()))
             });
-            match (&opened, keeps_file) {
-                (Ok(()), Some(id)) => STORED.with(|s| s.borrow_mut().push((id, stored))),
-                _ => {
-                    // The stored file is deleted, so nothing can be read
-                    // from it later.
-                    state.library.files().update(|files| {
-                        if let Some(f) = files.last_mut().filter(|f| f.name == name) {
-                            f.hash_source = None;
-                        }
+            match (&opened, copy) {
+                (Ok(()), Some((id, true))) => STORED.with(|s| s.borrow_mut().push((id, stored))),
+                (Ok(()), Some((id, false))) => {
+                    // Before the file goes, compute the hashes that need it:
+                    // a large copy has only its spot hash so far, and no
+                    // other hash could be computed once the file is deleted.
+                    // (A small copy has them all, and this does nothing.)
+                    wasm_bindgen_futures::spawn_local(async move {
+                        crate::file_identity::compute_hashes_now(
+                            state,
+                            id,
+                            vec![
+                                crate::file_identity::HashKind::Blake3,
+                                crate::file_identity::HashKind::Content,
+                                crate::file_identity::HashKind::Sha256,
+                            ],
+                        )
+                        .await;
+                        state.library.files().update(|files| {
+                            if let Some(f) = files.iter_mut().find(|f| f.id == id) {
+                                f.hash_source = None;
+                            }
+                        });
+                        opfs_audio::delete(&stored).await;
                     });
-                    opfs_audio::delete(&stored).await
                 }
+                _ => opfs_audio::delete(&stored).await,
             }
             opened
         }
