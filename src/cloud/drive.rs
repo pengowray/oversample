@@ -200,16 +200,22 @@ pub async fn files_with_key(kind: &str, drive_key: &str) -> Result<Vec<DriveFile
     .await
 }
 
-/// The id of the app's folder with `osFolder` = `marker`, creating it (in
-/// `parent`, or in My Drive) if there is none. Of several, the oldest is
-/// used, so that every device picks the same one.
-pub async fn folder(marker: &str, name: &str, parent: Option<&str>) -> Result<String, DriveError> {
-    let found = query(&format!(
+/// The app's folders with `osFolder` = `marker` that this client can see.
+/// Creates nothing.
+pub async fn find_folders(marker: &str) -> Result<Vec<DriveFile>, DriveError> {
+    query(&format!(
         "mimeType={} and {} and trashed=false",
         quoted(FOLDER_MIME),
         has_property(FOLDER_PROPERTY, marker)
     ))
-    .await?;
+    .await
+}
+
+/// The id of the app's folder with `osFolder` = `marker`, creating it (in
+/// `parent`, or in My Drive) if there is none. Of several, the oldest is
+/// used, so that every device picks the same one.
+pub async fn folder(marker: &str, name: &str, parent: Option<&str>) -> Result<String, DriveError> {
+    let found = find_folders(marker).await?;
     if let Some(oldest) = found
         .iter()
         .min_by(|a, b| a.created_time.cmp(&b.created_time))

@@ -135,6 +135,14 @@ fn app_state() -> Option<AppState> {
     with(|s| s.state)
 }
 
+/// Whether Drive copies are made here. Off in the desktop app until the
+/// account-home model lands: there, sign-in works and a read-only check of
+/// the account's Drive runs (`desktop_check`), but nothing is compared,
+/// uploaded, downloaded or created.
+fn copies_enabled() -> bool {
+    google_auth::provider() == google_auth::Provider::Web
+}
+
 fn generation() -> u64 {
     with(|s| s.generation)
 }
@@ -283,7 +291,7 @@ pub fn init(state: AppState) {
         match google_auth::status().await {
             None => state.drive.available().set(false),
             Some(status) => {
-                with(|s| s.available = true);
+                with(|s| s.available = copies_enabled());
                 state.drive.available().set(true);
                 state.drive.persistent().set(status.persistent);
                 if status.signed_in {
@@ -421,6 +429,11 @@ async fn start_session() {
     if !alive(gen) {
         return;
     }
+    if !copies_enabled() {
+        state.drive.email().set(Some(email));
+        desktop_check(gen).await;
+        return;
+    }
     with(|s| {
         // Another account: what was seen of the last one's Drive is no base.
         if s.memory.account != email {
@@ -435,6 +448,47 @@ async fn start_session() {
     set_problem(None);
     if let Err(e) = reconcile(gen).await {
         on_error(gen, e);
+    }
+}
+
+/// Desktop: look, read-only, for the "Oversample" folder and the app's
+/// files that this desktop client can see, and show the result. Creates and
+/// changes nothing.
+async fn desktop_check(gen: u64) {
+    use crate::state::DesktopDriveCheck;
+    let Some(state) = app_state() else {
+        return;
+    };
+    state
+        .drive
+        .desktop_check()
+        .set(Some(DesktopDriveCheck::Checking));
+    let result = async {
+        let folders = drive::find_folders("root").await?;
+        if folders.is_empty() {
+            return Ok::<_, DriveError>(DesktopDriveCheck::NotFound);
+        }
+        let annotations = drive::files_of_kind(BATM).await?.len();
+        let projects = drive::files_of_kind(BATPROJ).await?.len();
+        Ok(DesktopDriveCheck::Found {
+            annotations,
+            projects,
+        })
+    }
+    .await;
+    if !alive(gen) {
+        return;
+    }
+    match result {
+        Ok(check) => state.drive.desktop_check().set(Some(check)),
+        Err(DriveError::SignedOut) => end_session(),
+        Err(e) => {
+            log::warn!("Google Drive check: {e:?}");
+            state
+                .drive
+                .desktop_check()
+                .set(Some(DesktopDriveCheck::Failed));
+        }
     }
 }
 
@@ -496,6 +550,11 @@ pub fn sign_out(state: AppState) {
 /// Try again after a failure: compare all files and upload what waits.
 pub fn retry() {
     if !with(|s| s.signed_in) {
+        return;
+    }
+    if !copies_enabled() {
+        let gen = generation();
+        wasm_bindgen_futures::spawn_local(desktop_check(gen));
         return;
     }
     set_problem(None);
@@ -593,7 +652,7 @@ pub enum FileDriveState {
 /// The Drive state of the annotation file stored under `key`, or `None`
 /// when not signed in (or in Tauri). Reactive: re-runs when it may change.
 pub fn file_drive_state(state: AppState, key: &str) -> Option<FileDriveState> {
-    if !state.drive.signed_in().get() {
+    if !copies_enabled() || !state.drive.signed_in().get() {
         return None;
     }
     let problem = state.drive.problem().get();
@@ -693,7 +752,7 @@ pub fn project_deleted(id: &str) {
 /// A file's saved annotations have been read from local storage (or there
 /// were none): compare with the Drive copy.
 pub fn annotations_loaded(state: AppState, file_id: u64) {
-    if !with(|s| s.signed_in) {
+    if !copies_enabled() || !with(|s| s.signed_in) {
         return;
     }
     let Some(key) = open_file_key(state, file_id) else {

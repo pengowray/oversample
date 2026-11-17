@@ -351,8 +351,7 @@ macro_rules! page {
 /// request is put in them.
 const PAGE_SIGNED_IN: &str = page!("Signed in to Google. You can close this window.");
 const PAGE_DENIED: &str = page!("Google sign-in was cancelled. You can close this window.");
-const PAGE_FAILED: &str =
-    page!("Google sign-in did not finish. You can close this window and try again in Oversample.");
+const PAGE_FAILED: &str = page!("Google sign-in failed. Close this window and try again.");
 const PAGE_NOT_FOUND: &str = page!("Not found.");
 
 async fn write_page(stream: &mut TcpStream, status: &str, page: &str) -> std::io::Result<()> {
@@ -800,7 +799,7 @@ mod tests {
             .unwrap()
             .as_deref()
             .unwrap()
-            .contains("did not finish"));
+            .contains("sign-in failed"));
     }
 
     #[tokio::test(flavor = "multi_thread")]

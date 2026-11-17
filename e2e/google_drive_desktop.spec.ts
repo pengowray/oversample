@@ -105,33 +105,50 @@ test.describe("Google Drive copies (desktop app)", () => {
     expect((await stubState(page)).signInCalls).toBe(2);
   });
 
-  test("signed in: annotations are saved on this device and uploaded to Google Drive", async ({ page }) => {
+  test("signed in: a read-only check of Drive, and nothing is uploaded or created", async ({ page }) => {
     const drive = new MockDrive();
+    const root = drive.add({ name: "Oversample", mimeType: "application/vnd.google-apps.folder", appProperties: { osFolder: "root" } });
+    const folder = drive.add({ name: "annotations", mimeType: "application/vnd.google-apps.folder", parents: [root.id], appProperties: { osFolder: "annotations" } });
+    for (const n of ["a", "b"]) {
+      drive.add({ name: `${n}.wav.batm`, parents: [folder.id], appProperties: { osKind: "batm", osKey: `${n}.wav_1.batm` }, content: "x" });
+    }
+    drive.add({ name: "Survey.batproj", appProperties: { osKind: "batproj", osKey: "p1" }, content: "x" });
+    const before = drive.files.size;
     await desktopApp(page, { signedIn: true, persistent: false });
     await mockServer(page, drive);
     await page.goto("/");
     await openSettings(page);
     const group = page.locator(".drive-settings");
     await expect(page.locator(".drive-account")).toHaveText(EMAIL);
+    await expect(group).toContainText("Oversample folder found in Google Drive: 2 annotation files, 1 project.");
+    await expect(group).toContainText("The desktop app does not save to Google Drive yet.");
     await expect(group).toContainText("Signed in until Oversample closes, because no keyring is available.");
 
-    await openFileAndAnnotate(page, "desktop-upload.wav");
-    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
-    const up = drive.uploads[0];
-    expect(up.name).toBe("desktop-upload.wav.batm");
-    expect(up.appProperties.osKind).toBe("batm");
-    expect(up.content).not.toContain("file_path");
-    // The central folder holds the same set under the same key.
-    const central = (await stubState(page)).central;
-    expect(Object.keys(central)).toEqual([up.appProperties.osKey]);
+    // An edit is saved on this device only.
+    await openFileAndAnnotate(page, "desktop-local.wav");
+    await expect.poll(async () => Object.keys((await stubState(page)).central).length).toBe(1);
+    await page.waitForTimeout(7_000);
+    expect(drive.uploads).toEqual([]);
+    expect(drive.files.size).toBe(before);
 
-    // The line under the Annotations heading.
     const show = page.locator('button[title="Show info panel"]');
     if (await show.isVisible()) await show.click();
     await page.locator(".sidebar-tab-dropdown").click();
     await page.locator(".sidebar-tab-option", { hasText: "Annotations" }).dispatchEvent("mousedown");
     const line = page.locator(".right-sidebar .annotation-storage");
-    await expect(line).toContainText("Saved on this device");
-    await expect(line.getByRole("button")).toHaveText("Saved in Google Drive");
+    await expect(line).toHaveText("Saved on this device");
+    await expect(line.getByRole("button")).toHaveCount(0);
+  });
+
+  test("signed in, no Oversample folder visible: says so and creates nothing", async ({ page }) => {
+    const drive = new MockDrive();
+    await desktopApp(page, { signedIn: true });
+    await mockServer(page, drive);
+    await page.goto("/");
+    await openSettings(page);
+    await expect(page.locator(".drive-settings")).toContainText("No Oversample folder is visible to the desktop app.");
+    await page.waitForTimeout(1_000);
+    expect(drive.files.size).toBe(0);
+    expect(drive.uploads).toEqual([]);
   });
 });

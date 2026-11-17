@@ -1952,6 +1952,20 @@ pub struct DriveState {
     /// How the last desktop sign-in ended without signing in (cleared at
     /// the next attempt).
     pub sign_in_problem: Option<DriveSignInProblem>,
+    /// Desktop, while copies are switched off there: what the read-only
+    /// check of the account's Drive found.
+    pub desktop_check: Option<DesktopDriveCheck>,
+}
+
+/// What the desktop app's read-only check of Google Drive found: whether
+/// this desktop client can see the "Oversample" folder and the files the
+/// web app made (all under `drive.file`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DesktopDriveCheck {
+    Checking,
+    Found { annotations: usize, projects: usize },
+    NotFound,
+    Failed,
 }
 
 /// How a desktop sign-in ended without signing in. (Cancel in the app is
