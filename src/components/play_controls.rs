@@ -44,10 +44,7 @@ pub fn ToastDisplay() -> impl IntoView {
                 };
                 view! {
                     <div class="capture-notice" role="status">
-                        <span class="capture-notice-text">
-                            "Oversample notifications are off. The " {title}
-                            " notification, with its Stop button, is hidden."
-                        </span>
+                        <span class="capture-notice-text">"Cannot show " {title} " notification"</span>
                         <button class="capture-notice-btn" on:click=on_open>"Open settings"</button>
                         <button class="capture-notice-close"
                             title="Close and don\u{2019}t show again"
