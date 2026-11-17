@@ -547,6 +547,35 @@ fn short_hash(text: &str) -> String {
     blake3::hash(text.as_bytes()).to_hex()[..16].to_string()
 }
 
+/// Significant digits kept of each decimal number before hashing.
+const HASH_DIGITS: usize = 8;
+
+/// `value` as JSON text with every decimal number rounded to
+/// [`HASH_DIGITS`] significant digits. A file read at a corrected rate
+/// ("Correct for ×10 time expansion") is converted to the rate it is read at
+/// and back before it is compared, and that changes the last digits of its
+/// times and frequencies: without the rounding, every annotation would read
+/// as changed. A real edit is far larger than the rounding.
+fn rounded_json(value: &impl Serialize) -> String {
+    fn walk(v: &mut serde_json::Value) {
+        match v {
+            serde_json::Value::Number(n) if n.is_f64() => {
+                let x = n.as_f64().unwrap_or_default();
+                let r: f64 = format!("{:.*e}", HASH_DIGITS - 1, x).parse().unwrap_or(x);
+                if let Some(m) = serde_json::Number::from_f64(r) {
+                    *n = m;
+                }
+            }
+            serde_json::Value::Array(a) => a.iter_mut().for_each(walk),
+            serde_json::Value::Object(o) => o.values_mut().for_each(walk),
+            _ => {}
+        }
+    }
+    let mut v = serde_json::to_value(value).unwrap_or_default();
+    walk(&mut v);
+    v.to_string()
+}
+
 /// Hash of what an annotation holds, without its time of change and its
 /// place in the list.
 fn content_hash(a: &Annotation) -> String {
@@ -554,7 +583,7 @@ fn content_hash(a: &Annotation) -> String {
     c.modified_at = String::new();
     c.parent_id = None;
     c.sort_order = None;
-    short_hash(&canonical(&c))
+    short_hash(&rounded_json(&c))
 }
 
 /// Hash of an annotation's place in the list: its group and order.
@@ -570,7 +599,7 @@ fn noise_fp(set: &AnnotationSet) -> Option<String> {
     set.noise_profile.as_ref().map(|p| {
         let mut p = p.clone();
         p.created = String::new();
-        short_hash(&serde_json::to_string(&p).unwrap_or_default())
+        short_hash(&rounded_json(&p))
     })
 }
 

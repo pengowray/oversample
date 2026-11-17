@@ -569,6 +569,58 @@ mod tests {
         new_rate: 256_000,
     };
 
+    /// Reading a corrected file's set into app units and back (an open
+    /// file's set compared with Drive) must give the same annotation
+    /// hashes, or every annotation would read as changed.
+    #[test]
+    fn a_set_read_into_app_units_and_back_keeps_its_merge_hashes() {
+        let mut seed: u64 = 7;
+        let mut next = move || {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for (file_rate, read_rate) in [
+            (25_600, 256_000),
+            (44_100, 441_000),
+            (38_400, 384_000),
+            (50_000, 500_000),
+        ] {
+            let to_file = RateChange::new(read_rate, file_rate);
+            let mut set: AnnotationSet = serde_json::from_value(serde_json::json!({
+                "version": 3, "id": "s", "file_identity": { "filename": "a.wav", "file_size": 1 },
+            }))
+            .unwrap();
+            for i in 0..500 {
+                let t0 = next() * 30.0;
+                let mut a = annotation(region(
+                    t0,
+                    t0 + next(),
+                    Some(next() * 20_000.0),
+                    Some(20_000.0 + next() * 30_000.0),
+                ));
+                a.id = AnnotationId::from(format!("r{i}").as_str());
+                set.annotations.push(a);
+            }
+            let on_disk = set.clone();
+            let mut app = on_disk.clone();
+            to_file.inverse().annotation_set(&mut app);
+            to_file.annotation_set(&mut app);
+            let before = crate::cloud::rules::merge::MergeBase::of(&on_disk);
+            let after = crate::cloud::rules::merge::MergeBase::of(&app);
+            let changed = before
+                .annotations
+                .iter()
+                .filter(|(id, h)| after.annotations.get(*id) != Some(h))
+                .count();
+            assert_eq!(
+                changed, 0,
+                "{file_rate} read at {read_rate}: {changed} of 500 changed"
+            );
+        }
+    }
+
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0)
     }

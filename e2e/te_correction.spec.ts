@@ -1,6 +1,7 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { MockDrive, mockServer } from "./drive_mock";
 
 /**
  * The x10 time-expansion correction in the Info panel (src/te_correction.rs).
@@ -787,5 +788,94 @@ test.describe("x10 correction on a phone", () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
       375,
     );
+  });
+});
+
+test.describe("x10 correction and Google Drive", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  const regionCount = (yaml: string) => (yaml.match(/time_start:/g) ?? []).length;
+
+  /** The set without the annotation `id`, as another device would save it. */
+  function withoutAnnotation(yaml: string, id: string): string {
+    const lines = yaml.split("\n");
+    const start = lines.indexOf(`- id: ${id}`);
+    let end = start + 1;
+    while (end < lines.length && lines[end].startsWith("  ")) end++;
+    lines.splice(start, end - start);
+    return lines.join("\n");
+  }
+
+  test("a corrected open file merged with a Drive copy changed elsewhere: only the real changes count", async ({
+    page,
+  }) => {
+    const drive = new MockDrive();
+    // Saved by another device: four regions in the file's own seconds and
+    // Hz, with all their digits.
+    const at = "2026-11-01T10:00:00.000Z";
+    const region = (n: number) =>
+      `- id: other-${n}\n  type: Region\n  time_start: ${0.1234567890123 + n * 2.718281828459}\n` +
+      `  time_end: ${0.9876543210987 + n * 2.718281828459}\n  freq_low: ${30123.456789012 + n * 777.7}\n` +
+      `  freq_high: ${41234.567890123 + n * 333.3}\n  created_at: ${at}\n  modified_at: ${at}\n`;
+    const size = wav(CASE_T.rate, CASE_T.seconds ?? 1).length;
+    const root = drive.add({
+      name: "Oversample",
+      mimeType: "application/vnd.google-apps.folder",
+      appProperties: { osFolder: "root" },
+    });
+    drive.onKeyQuery = (kind, key) => {
+      if (kind !== "batm" || [...drive.files.values()].some((f) => f.appProperties.osKey === key)) return;
+      drive.add({
+        name: "XC815138 demo.wav.batm",
+        parents: [root.id],
+        appProperties: { osKind: "batm", osKey: key },
+        content:
+          `version: 3\nid: other-set\napp_version: 0.5.200\nmodified_at: ${at}\n` +
+          `file_identity:\n  filename: XC815138 demo.wav\n  file_size: ${size}\nannotations:\n` +
+          [0, 1, 2, 3].map(region).join(""),
+      });
+    };
+    await mockServer(page, drive);
+    await openCase(page, CASE_T);
+    await expect.poll(async () => (await snap(page)).regions.length, { timeout: 20_000 }).toBe(4);
+    const batm = () => [...drive.files.values()].find((f) => f.appProperties.osKind === "batm");
+    await page.waitForTimeout(1_000);
+
+    // Opened again and corrected: the saved regions are converted from the
+    // file's seconds and Hz to the corrected rate, and back when the set is
+    // compared with Drive.
+    await page.reload();
+    await expect(page.locator(".toolbar-badge-row .badge-sample-rate")).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect.poll(async () => (await snap(page)).regions.length, { timeout: 15_000 }).toBe(4);
+    await showInfo(page);
+    await page.locator(CORRECT).click();
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    const file = batm()!;
+    const [kept, ...gone] = [...file.content.matchAll(/^- id: (\S+)$/gm)].map((m) => m[1]);
+    const uploadsBefore = drive.uploads.length;
+
+    // Another device deletes three regions; this browser adds one.
+    file.revisions[file.headRevisionId] = file.content;
+    file.content = gone.reduce(withoutAnnotation, file.content);
+    file.headRevisionId = `${file.headRevisionId}~`;
+    file.modifiedTime = new Date().toISOString();
+    await annotate(page, 0.85, 0.95, 0.3, 0.6);
+
+    // The deletions are applied: the converted times and frequencies of the
+    // regions this browser did not touch do not count as changes made here.
+    await expect
+      .poll(() => regionCount(drive.uploads.at(-1)?.content ?? ""), { timeout: 30_000 })
+      .toBe(2);
+    expect(file.content).toContain(kept);
+    for (const id of gone) expect(file.content).not.toContain(id);
+    await expect.poll(async () => (await snap(page)).regions.length).toBe(2);
+    expect(drive.uploads.length).toBeGreaterThan(uploadsBefore);
+    await page.locator(".sidebar-tab-dropdown").click();
+    await page.locator(".sidebar-tab-option", { hasText: "Annotations" }).dispatchEvent("mousedown");
+    const notice = page.locator(".right-sidebar .merge-notice");
+    await expect(notice).toContainText("From Google Drive: 3 annotations removed");
+    await expect(notice).not.toContainText("Changed in both copies");
   });
 });
