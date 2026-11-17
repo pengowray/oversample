@@ -28,6 +28,8 @@ export class MockDrive {
   logouts = 0;
   signedIn = true;
   configured = true;
+  /** Answer uploads with 503 (Drive unreachable). */
+  failUploads = false;
   /** Called for each file query that names an `osKey`, before filtering. */
   onKeyQuery: ((kind: string, key: string) => void) | null = null;
   private n = 0;
@@ -122,6 +124,7 @@ export async function mockServer(page: Page, drive: MockDrive) {
     const id = idMatch ? decodeURIComponent(idMatch[1]) : null;
 
     if (upload) {
+      if (drive.failUploads) return json(route, 503, { error: "unavailable" });
       const { meta, content } = parseMultipart(req.postData() ?? "", req.headers()["content-type"]);
       const props = (meta.appProperties ?? {}) as Record<string, string>;
       drive.uploads.push({ at: Date.now(), method, name: String(meta.name), appProperties: props, content });

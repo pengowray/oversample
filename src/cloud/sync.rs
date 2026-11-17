@@ -18,8 +18,11 @@
 //!   are snapshots of a set that no longer exists, and undoing one would
 //!   upload it over the Drive change.
 //! - Sign-out and a session that ends clear the token, the cached Drive ids
-//!   and revisions and the `checked` keys. Local files and the list of keys
-//!   waiting to upload stay.
+//!   and revisions and the `checked` keys. Local files, the list of keys
+//!   waiting to upload, and the fingerprint of each key's last-seen Drive
+//!   content stay: with them, a change made while signed out is still a
+//!   local change at the next sign-in, and uploads instead of being merged
+//!   away. The fingerprints are dropped when a different account signs in.
 //!
 //! Async tasks note the `generation` when they start and stop after an
 //! await if it changed (sign-out or session end in the meantime).
@@ -100,7 +103,18 @@ struct Sync {
     memory: Memory,
     reconciling: bool,
     save_seq: u64,
+    /// A folder lookup or creation is running (one at a time, so that
+    /// parallel uploads do not each create the folders).
+    folder_busy: bool,
+    /// Uploads running now, across all keys.
+    uploads_running: usize,
+    /// Counts sign-in attempts; an older attempt's polling stops.
+    sign_in_attempt: u64,
 }
+
+/// Most uploads that run at the same time (a first sign-in can have many
+/// files to upload).
+const MAX_PARALLEL_UPLOADS: usize = 2;
 
 thread_local! {
     static SYNC: RefCell<Sync> = RefCell::new(Sync::default());
@@ -195,7 +209,14 @@ fn publish() {
     let Some(state) = app_state() else {
         return;
     };
-    let (waiting, uploading) = with(|s| (s.pending.len(), !s.uploading.is_empty()));
+    // A comparison of all files counts as saving: until it ends, "Saved to
+    // Google Drive" would not yet be known to be true.
+    let (waiting, uploading) = with(|s| {
+        (
+            s.pending.len(),
+            !s.uploading.is_empty() || (s.signed_in && s.reconciling),
+        )
+    });
     if state.drive.waiting().get_untracked() != waiting {
         state.drive.waiting().set(waiting);
     }
@@ -272,31 +293,43 @@ pub fn sign_in(state: AppState) {
     };
     state.drive.popup_blocked().set(false);
     state.drive.signing_in().set(true);
+    let attempt = with(|s| {
+        s.sign_in_attempt += 1;
+        s.sign_in_attempt
+    });
     wasm_bindgen_futures::spawn_local(async move {
         let started = js_sys::Date::now();
         let mut closed_at: Option<f64> = None;
         loop {
             crate::web_util::sleep_ms(SIGN_IN_POLL_MS).await;
-            if !state.drive.signing_in().get_untracked() {
+            if with(|s| s.sign_in_attempt != attempt || s.signed_in) {
                 return;
             }
             if google_auth::status().await == Some(true) {
                 state.drive.signing_in().set(false);
-                start_session().await;
+                if !with(|s| s.signed_in) {
+                    start_session().await;
+                }
                 return;
             }
             let now = js_sys::Date::now();
+            // Some sign-in pages cut the link to this window, which then
+            // reads as closed while it is still open. So after it reads
+            // closed the button is offered again, but the status is still
+            // checked until the time limit.
             if popup.closed().unwrap_or(true) {
                 let at = *closed_at.get_or_insert(now);
                 if now - at > AFTER_CLOSE_MS {
-                    break;
+                    state.drive.signing_in().set(false);
                 }
             }
             if now - started > SIGN_IN_TIMEOUT_MS {
                 break;
             }
         }
-        state.drive.signing_in().set(false);
+        if with(|s| s.sign_in_attempt == attempt) {
+            state.drive.signing_in().set(false);
+        }
     });
 }
 
@@ -305,10 +338,15 @@ async fn start_session() {
     let Some(state) = app_state() else {
         return;
     };
-    let gen = with(|s| {
+    let Some(gen) = with(|s| {
+        if s.signed_in && s.reconciling {
+            return None;
+        }
         s.signed_in = true;
-        s.generation
-    });
+        Some(s.generation)
+    }) else {
+        return;
+    };
     state.drive.signed_in().set(true);
     state.drive.session_ended().set(false);
     let email = match drive::account_email().await {
@@ -322,6 +360,7 @@ async fn start_session() {
         return;
     }
     with(|s| {
+        // Another account: what was seen of the last one's Drive is no base.
         if s.memory.account != email {
             s.memory = Memory {
                 account: email.clone(),
@@ -350,7 +389,15 @@ fn clear_session() {
         s.uploading.clear();
         s.blocked.clear();
         s.reconciling = false;
-        s.memory = Memory::default();
+        s.folder_busy = false;
+        s.uploads_running = 0;
+        // Keep each key's fingerprint (see the module notes); forget the
+        // Drive ids and revisions.
+        for seen in s.memory.files.values_mut() {
+            seen.id.clear();
+            seen.rev = None;
+        }
+        save_memory(&s.memory);
         let window = web_sys::window();
         for (_, handle) in s.timers.drain() {
             if let Some(w) = &window {
@@ -358,7 +405,6 @@ fn clear_session() {
             }
         }
     });
-    crate::settings::remove_raw(MEMORY_KEY);
     if let Some(state) = app_state() {
         state.drive.signed_in().set(false);
         state.drive.email().set(None);
@@ -396,8 +442,26 @@ pub fn retry() {
         wasm_bindgen_futures::spawn_local(start_session());
         return;
     }
+    restart_waiting_uploads();
     let gen = generation();
     spawn(async move { reconcile(gen).await });
+}
+
+/// Start the upload of every compared key that waits with no upload timer
+/// and no upload running (its last upload failed).
+fn restart_waiting_uploads() {
+    let keys: Vec<String> = with(|s| {
+        s.pending
+            .keys()
+            .filter(|k| {
+                s.checked.contains(*k) && !s.timers.contains_key(*k) && !s.uploading.contains(*k)
+            })
+            .cloned()
+            .collect()
+    });
+    for sk in keys {
+        schedule_upload(&sk, 0);
+    }
 }
 
 fn add_window_listeners() {
@@ -419,6 +483,26 @@ fn add_window_listeners() {
         );
     }
     on_visibility.forget();
+    // Back from the sign-in window: ask at once whether sign-in finished.
+    let on_focus = Closure::<dyn Fn()>::new(|| {
+        let Some(state) = app_state() else {
+            return;
+        };
+        if with(|s| s.signed_in) || !state.drive.available().get_untracked() {
+            return;
+        }
+        if with(|s| s.sign_in_attempt) == 0 {
+            return;
+        }
+        wasm_bindgen_futures::spawn_local(async move {
+            if google_auth::status().await == Some(true) && !with(|s| s.signed_in) {
+                state.drive.signing_in().set(false);
+                start_session().await;
+            }
+        });
+    });
+    let _ = window.add_event_listener_with_callback("focus", on_focus.as_ref().unchecked_ref());
+    on_focus.forget();
     let on_online = Closure::<dyn Fn()>::new(retry);
     let _ = window.add_event_listener_with_callback("online", on_online.as_ref().unchecked_ref());
     on_online.forget();
@@ -599,9 +683,20 @@ async fn folder_for(kind: &str) -> Result<String, DriveError> {
     } else {
         ("annotations", "annotations")
     };
+    // One lookup at a time: parallel uploads would each create the folders.
+    while with(|s| s.folder_busy) {
+        crate::web_util::sleep_ms(50).await;
+    }
     if let Some(id) = with(|s| s.folders.get(marker).cloned()) {
         return Ok(id);
     }
+    with(|s| s.folder_busy = true);
+    let result = find_folders(marker, name).await;
+    with(|s| s.folder_busy = false);
+    result
+}
+
+async fn find_folders(marker: &'static str, name: &str) -> Result<String, DriveError> {
     let root = match with(|s| s.folders.get("root").cloned()) {
         Some(id) => id,
         None => {
@@ -667,8 +762,18 @@ async fn upload(gen: u64, sync_key: String) -> Result<(), DriveError> {
 
     with(|s| s.uploading.insert(sync_key.clone()));
     publish();
+    while with(|s| s.uploads_running >= MAX_PARALLEL_UPLOADS) {
+        crate::web_util::sleep_ms(100).await;
+    }
+    if !alive(gen) {
+        return Ok(());
+    }
+    with(|s| s.uploads_running += 1);
     let result = upload_inner(gen, &sync_key, &kind, &key, &pending, last).await;
-    with(|s| s.uploading.remove(&sync_key));
+    with(|s| {
+        s.uploads_running = s.uploads_running.saturating_sub(1);
+        s.uploading.remove(&sync_key);
+    });
     if !alive(gen) {
         publish();
         return Ok(());
@@ -715,7 +820,8 @@ async fn upload_inner(
     last: Option<Seen>,
 ) -> Result<Option<DriveFile>, DriveError> {
     let props = properties(kind, key);
-    if let Some(last) = last {
+    // A Drive id is forgotten at sign-out; the fingerprint alone is no file.
+    if let Some(last) = last.filter(|l| !l.id.is_empty()) {
         match drive::metadata(&last.id).await? {
             Some(now) => {
                 if !rules::may_overwrite(now.head_revision_id.as_deref(), last.rev.as_deref()) {
@@ -1032,7 +1138,9 @@ async fn check_annotations(
                 with(|s| s.blocked.insert(sk.clone()));
                 return Ok(());
             }
-            set_seen(&sk, Some(seen_from(&d)));
+            // What was seen of Drive is recorded once the local copy holds
+            // it; if the local write fails, the next comparison downloads
+            // again instead of uploading the old local copy.
             match open {
                 Some(file_id) => {
                     // The user may have changed the set while Drive was read.
@@ -1044,12 +1152,18 @@ async fn check_annotations(
                         start_check(sk);
                         return Ok(());
                     }
-                    crate::opfs::adopt_drive_copy(
+                    if !crate::opfs::adopt_drive_copy(
                         state,
                         file_id,
                         drive_set,
                         action == Action::Merge,
-                    );
+                    ) {
+                        with(|s| s.blocked.insert(sk.clone()));
+                        return Ok(());
+                    }
+                    // Before the adopted set's own save reaches the upload
+                    // queue (it waits for the local write).
+                    set_seen(&sk, Some(seen_from(&d)));
                 }
                 None => {
                     let (out_text, out_fp) = if action == Action::Merge {
@@ -1066,6 +1180,7 @@ async fn check_annotations(
                         log::warn!("Google Drive: could not store {key} locally: {e}");
                         return Ok(());
                     }
+                    set_seen(&sk, Some(seen_from(&d)));
                     if out_fp != d.fp {
                         let name = yaml_serde::from_str::<AnnotationSet>(&out_text)
                             .map(|s| format!("{}.batm", s.file_identity.filename))
@@ -1199,11 +1314,11 @@ async fn check_project(
                 with(|s| s.blocked.insert(sk.clone()));
                 return Ok(());
             }
-            set_seen(&sk, Some(seen_from(&d)));
             if let Err(e) = crate::project_store::write_project_local(&project).await {
                 log::warn!("Google Drive: could not store project {id} locally: {e}");
                 return Ok(());
             }
+            set_seen(&sk, Some(seen_from(&d)));
             // The open project changes too. (If it had unsaved changes, the
             // Drive copy was the later one.)
             if is_open(state) {
@@ -1242,10 +1357,12 @@ async fn reconcile(gen: u64) -> Result<(), DriveError> {
         return Ok(());
     }
     with(|s| s.reconciling = true);
+    publish();
     let result = reconcile_inner(gen).await;
     if alive(gen) {
         with(|s| s.reconciling = false);
     }
+    publish();
     result
 }
 
@@ -1354,6 +1471,7 @@ async fn reconcile_inner(gen: u64) -> Result<(), DriveError> {
     for sk in waiting {
         start_check(sk);
     }
+    restart_waiting_uploads();
     set_problem(None);
     publish();
     Ok(())

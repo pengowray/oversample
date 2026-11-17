@@ -218,7 +218,12 @@ test.describe("Google Drive copies", () => {
     await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
     await expect(page.locator(".drive-account")).toHaveCount(0);
     await expect.poll(() => drive.logouts).toBe(1);
-    expect(await page.evaluate(() => localStorage.getItem("oversample_drive_seen"))).toBeNull();
+    // Drive ids and revisions are forgotten; content fingerprints stay.
+    const seen = await page.evaluate(() => localStorage.getItem("oversample_drive_seen"));
+    for (const f of Object.values((seen ? JSON.parse(seen) : { files: {} }).files) as { id: string; rev: string | null }[]) {
+      expect(f.id).toBe("");
+      expect(f.rev).toBeNull();
+    }
 
     // A save while signed out stays local and is not uploaded.
     await open(page, "signed-out.wav", noiseWav(96_000, 8, 3333));
@@ -228,5 +233,95 @@ test.describe("Google Drive copies", () => {
       .toBeGreaterThan(0);
     await page.waitForTimeout(6_000);
     expect(drive.uploads).toEqual([]);
+  });
+
+  test("a change made while signed out is uploaded at the next sign-in, not merged away", async ({ page }) => {
+    const drive = new MockDrive();
+    await mockServer(page, drive);
+    await page.goto("/");
+    await openSettings(page);
+    await expect(page.locator(".drive-account")).toHaveText(EMAIL);
+    await open(page, "offline-edit.wav", noiseWav(96_000, 8, 4444));
+    await annotate(page, 0.1, 0.2);
+    await annotate(page, 0.5, 0.6);
+    const regionsIn = (text: string) => (text.match(/time_start:/g) ?? []).length;
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
+    expect(regionsIn(drive.uploads[0].content)).toBe(2);
+
+    await openSettings(page);
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
+    // Remove the second annotation while signed out (undo).
+    // (A label edit is an undo step of its own, so press until one is left.)
+    for (let i = 0; i < 4 && (await snap(page)).regions.length > 1; i++) {
+      await page.keyboard.press("Control+z");
+      await page.waitForTimeout(200);
+    }
+    expect((await snap(page)).regions.length).toBe(1);
+    await expect
+      .poll(async () => Object.values(await savedFiles(page)).some((t) => regionsIn(t) === 1))
+      .toBe(true);
+
+    drive.signedIn = true;
+    await page.reload();
+    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(2);
+    expect(drive.uploads[1].method).toBe("PATCH");
+    expect(regionsIn(drive.uploads[1].content)).toBe(1);
+  });
+
+  test("first sign-in with two local sets makes one set of folders", async ({ page }) => {
+    const drive = new MockDrive();
+    drive.signedIn = false;
+    await mockServer(page, drive);
+    await page.goto("/");
+    await openSettings(page);
+    await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
+    const set = (file: string) =>
+      `version: 3\nid: set-${file}\napp_version: 0.5.200\nmodified_at: 2026-11-01T10:00:00.000Z\n` +
+      `file_identity:\n  filename: ${file}.wav\n  file_size: 100\nannotations:\n` +
+      `- id: r-${file}\n  type: Region\n  time_start: 1.0\n  time_end: 2.0\n` +
+      `  created_at: 2026-11-01T10:00:00.000Z\n  modified_at: 2026-11-01T10:00:00.000Z\n`;
+    await page.evaluate(
+      async (files) => {
+        const root = await navigator.storage.getDirectory();
+        const dir = await root.getDirectoryHandle("oversample-annotations", { create: true });
+        for (const [name, text] of files) {
+          const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
+          await w.write(text);
+          await w.close();
+        }
+      },
+      [
+        ["first.wav_100.batm", set("first")],
+        ["second.wav_100.batm", set("second")],
+      ],
+    );
+    drive.signedIn = true;
+    await page.reload();
+    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(2);
+    expect(drive.uploads.map((u) => u.name).sort()).toEqual(["first.wav.batm", "second.wav.batm"]);
+    const folders = (marker: string) =>
+      [...drive.files.values()].filter((f) => f.appProperties.osFolder === marker).length;
+    expect(folders("root")).toBe(1);
+    expect(folders("annotations")).toBe(1);
+  });
+
+  test("Retry uploads a change whose upload failed", async ({ page }) => {
+    const drive = new MockDrive();
+    drive.failUploads = true;
+    await mockServer(page, drive);
+    await page.goto("/");
+    await openSettings(page);
+    await expect(page.locator(".drive-account")).toHaveText(EMAIL);
+    await open(page, "retry.wav", noiseWav(96_000, 8, 5555));
+    await annotate(page, 0.2, 0.4);
+    await openSettings(page);
+    await expect(page.locator(".drive-settings")).toContainText("Can't reach Google Drive", { timeout: 20_000 });
+    expect(drive.uploads).toEqual([]);
+
+    drive.failUploads = false;
+    await page.getByRole("button", { name: "Retry" }).click();
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
+    await expect(page.locator(".drive-status")).toHaveText("Saved to Google Drive");
   });
 });
