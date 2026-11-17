@@ -1,4 +1,5 @@
 mod config_panel;
+mod drive_settings;
 pub(crate) mod export_section;
 pub(crate) mod file_badges;
 pub(crate) mod file_groups;

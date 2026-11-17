@@ -402,6 +402,8 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                 </div>
             </div>
 
+            <super::drive_settings::DriveSettings />
+
             <div class="setting-group">
                 <div class="setting-group-title">"Beta"</div>
                 <div class="setting-row">

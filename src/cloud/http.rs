@@ -56,15 +56,19 @@ impl Reply {
 /// Largest body sent with `keepalive` (browsers allow 64 KB in all).
 const KEEPALIVE_MAX_BYTES: usize = 60_000;
 
-/// Send `req`. `Err` means there was no response at all: offline, the
-/// server could not be reached, or the browser blocked the response.
-pub async fn send(req: Request<'_>) -> Result<Reply, ()> {
-    let window = web_sys::window().ok_or(())?;
+/// No response at all: offline, the server could not be reached, or the
+/// browser blocked the response.
+#[derive(Clone, Copy, Debug)]
+pub struct NoResponse;
+
+/// Send `req`.
+pub async fn send(req: Request<'_>) -> Result<Reply, NoResponse> {
+    let window = web_sys::window().ok_or(NoResponse)?;
     let init = web_sys::RequestInit::new();
     init.set_method(req.method);
-    let headers = web_sys::Headers::new().map_err(|_| ())?;
+    let headers = web_sys::Headers::new().map_err(|_| NoResponse)?;
     for (name, value) in &req.headers {
-        headers.set(name, value).map_err(|_| ())?;
+        headers.set(name, value).map_err(|_| NoResponse)?;
     }
     init.set_headers(&headers);
     if req.with_cookies {
@@ -82,9 +86,9 @@ pub async fn send(req: Request<'_>) -> Result<Reply, ()> {
     }
     let resp: web_sys::Response = JsFuture::from(window.fetch_with_str_and_init(req.url, &init))
         .await
-        .map_err(|_| ())?
+        .map_err(|_| NoResponse)?
         .dyn_into()
-        .map_err(|_| ())?;
+        .map_err(|_| NoResponse)?;
     let body = match resp.text() {
         Ok(p) => JsFuture::from(p)
             .await

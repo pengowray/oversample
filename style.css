@@ -1581,6 +1581,55 @@ body.sidebar-resizing {
     background: #444;
 }
 
+/* Google Drive group in Settings (drive_settings.rs). Notes are 11px #999
+   (6.3:1 on the sidebar) rather than .setting-hint's 10px #666, which is
+   under 4.5:1; the sign-in note is the one fact a first-time reader needs. */
+.drive-note {
+    font-size: 11px;
+    color: #999;
+    padding: 2px 16px 4px;
+    line-height: 1.4;
+}
+.drive-note.setting-error {
+    color: #f88;
+}
+/* Drive could not be reached or refused a change: nothing is lost (the
+   change is saved on this device), so the warning colour (.bit-warning),
+   not the error red. */
+.drive-note.drive-warning {
+    color: #fc8;
+}
+/* The account sits where other rows have their label; long addresses are
+   cut with an ellipsis and shown in full on hover by the browser title. */
+.drive-account {
+    font-size: 13px;
+    color: #ddd;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* Same size and colour as the panel's other notes. Fixed-width digits
+   because the count of files waiting to upload changes. */
+.drive-status {
+    font-size: 11px;
+    color: #999;
+    font-variant-numeric: tabular-nums;
+}
+/* 24px tall: the smallest click target the UI checks allow. */
+.drive-button {
+    min-height: 24px;
+    flex-shrink: 0;
+}
+/* "Signing in…" while the Google window is open: visibly not pressable. */
+.drive-button:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+.drive-button:disabled:hover {
+    background: #333;
+}
+
 /* An error under a settings row, such as "Location permission denied". */
 .setting-error {
     color: #f88;
