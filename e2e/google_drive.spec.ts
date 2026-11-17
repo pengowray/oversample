@@ -421,5 +421,63 @@ test.describe("Google Drive copies", () => {
     expect(drive.uploads[1].method).toBe("PATCH");
     expect(drive.uploads[1].content).not.toContain("time_start:");
   });
+
+  // ── Projects ──────────────────────────────────────────────────────────────
+
+  async function enableProjects(page: Page) {
+    await page.addInitScript(() => localStorage.setItem("oversample_projects_enabled", "true"));
+  }
+
+  async function openProjectTab(page: Page) {
+    await page.getByRole("button", { name: /^Project/ }).first().click();
+  }
+
+  test("a project saved while signed in is uploaded to Oversample/projects with its id", async ({ page }) => {
+    const drive = new MockDrive();
+    await enableProjects(page);
+    await mockServer(page, drive);
+    await page.goto("/");
+    await open(page, "project-file.wav", noiseWav(96_000, 8, 1212));
+    await openProjectTab(page);
+    await page.getByRole("button", { name: "Create project" }).click();
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
+    const up = drive.uploads[0];
+    expect(up.appProperties.osKind).toBe("batproj");
+    const id = /^id: (.+)$/m.exec(up.content)![1].trim();
+    expect(up.appProperties.osKey).toBe(id);
+    expect(up.name).toBe("Untitled project.batproj");
+    const folder = [...drive.files.values()].find((f) => f.appProperties.osFolder === "projects")!;
+    expect(folder).toBeTruthy();
+    const root = [...drive.files.values()].find((f) => f.appProperties.osFolder === "root")!;
+    expect(folder.parents).toEqual([root.id]);
+    const file = [...drive.files.values()].find((f) => f.appProperties.osKey === id)!;
+    expect(file.parents).toEqual([folder.id]);
+  });
+
+  test("a project that exists only on Drive appears in the project list, and deleting it trashes the Drive file", async ({ page }) => {
+    const drive = new MockDrive();
+    const projectId = "0b9c2c1e-0000-4000-8000-00000000d01e";
+    const onDrive = drive.add({
+      name: "Pond survey.batproj",
+      appProperties: { osKind: "batproj", osKey: projectId },
+      content:
+        `version: 1\nid: ${projectId}\napp_version: 0.5.200\ncreated_at: 2026-11-01T10:00:00.000Z\n` +
+        `modified_at: 2026-11-01T10:00:00.000Z\nname: Pond survey\n`,
+    });
+    await enableProjects(page);
+    await mockServer(page, drive);
+    await page.goto("/");
+    await page.locator(".toolbar").waitFor();
+    await openProjectTab(page);
+    // The full comparison at sign-in stores it locally; an open list
+    // reloads when a project arrives from Drive.
+    await page.getByRole("button", { name: "Load project" }).click();
+    await expect(page.locator(".project-list-item", { hasText: "Pond survey" })).toHaveCount(1, { timeout: 20_000 });
+
+    await page.locator(".project-list-item", { hasText: "Pond survey" }).locator(".project-list-item-delete").click();
+    await expect(page.locator(".project-list-item", { hasText: "Pond survey" })).toHaveCount(0);
+    await expect.poll(() => onDrive.trashed, { timeout: 15_000 }).toBe(true);
+    expect(drive.uploads).toEqual([]);
+  });
 });
 
