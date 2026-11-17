@@ -42,6 +42,38 @@ pub fn read_central_annotations(
     }
 }
 
+/// Keys of every annotation set in the central annotations folder (the
+/// `file_key` that `read_central_annotations` takes). Files are stored as
+/// `<file_key>.batm`; unfinished `.tmp` files are left out.
+#[tauri::command]
+pub fn list_central_annotations(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("annotations");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+    Ok(central_keys(
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|e| e.file_name().into_string().ok()),
+    ))
+}
+
+/// The keys among central annotation file names.
+fn central_keys(names: impl Iterator<Item = String>) -> Vec<String> {
+    let mut keys: Vec<String> = names
+        .filter_map(|n| n.strip_suffix(".batm").map(str::to_string))
+        .filter(|k| !k.is_empty())
+        .collect();
+    keys.sort();
+    keys
+}
+
 #[tauri::command]
 pub fn write_central_annotations(
     app: tauri::AppHandle,
@@ -116,4 +148,21 @@ pub async fn open_file_dialog() -> Result<Vec<String>, String> {
 #[tauri::command]
 pub async fn open_file_dialog() -> Result<Vec<String>, String> {
     Err("File open dialog not supported on Android".into())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn central_keys_drop_one_batm_and_temp_files() {
+        let names = [
+            "b3_abc.batm.batm",
+            "b3_abc.batm.tmp",
+            "x.wav_10.batm.batm",
+            "notes.txt",
+        ];
+        assert_eq!(
+            super::central_keys(names.iter().map(|s| s.to_string())),
+            vec!["b3_abc.batm".to_string(), "x.wav_10.batm".to_string()]
+        );
+    }
 }

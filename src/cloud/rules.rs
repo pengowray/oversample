@@ -182,6 +182,16 @@ fn hash_json(value: &impl Serialize) -> String {
     hex[..32].to_string()
 }
 
+/// The text uploaded to Drive for an annotation set: its YAML without
+/// `file_identity.file_path` (the desktop app's central copies hold the
+/// recording's full path, which must not leave the device). Every upload
+/// goes through this.
+pub fn drive_text(set: &AnnotationSet) -> Option<String> {
+    let mut set = set.clone();
+    set.file_identity.file_path = None;
+    yaml_serde::to_string(&set).ok()
+}
+
 /// Drive limits an `appProperties` key and value to 124 bytes together.
 const APP_PROPERTY_BYTES: usize = 124;
 
@@ -259,6 +269,18 @@ mod tests {
 
     const T1: &str = "2026-11-01T10:00:00.000Z";
     const T2: &str = "2026-11-02T10:00:00.000Z";
+
+    #[test]
+    fn the_upload_text_never_holds_the_recordings_path() {
+        let mut set = set(T1, &[("a", 1.0)]);
+        set.file_identity.file_path = Some("/home/someone/bats/night 3/pond.wav".into());
+        let text = drive_text(&set).unwrap();
+        assert!(!text.contains("file_path"));
+        assert!(!text.contains("/home/someone"));
+        assert!(text.contains("time_start"));
+        // The set itself is left as it was.
+        assert!(set.file_identity.file_path.is_some());
+    }
 
     #[test]
     fn no_drive_copy_uploads() {

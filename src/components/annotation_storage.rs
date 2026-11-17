@@ -3,11 +3,11 @@
 //! annotation's "⋯" menu on the spectrogram.
 //!
 //! Row 1 is the copy on this device: in this browser (web), on this device
-//! (desktop and Android), or not saved for a view-only file. Row 2 is the
-//! second copy, when there is one: Google Drive (web, signed in), with the
-//! state of this file's upload, or the .batm file beside the recording
-//! (desktop and Android). Row 2 keeps its height through every Drive state,
-//! so the list below does not move after each save. The Drive row is a link
+//! (desktop and Android), or not saved for a view-only file. Then, on the
+//! desktop and Android, the .batm file beside the recording when there is
+//! one. Last, when signed in (web and desktop), Google Drive with the state
+//! of this file's upload. The Drive row keeps its height through every
+//! state, so the list below does not move after each save. The Drive row is a link
 //! to the Google Drive settings, not a grey button: its text is a state, and
 //! a button would read as "do this now".
 
@@ -100,29 +100,26 @@ pub fn AnnotationStorage() -> impl IntoView {
                 .into_any(),
             );
         }
-        if state.is_tauri {
-            let batm = format!("{}.batm", file.name);
-            return Some(
-                view! {
-                    <div class="annotation-storage">
-                        <div class="annotation-storage-row">{SAVED_ON_DEVICE}</div>
-                        {file.had_sidecar.then(|| view! {
-                            <div class="annotation-storage-row with-name" title=format!("{batm} is in the same folder as the recording")>
-                                "Also saved in "
-                                <span class="annotation-storage-name">{batm.clone()}</span>
-                                " beside the recording"
-                            </div>
-                        })}
-                    </div>
-                }
-                .into_any(),
-            );
-        }
+        // Row 1: this device. Desktop: then the .batm beside the recording,
+        // when there is one. Last: the Google Drive copy, when signed in.
+        let device = if state.is_tauri {
+            SAVED_ON_DEVICE
+        } else {
+            SAVED_IN_BROWSER
+        };
+        let beside = (state.is_tauri && file.had_sidecar).then(|| format!("{}.batm", file.name));
         let key = file.key.clone();
         Some(
             view! {
                 <div class="annotation-storage">
-                    <div class="annotation-storage-row">{SAVED_IN_BROWSER}</div>
+                    <div class="annotation-storage-row">{device}</div>
+                    {beside.map(|batm| view! {
+                        <div class="annotation-storage-row with-name" title=format!("{batm} is in the same folder as the recording")>
+                            "Also saved in "
+                            <span class="annotation-storage-name">{batm.clone()}</span>
+                            " beside the recording"
+                        </div>
+                    })}
                     {move || {
                         let s = sync::file_drive_state(state, key.as_deref()?)?;
                         let (text, warning) = drive_text(s);

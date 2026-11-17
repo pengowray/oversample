@@ -254,12 +254,21 @@ fn on_error(gen: u64, e: DriveError) {
 
 // ── Start, sign-in, sign-out ────────────────────────────────────────────
 
-/// Start the feature (browser only): ask the server whether it offers
-/// Google sign-in and whether this browser is signed in.
+/// Start the feature: ask whether Google sign-in is offered (the server on
+/// the web; the app's own Rust side on the desktop, which says no on
+/// Android and in builds with no client id) and whether this device is
+/// signed in.
 pub fn init(state: AppState) {
-    if state.is_tauri {
-        return;
-    }
+    let provider = if state.is_tauri {
+        google_auth::Provider::Desktop
+    } else {
+        google_auth::Provider::Web
+    };
+    google_auth::set_provider(provider);
+    state
+        .drive
+        .desktop()
+        .set(provider == google_auth::Provider::Desktop);
     with(|s| {
         s.state = Some(state);
         s.memory = load_memory();
@@ -269,9 +278,10 @@ pub fn init(state: AppState) {
     wasm_bindgen_futures::spawn_local(async move {
         match google_auth::status().await {
             None => state.drive.available().set(false),
-            Some(signed_in) => {
+            Some(status) => {
                 state.drive.available().set(true);
-                if signed_in {
+                state.drive.persistent().set(status.persistent);
+                if status.signed_in {
                     start_session().await;
                 }
             }
@@ -279,9 +289,14 @@ pub fn init(state: AppState) {
     });
 }
 
-/// Open the Google sign-in window. Call from a click handler (browsers
-/// block pop-up windows opened later).
+/// Open the Google sign-in window (web: a pop-up; desktop: the system
+/// browser). Call from a click handler (browsers block pop-up windows opened
+/// later).
 pub fn sign_in(state: AppState) {
+    if google_auth::provider() == google_auth::Provider::Desktop {
+        desktop_sign_in(state);
+        return;
+    }
     let Some(window) = web_sys::window() else {
         return;
     };
@@ -312,7 +327,7 @@ pub fn sign_in(state: AppState) {
             if with(|s| s.sign_in_attempt != attempt || s.signed_in) {
                 return;
             }
-            if google_auth::status().await == Some(true) {
+            if google_auth::status().await.is_some_and(|s| s.signed_in) {
                 state.drive.signing_in().set(false);
                 if !with(|s| s.signed_in) {
                     start_session().await;
@@ -338,6 +353,41 @@ pub fn sign_in(state: AppState) {
             state.drive.signing_in().set(false);
         }
     });
+}
+
+/// Desktop: the Rust side opens the system browser and waits for Google's
+/// redirect (up to 5 minutes, or until Cancel).
+fn desktop_sign_in(state: AppState) {
+    use crate::state::DriveSignInProblem;
+    if state.drive.signing_in().get_untracked() {
+        return;
+    }
+    state.drive.sign_in_problem().set(None);
+    state.drive.signing_in().set(true);
+    wasm_bindgen_futures::spawn_local(async move {
+        let result = google_auth::desktop_sign_in().await;
+        state.drive.signing_in().set(false);
+        match result {
+            Ok(status) => {
+                state.drive.persistent().set(status.persistent);
+                start_session().await;
+            }
+            Err(end) => {
+                let problem = match end {
+                    google_auth::SignInEnd::Cancelled => None,
+                    google_auth::SignInEnd::Denied => Some(DriveSignInProblem::Denied),
+                    google_auth::SignInEnd::TimedOut => Some(DriveSignInProblem::TimedOut),
+                    google_auth::SignInEnd::Failed => Some(DriveSignInProblem::Failed),
+                };
+                state.drive.sign_in_problem().set(problem);
+            }
+        }
+    });
+}
+
+/// Desktop: stop a sign-in that waits for the browser.
+pub fn cancel_sign_in() {
+    google_auth::desktop_cancel_sign_in();
 }
 
 /// Signed in: find the account, compare all files, upload what waits.
@@ -502,7 +552,7 @@ fn add_window_listeners() {
             return;
         }
         wasm_bindgen_futures::spawn_local(async move {
-            if google_auth::status().await == Some(true) && !with(|s| s.signed_in) {
+            if google_auth::status().await.is_some_and(|s| s.signed_in) && !with(|s| s.signed_in) {
                 state.drive.signing_in().set(false);
                 start_session().await;
             }
@@ -538,7 +588,7 @@ pub enum FileDriveState {
 /// The Drive state of the annotation file stored under `key`, or `None`
 /// when not signed in (or in Tauri). Reactive: re-runs when it may change.
 pub fn file_drive_state(state: AppState, key: &str) -> Option<FileDriveState> {
-    if state.is_tauri || !state.drive.signed_in().get() {
+    if !state.drive.signed_in().get() {
         return None;
     }
     let problem = state.drive.problem().get();
@@ -635,7 +685,7 @@ pub fn project_deleted(id: &str) {
 /// A file's saved annotations have been read from local storage (or there
 /// were none): compare with the Drive copy.
 pub fn annotations_loaded(state: AppState, file_id: u64) {
-    if state.is_tauri || !with(|s| s.signed_in) {
+    if !with(|s| s.signed_in) {
         return;
     }
     let Some(key) = open_file_key(state, file_id) else {
@@ -917,6 +967,59 @@ fn drop_pending(sync_key: &str, seq: u64) {
     publish();
 }
 
+// ── Annotation sets on this device ──────────────────────────────────────
+
+/// Where annotation sets are kept on this device: the browser's private
+/// folder (OPFS), or on the desktop the app's own annotations folder
+/// (Tauri commands). Projects are in OPFS on both.
+mod local {
+    use super::google_auth::{self, Provider};
+
+    fn desktop() -> bool {
+        google_auth::provider() == Provider::Desktop
+    }
+
+    /// Keys of every annotation set on this device.
+    pub async fn keys() -> Vec<String> {
+        if !desktop() {
+            return crate::opfs::annotation_keys().await.unwrap_or_default();
+        }
+        crate::tauri_bridge::tauri_invoke_typed_no_args::<Vec<String>>("list_central_annotations")
+            .await
+            .unwrap_or_default()
+    }
+
+    pub async fn read(key: &str) -> Option<String> {
+        if desktop() {
+            crate::opfs::tauri_load_central(key).await.ok().flatten()
+        } else {
+            crate::opfs::opfs_load(key).await.ok().flatten()
+        }
+    }
+
+    pub async fn write(key: &str, text: &str) -> Result<(), String> {
+        if desktop() {
+            crate::opfs::tauri_save_central(key, text).await
+        } else {
+            crate::opfs::opfs_save(key, text).await
+        }
+    }
+
+    /// Desktop: rewrite the .batm beside the recording at `audio_path`, if
+    /// there is one. (A new one is not made: that is the user's choice,
+    /// with "Save .batm".)
+    pub async fn rewrite_beside_recording(audio_path: &str, text: &str) {
+        if !desktop() {
+            return;
+        }
+        if let Ok(Some(_)) = crate::opfs::tauri_load_sidecar(audio_path).await {
+            if let Err(e) = crate::opfs::tauri_save_sidecar(audio_path, text).await {
+                log::warn!("Google Drive: could not update the .batm beside the recording: {e}");
+            }
+        }
+    }
+}
+
 // ── Comparing one file ──────────────────────────────────────────────────
 
 /// Marks a key as being compared, and unmarks it when dropped.
@@ -1093,9 +1196,9 @@ async fn check_annotations(
     }
     let local: Option<AnnotationSet> = match open {
         Some(file_id) => open_file_set(state, file_id),
-        None => match crate::opfs::opfs_load(&key).await {
-            Ok(Some(text)) => yaml_serde::from_str(&text).ok(),
-            _ => None,
+        None => match local::read(&key).await {
+            Some(text) => yaml_serde::from_str(&text).ok(),
+            None => None,
         },
     };
     let local_fp = local.as_ref().map(rules::annotation_fingerprint);
@@ -1158,7 +1261,7 @@ async fn check_annotations(
                 .as_ref()
                 .is_some_and(|l| crate::opfs::opfs_key(&l.file_identity) == key);
             if let (Some(l), true) = (&local, open.is_some() || own_key || d.is_some()) {
-                if let Some(text) = yaml_of(l) {
+                if let Some(text) = rules::drive_text(l) {
                     let seq = next_save_seq();
                     let name = format!("{}.batm", l.file_identity.filename);
                     with(|s| {
@@ -1224,36 +1327,48 @@ async fn check_annotations(
                     set_seen(&sk, Some(seen_from(&d)));
                 }
                 None => {
-                    let (out_text, out_fp) = if action == Action::Merge {
-                        let merged = match &local {
+                    let out = if action == Action::Merge {
+                        match &local {
                             Some(l) => rules::merge_annotation_sets(drive_set, l),
                             None => drive_set,
-                        };
-                        let fp = rules::annotation_fingerprint(&merged);
-                        (yaml_of(&merged).unwrap_or(text), fp)
+                        }
                     } else {
-                        (text, d.fp.clone())
+                        drive_set
                     };
-                    if let Err(e) = crate::opfs::opfs_save(&key, &out_text).await {
+                    let out_fp = if action == Action::Merge {
+                        rules::annotation_fingerprint(&out)
+                    } else {
+                        d.fp.clone()
+                    };
+                    // The copy on this device keeps the recording's path (the
+                    // desktop app's central copies hold it); Drive never
+                    // gets it.
+                    let mut on_device = out.clone();
+                    on_device.file_identity.file_path = local
+                        .as_ref()
+                        .and_then(|l| l.file_identity.file_path.clone());
+                    let Some(device_text) = yaml_of(&on_device) else {
+                        return Ok(());
+                    };
+                    if let Err(e) = local::write(&key, &device_text).await {
                         log::warn!("Google Drive: could not store {key} locally: {e}");
                         return Ok(());
                     }
+                    let upload_text = rules::drive_text(&out);
+                    // Desktop: a .batm beside the recording is rewritten too.
+                    // Left as it was, the next open could prefer it over the
+                    // central copy (the later modified_at wins there) and
+                    // upload the old set.
+                    if let (Some(path), Some(t)) =
+                        (&on_device.file_identity.file_path, &upload_text)
+                    {
+                        local::rewrite_beside_recording(path, t).await;
+                    }
                     set_seen(&sk, Some(seen_from(&d)));
-                    if out_fp != d.fp {
-                        let name = yaml_serde::from_str::<AnnotationSet>(&out_text)
-                            .map(|s| format!("{}.batm", s.file_identity.filename))
-                            .unwrap_or_else(|_| d.file.name.clone());
+                    if let (true, Some(text)) = (out_fp != d.fp, upload_text) {
+                        let name = format!("{}.batm", out.file_identity.filename);
                         let seq = next_save_seq();
-                        with(|s| {
-                            s.pending.insert(
-                                sk.clone(),
-                                Pending {
-                                    name,
-                                    text: out_text,
-                                    seq,
-                                },
-                            )
-                        });
+                        with(|s| s.pending.insert(sk.clone(), Pending { name, text, seq }));
                     }
                 }
             }
@@ -1435,7 +1550,7 @@ async fn reconcile_inner(gen: u64) -> Result<(), DriveError> {
     if !alive(gen) {
         return Ok(());
     }
-    let local_keys = crate::opfs::annotation_keys().await.unwrap_or_default();
+    let local_keys = local::keys().await;
     for key in local_keys {
         let files = drive_sets
             .remove(&rules::drive_key(&key))

@@ -179,3 +179,73 @@ export async function mockServer(page: Page, drive: MockDrive) {
   });
 }
 
+/** The desktop app's Google commands, stubbed (google_drive_desktop.spec.ts). */
+export type Stub = {
+  available: boolean;
+  signedIn: boolean;
+  persistent: boolean;
+  /** How the next google_sign_in ends: "ok" or an error code. */
+  nextSignIn: string;
+  signInCalls: number;
+  central: Record<string, string>;
+};
+
+/** Run the page as if inside the desktop app, with the Google commands and
+ * the central annotations folder answered by a stub. */
+export async function desktopApp(page: Page, stub: Partial<Stub>) {
+  await page.addInitScript((initial) => {
+    const st = {
+      available: true,
+      signedIn: false,
+      persistent: true,
+      nextSignIn: "ok",
+      signInCalls: 0,
+      central: {} as Record<string, string>,
+      cancel: null as null | (() => void),
+      ...initial,
+    };
+    (window as unknown as { __googleStub: typeof st }).__googleStub = st;
+    const status = () => ({ available: st.available, signedIn: st.signedIn, persistent: st.persistent });
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      transformCallback: () => 0,
+      metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+      invoke: (cmd: string, args: Record<string, string>) => {
+        switch (cmd) {
+          case "google_status":
+            return Promise.resolve(status());
+          case "google_sign_in":
+            st.signInCalls++;
+            return new Promise((resolve, reject) => {
+              st.cancel = () => reject("cancelled");
+              if (st.nextSignIn === "wait") return;
+              setTimeout(() => {
+                if (st.nextSignIn === "ok") {
+                  st.signedIn = true;
+                  resolve(status());
+                } else reject(st.nextSignIn);
+              }, 300);
+            });
+          case "google_sign_in_cancel":
+            st.cancel?.();
+            return Promise.resolve(null);
+          case "google_access_token":
+            return st.signedIn
+              ? Promise.resolve({ accessToken: "test-token", expiresIn: 3600 })
+              : Promise.reject("signed_out");
+          case "google_sign_out":
+            st.signedIn = false;
+            return Promise.resolve(null);
+          case "list_central_annotations":
+            return Promise.resolve(Object.keys(st.central));
+          case "read_central_annotations":
+            return Promise.resolve(st.central[args.fileKey] ?? null);
+          case "write_central_annotations":
+            st.central[args.fileKey] = args.yaml;
+            return Promise.resolve(null);
+          default:
+            return Promise.resolve(null);
+        }
+      },
+    };
+  }, stub);
+}

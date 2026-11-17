@@ -63,14 +63,16 @@ pub fn google_sign_in_cancel() {
 }
 
 /// A valid access token, renewed with the refresh token when needed.
+/// `force`: renew even if the cached one has not expired (Drive refused it).
 #[tauri::command]
-pub async fn google_access_token() -> Result<AccessToken, String> {
+pub async fn google_access_token(force: Option<bool>) -> Result<AccessToken, String> {
     #[cfg(desktop)]
     {
-        imp::access_token().await
+        imp::access_token(force.unwrap_or(false)).await
     }
     #[cfg(not(desktop))]
     {
+        let _ = force;
         Err("unavailable".into())
     }
 }
@@ -223,10 +225,13 @@ mod imp {
         }
     }
 
-    pub async fn access_token() -> Result<AccessToken, String> {
+    pub async fn access_token(force: bool) -> Result<AccessToken, String> {
         let cfg = Config::from_build().ok_or("unavailable")?;
         load_once().await;
         let now = Instant::now();
+        if force {
+            with(|s| s.access = None);
+        }
         if let Some((token, until)) = with(|s| s.access.clone()) {
             if until > now + RENEW_MARGIN {
                 return Ok(AccessToken {

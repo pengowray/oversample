@@ -1943,6 +1943,27 @@ pub struct DriveState {
     /// Goes up by one each time a project arrives from Drive, so that an
     /// open project list loads again.
     pub projects_changed: u32,
+    /// Sign-in goes through the desktop app's own browser flow, not the
+    /// web pop-up (the wording of the sign-in lines differs).
+    pub desktop: bool,
+    /// The sign-in is kept after the app closes. False on a desktop with no
+    /// credential store.
+    pub persistent: bool,
+    /// How the last desktop sign-in ended without signing in (cleared at
+    /// the next attempt).
+    pub sign_in_problem: Option<DriveSignInProblem>,
+}
+
+/// How a desktop sign-in ended without signing in. (Cancel in the app is
+/// not a problem and is not shown.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DriveSignInProblem {
+    /// The user declined on Google's page.
+    Denied,
+    /// The browser did not come back within the time limit.
+    TimedOut,
+    /// Anything else: no network, a refused request.
+    Failed,
 }
 
 /// Why a Google Drive request failed.

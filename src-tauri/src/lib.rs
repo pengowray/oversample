@@ -118,6 +118,7 @@ pub fn run() {
             cmd_annotations::write_sidecar,
             cmd_annotations::read_central_annotations,
             cmd_annotations::write_central_annotations,
+            cmd_annotations::list_central_annotations,
             cmd_annotations::export_annotations_file,
             cmd_annotations::open_file_dialog,
             cmd_models::models_sizes,

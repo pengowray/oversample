@@ -350,13 +350,15 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
     };
     let mut set = crate::te_correction::to_file_units_at(state, file_idx, set);
 
-    // Touch modified_at. In the browser only when the content changed since
-    // the file was read or last saved: saves on file switch, after a hash is
-    // computed or under a new key are not edits, and a later time would let
-    // an untouched copy win over a Google Drive copy. (Tauri keeps touching
-    // on every save; its sidecar and central copies compare these times.)
+    // Touch modified_at only when the content changed since the file was
+    // read or last saved: saves on file switch, after a hash is computed or
+    // under a new key are not edits, and a later time would let an
+    // untouched copy win over a Google Drive copy. On the desktop the
+    // central copy and the .batm beside the recording are written together
+    // with the same time, and the one read at load is the later one
+    // (`newer_of_central_and_beside`), which this does not change.
     let fingerprint = crate::cloud::rules::annotation_fingerprint(&set);
-    if state.is_tauri || !fingerprint_unchanged(file_id, &fingerprint) {
+    if !fingerprint_unchanged(file_id, &fingerprint) {
         state.annotations.store().update(|store| {
             if let Some(stored) = store.get_mut(file_id) {
                 stored.touch();
@@ -374,6 +376,11 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
             return;
         }
     };
+    // What goes to the Google Drive copy: the same set without the
+    // recording's path.
+    let drive_text = crate::cloud::rules::drive_text(&set);
+    let audio_name = set.file_identity.filename.clone();
+    let seq = crate::cloud::sync::next_save_seq();
     if state.is_tauri {
         // Tauri: always save to central annotations directory
         wasm_bindgen_futures::spawn_local(async move {
@@ -381,6 +388,9 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
                 log::warn!("Tauri central save error: {e}");
             } else {
                 log::debug!("Tauri saved annotations: {key}");
+                if let Some(text) = drive_text {
+                    crate::cloud::sync::annotation_saved(&key, &audio_name, text, seq);
+                }
             }
             // Only auto-save file-adjacent sidecar if one already existed on load
             if had_sidecar {
@@ -396,16 +406,15 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
         });
     } else {
         // Browser: save to OPFS, then hand the same set to the Google Drive
-        // copy (without the file path, which the browser does not have).
-        let drive_text = sidecar_yaml_without_full_path(&set);
-        let audio_name = set.file_identity.filename.clone();
-        let seq = crate::cloud::sync::next_save_seq();
+        // copy.
         wasm_bindgen_futures::spawn_local(async move {
             if let Err(e) = opfs_save(&key, &yaml).await {
                 log::warn!("OPFS save error: {e}");
             } else {
                 log::debug!("OPFS saved annotations: {key}");
-                crate::cloud::sync::annotation_saved(&key, &audio_name, drive_text, seq);
+                if let Some(text) = drive_text {
+                    crate::cloud::sync::annotation_saved(&key, &audio_name, text, seq);
+                }
             }
         });
     }
@@ -582,7 +591,9 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
     wasm_bindgen_futures::spawn_local(async move {
         match tauri_save_sidecar(&path, &sidecar_yaml).await {
             Ok(()) => state.show_info_toast(format!("Saved {path}.batm")),
-            Err(e) => state.show_error_toast(format!("Couldn't save the .batm beside the recording: {e}")),
+            Err(e) => {
+                state.show_error_toast(format!("Couldn't save the .batm beside the recording: {e}"))
+            }
         }
     });
 }
@@ -835,6 +846,9 @@ fn load_annotations_tauri(
     wasm_bindgen_futures::spawn_local(async move {
         // Saves of this file wait until this read is done.
         let _hold = hold;
+        // (An inner block, so that the Drive comparison below runs after
+        // every way out of it.)
+        async {
         // Read file-adjacent sidecar once (if path known) for both existence check and fallback
         let sidecar_yaml = if let Some(ref path) = file_path {
             match tauri_load_sidecar(path).await {
@@ -920,20 +934,8 @@ fn load_annotations_tauri(
             }
         });
 
-        // Pick the winner. Central wins ties (equal/absent timestamps) so it
-        // stays the canonical source when there's no reason to prefer otherwise.
-        let (winner, needs_resave) = match (central, sidecar) {
-            (Some(c), Some(s)) => {
-                if annotation_is_newer(&s, &c) {
-                    (Some(s), true) // sidecar newer → adopt + re-save to central
-                } else {
-                    (Some(c), central_via_fallback)
-                }
-            }
-            (Some(c), None) => (Some(c), central_via_fallback),
-            (None, Some(s)) => (Some(s), true),
-            (None, None) => (None, false),
-        };
+        let (winner, needs_resave) =
+            newer_of_central_and_beside(central, sidecar, central_via_fallback);
 
         if let Some(loaded) = winner {
             if !apply_saved_set(state, file_id, loaded) {
@@ -948,7 +950,42 @@ fn load_annotations_tauri(
                 }
             }
         }
+        }
+        .await;
+        // Compare with the Google Drive copy, if signed in.
+        crate::cloud::sync::annotations_loaded(state, file_id);
     });
+}
+
+/// Desktop: which saved copy of a file's annotations to use, the central
+/// copy or the .batm beside the recording, and whether to save it again
+/// (to the central copy under the primary key).
+///
+/// The one with the later `modified_at` wins; the central copy wins ties
+/// (equal or absent times), so it stays the source when there is no reason
+/// to prefer the other. Both are written together on each save, with the
+/// same time. The later time decides only when one was changed alone: the
+/// .batm edited outside the app, or the central copy replaced by a Google
+/// Drive copy. That is why a Drive copy is also written to the .batm beside
+/// the recording when there is one (`cloud::sync`): otherwise the old .batm
+/// could carry the later time and be chosen.
+pub(crate) fn newer_of_central_and_beside(
+    central: Option<crate::annotations::AnnotationSet>,
+    beside: Option<crate::annotations::AnnotationSet>,
+    central_via_fallback: bool,
+) -> (Option<crate::annotations::AnnotationSet>, bool) {
+    match (central, beside) {
+        (Some(c), Some(b)) => {
+            if annotation_is_newer(&b, &c) {
+                (Some(b), true)
+            } else {
+                (Some(c), central_via_fallback)
+            }
+        }
+        (Some(c), None) => (Some(c), central_via_fallback),
+        (None, Some(b)) => (Some(b), true),
+        (None, None) => (None, false),
+    }
 }
 
 /// True if `a` has a strictly newer `modified_at` than `b`. `modified_at` is an
@@ -982,7 +1019,7 @@ struct AnnotationArgs<'a> {
 }
 
 /// Save annotations to the Tauri central annotations directory.
-async fn tauri_save_central(file_key: &str, yaml: &str) -> Result<(), String> {
+pub(crate) async fn tauri_save_central(file_key: &str, yaml: &str) -> Result<(), String> {
     crate::tauri_bridge::tauri_invoke_args(
         "write_central_annotations",
         &AnnotationArgs {
@@ -995,7 +1032,7 @@ async fn tauri_save_central(file_key: &str, yaml: &str) -> Result<(), String> {
 }
 
 /// Load annotations from the Tauri central annotations directory.
-async fn tauri_load_central(file_key: &str) -> Result<Option<String>, String> {
+pub(crate) async fn tauri_load_central(file_key: &str) -> Result<Option<String>, String> {
     crate::tauri_bridge::tauri_invoke_typed_args(
         "read_central_annotations",
         &AnnotationArgs {
@@ -1008,7 +1045,7 @@ async fn tauri_load_central(file_key: &str) -> Result<Option<String>, String> {
 }
 
 /// Save a file-adjacent sidecar via Tauri IPC.
-async fn tauri_save_sidecar(path: &str, yaml: &str) -> Result<(), String> {
+pub(crate) async fn tauri_save_sidecar(path: &str, yaml: &str) -> Result<(), String> {
     crate::tauri_bridge::tauri_invoke_args(
         "write_sidecar",
         &AnnotationArgs {
@@ -1021,7 +1058,7 @@ async fn tauri_save_sidecar(path: &str, yaml: &str) -> Result<(), String> {
 }
 
 /// Load a file-adjacent sidecar via Tauri IPC.
-async fn tauri_load_sidecar(path: &str) -> Result<Option<String>, String> {
+pub(crate) async fn tauri_load_sidecar(path: &str) -> Result<Option<String>, String> {
     crate::tauri_bridge::tauri_invoke_typed_args(
         "read_sidecar",
         &AnnotationArgs {
@@ -1031,4 +1068,57 @@ async fn tauri_load_sidecar(path: &str) -> Result<Option<String>, String> {
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::newer_of_central_and_beside;
+    use crate::annotations::AnnotationSet;
+
+    fn set(at: &str, region: &str) -> AnnotationSet {
+        yaml_serde::from_str(&format!(
+            "version: 3\nid: s\nmodified_at: {at}\nfile_identity:\n  filename: a.wav\n  file_size: 1\n\
+             annotations:\n- id: {region}\n  type: Region\n  time_start: 1.0\n  time_end: 2.0\n  \
+             created_at: {at}\n  modified_at: {at}\n"
+        ))
+        .unwrap()
+    }
+
+    fn region(s: &Option<AnnotationSet>) -> &str {
+        s.as_ref().unwrap().annotations[0].id.as_str()
+    }
+
+    /// A Google Drive copy (an edit made on another device at 10:00) replaced
+    /// the central copy. The .batm beside the recording still holds the old
+    /// set, saved here at 11:00. If only the central copy were rewritten,
+    /// the old .batm would be chosen at the next open and uploaded back over
+    /// the Drive edit; written to both, the Drive copy is chosen.
+    #[test]
+    fn a_drive_copy_must_also_replace_the_batm_beside_the_recording() {
+        let drive = set("2026-11-18T10:00:00.000Z", "from-drive");
+        let old_beside = set("2026-11-18T11:00:00.000Z", "old");
+        let (chosen, _) = newer_of_central_and_beside(Some(drive.clone()), Some(old_beside), false);
+        assert_eq!(
+            region(&chosen),
+            "old",
+            "the hazard: central alone is not enough"
+        );
+        let (chosen, resave) = newer_of_central_and_beside(Some(drive.clone()), Some(drive), false);
+        assert_eq!(region(&chosen), "from-drive");
+        assert!(!resave);
+    }
+
+    #[test]
+    fn central_wins_ties_and_an_edited_batm_wins_when_later() {
+        let c = set("2026-11-18T10:00:00.000Z", "central");
+        let b = set("2026-11-18T10:00:00.000Z", "beside");
+        assert_eq!(
+            region(&newer_of_central_and_beside(Some(c.clone()), Some(b), false).0),
+            "central"
+        );
+        let later = set("2026-11-18T12:00:00.000Z", "edited");
+        let (chosen, resave) = newer_of_central_and_beside(Some(c), Some(later), false);
+        assert_eq!(region(&chosen), "edited");
+        assert!(resave);
+    }
 }
