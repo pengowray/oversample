@@ -1964,6 +1964,7 @@ body.sidebar-resizing {
 }
 .hash-status-failed {
     color: #ff9800;
+    overflow-wrap: anywhere;
 }
 /* A hash that differs from the saved one is the case the group exists for:
    red text, and a red tint over the whole row. */
@@ -1978,11 +1979,17 @@ body.sidebar-resizing {
 .hash-pair {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: 2px 8px;
+    gap: 2px 6px;
     align-items: baseline;
     padding-top: 3px;
 }
+/* Under the two hashes of a mismatch with saved annotations. */
+.hash-save-btn {
+    margin-top: 6px;
+    min-height: 24px;
+}
 .hash-pair-label {
+    white-space: nowrap;
     font-size: 11px;
     color: #aaa;
 }

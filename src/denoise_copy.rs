@@ -212,19 +212,27 @@ pub async fn open(state: AppState, written: Written, name: &str) -> Result<(), S
         Written::Browser(file, stored) => {
             let opened =
                 crate::components::file_sidebar::read_and_load_file(file, state, load_id).await;
-            // A copy that was decoded into memory needs its file no longer.
-            // One that is read from its file keeps it until it is closed.
-            let streamed = state.library.files().with_untracked(|files| {
+            // A copy that is read from its file keeps it until it is closed.
+            // So does a large copy that was decoded into memory: its hashes
+            // other than the spot hash are computed from the file when the
+            // Info panel asks for them. A small copy has all its hashes by
+            // now, and its file is deleted.
+            let keeps_file = state.library.files().with_untracked(|files| {
                 files
                     .last()
-                    .filter(|f| f.name == name && f.file_handle.is_some())
+                    .filter(|f| {
+                        f.name == name
+                            && (f.file_handle.is_some()
+                                || f.audio.metadata.file_size as u64
+                                    >= crate::file_identity::SMALL_FILE_THRESHOLD)
+                    })
                     .map(|f| f.id)
             });
-            match (&opened, streamed) {
+            match (&opened, keeps_file) {
                 (Ok(()), Some(id)) => STORED.with(|s| s.borrow_mut().push((id, stored))),
                 _ => {
-                    // The stored file is deleted, so the copy's hashes
-                    // cannot be computed from it later.
+                    // The stored file is deleted, so nothing can be read
+                    // from it later.
                     state.library.files().update(|files| {
                         if let Some(f) = files.last_mut().filter(|f| f.name == name) {
                             f.hash_source = None;

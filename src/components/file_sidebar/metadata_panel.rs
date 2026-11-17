@@ -963,6 +963,12 @@ fn gps_block(lat: f64, lon: f64, raw_value: String) -> impl IntoView {
 /// Characters of a hash shown before and after the "…" that stands for its
 /// middle.
 const HASH_SHOWN_EACH_END: usize = 10;
+/// The same, for the two hashes of a mismatch, which each follow a name
+/// ("This file", "Xeno-canto") on the same line.
+const HASH_SHOWN_EACH_END_IN_PAIR: usize = 8;
+/// Characters of a read error shown in a hash row. The whole error is in the
+/// line's tooltip. A browser's error can run to a stack trace of many lines.
+const READ_ERROR_SHOWN: usize = 80;
 
 /// A hash on one line: its first and last characters with "…" between them.
 ///
@@ -971,9 +977,8 @@ const HASH_SHOWN_EACH_END: usize = 10;
 /// 0), and the "…" is drawn by CSS, so it is not part of the copied text. A
 /// `copy` listener in index.html covers browsers that leave zero-size text
 /// out of the clipboard: it puts `data-full` there.
-fn hash_value(hash: &str) -> impl IntoView {
+fn hash_value(hash: &str, n: usize) -> impl IntoView {
     let full = hash.to_string();
-    let n = HASH_SHOWN_EACH_END;
     if !hash.is_ascii() || hash.len() <= 2 * n + 1 {
         let text = full.clone();
         return view! { <span class="hash-value" data-full=full>{text}</span> }.into_any();
@@ -1097,9 +1102,12 @@ fn hash_row(
             return view! { <div class="hash-status hash-status-busy">{text}</div> }.into_any();
         }
         if let Some(error) = failure {
+            let first_line = error.lines().next().unwrap_or_default();
+            let short: String = first_line.chars().take(READ_ERROR_SHOWN).collect();
+            let cut = short.len() < error.len();
             return view! {
-                <div class="hash-status hash-status-failed">
-                    {format!("Could not read the file: {error}")}
+                <div class="hash-status hash-status-failed" title=error.clone()>
+                    {format!("Could not read the file: {short}{}", if cut { "…" } else { "" })}
                 </div>
             }
             .into_any();
@@ -1117,9 +1125,18 @@ fn hash_row(
             }
             Some(HashState::Saved) => view! {
                 <div class="hash-status">
-                    {match source {
-                        SavedSource::XenoCanto => "From Xeno-canto. Not compared yet.",
-                        SavedSource::Annotations => "From saved annotations. Not compared yet.",
+                    {match (source, can_compute) {
+                        (SavedSource::XenoCanto, true) => "From Xeno-canto. Not compared yet.",
+                        (SavedSource::Annotations, true) => {
+                            "From saved annotations. Not compared yet."
+                        }
+                        // No Check button: say why.
+                        (SavedSource::XenoCanto, false) => {
+                            "From Xeno-canto. Not compared: the file can't be read again."
+                        }
+                        (SavedSource::Annotations, false) => {
+                            "From saved annotations. Not compared: the file can't be read again."
+                        }
                     }}
                 </div>
             }
@@ -1151,20 +1168,32 @@ fn hash_row(
             </div>
             <div class="hash-pair">
                 <span class="hash-pair-label">"This file"</span>
-                {hash_value(computed)}
+                {hash_value(computed, HASH_SHOWN_EACH_END_IN_PAIR)}
                 <span class="hash-pair-label">
                     {match source {
                         SavedSource::XenoCanto => "Xeno-canto",
                         SavedSource::Annotations => "Saved",
                     }}
                 </span>
-                {hash_value(saved)}
+                {hash_value(saved, HASH_SHOWN_EACH_END_IN_PAIR)}
             </div>
+            {(*source == SavedSource::Annotations).then(|| {
+                let on_click = move |ev: web_sys::MouseEvent| {
+                    ev.stop_propagation();
+                    crate::file_identity::save_file_hash(state, file_id, kind);
+                };
+                view! {
+                    <button class="hash-calc-btn hash-save-btn" on:click=on_click
+                        title="Replace the hash in saved annotations with this file's hash.">
+                        "Save this file's hash"
+                    </button>
+                }
+            })}
         }
         .into_any(),
         _ => match &shown {
             Some(hash) => {
-                view! { <div class="metadata-value-block">{hash_value(hash)}</div> }.into_any()
+                view! { <div class="metadata-value-block">{hash_value(hash, HASH_SHOWN_EACH_END)}</div> }.into_any()
             }
             None if coming => ().into_any(),
             None => view! {

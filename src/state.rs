@@ -2495,8 +2495,6 @@ pub struct StatusState {
     pub visual_viewport_rect: (f64, f64, f64, f64),
     /// Whether a full hash computation (Layer 3/4) is running.
     pub hash_computing: bool,
-    /// Generation counter for cancelling in-progress hash computations.
-    pub hash_generation: u32,
 }
 
 /// Pointer / selection / drag interaction state.
@@ -2808,7 +2806,6 @@ impl AppState {
                 viewport_zoomed: false,
                 visual_viewport_rect: (0.0, 0.0, 0.0, 1.0),
                 hash_computing: false,
-                hash_generation: 0,
             }),
             flow: Store::new(FlowState {
                 enabled: false,

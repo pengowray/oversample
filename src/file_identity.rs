@@ -509,6 +509,10 @@ pub fn main_hash(file_size: u64, rows: &[HashRow], preferred_is_coming: bool) ->
 /// is not: the content hash is equal to the saved content hash, and a hash
 /// of the file (spot, full BLAKE3 or full SHA-256) differs from the saved one.
 /// An edit to the file's header or to metadata stored in it does this.
+///
+/// False when a hash of the whole file (full BLAKE3 or full SHA-256) is equal
+/// to the saved one: the file is then the saved file, and the differing hash
+/// is the one that is wrong.
 pub fn only_audio_matches(rows: &[HashRow]) -> bool {
     let state = |kind| {
         rows.iter()
@@ -519,6 +523,9 @@ pub fn only_audio_matches(rows: &[HashRow]) -> bool {
         && [HashKind::Spot, HashKind::Blake3, HashKind::Sha256]
             .into_iter()
             .any(|kind| state(kind) == Some(HashState::Mismatch))
+        && ![HashKind::Blake3, HashKind::Sha256]
+            .into_iter()
+            .any(|kind| state(kind) == Some(HashState::Match))
 }
 
 /// The hashes and size in an identity read from saved annotations.
@@ -555,20 +562,60 @@ pub fn remember_saved_hashes(state: AppState, file_id: u64, saved: &FileIdentity
 }
 
 /// The identity to save with a file's annotations: the one computed from the
-/// file, with each kind of hash that has not been computed taken from the
-/// annotations read from disk. Without this a save would drop a full hash
-/// that an earlier session computed for a large file.
+/// file, except for two cases where a kind of hash is taken from the
+/// annotations read from disk (`LoadedFile::saved_hashes`).
+///
+/// - The kind has not been computed in this session. Without this a save
+///   would drop a full hash that an earlier session computed for a large file.
+/// - The kind was computed and differs from the saved hash. The saved hash is
+///   kept, so the Info panel shows the difference again in a later session,
+///   until the user saves the file's own hash (`save_file_hash`).
+///
+/// The spot hash is always the computed one: the annotations are stored
+/// under it (`opfs::opfs_key`).
 pub fn identity_to_save(f: &crate::state::LoadedFile) -> Option<FileIdentity> {
     let mut id = f.identity.clone()?;
     if let Some(saved) = &f.saved_hashes {
         for kind in HashKind::ALL {
+            let Some(saved_hash) = kind.in_saved(saved) else {
+                continue;
+            };
             let slot = kind.in_identity_mut(&mut id);
-            if slot.is_none() {
-                *slot = kind.in_saved(saved).cloned();
+            let keep_saved = match slot.as_ref() {
+                None => true,
+                Some(computed) => {
+                    kind != HashKind::Spot && !computed.eq_ignore_ascii_case(saved_hash)
+                }
+            };
+            if keep_saved {
+                *slot = Some(saved_hash.clone());
             }
         }
     }
     Some(id)
+}
+
+/// Save the hash of `kind` computed from file `file_id` with its annotations,
+/// in place of a saved hash that differs from it. The saved hash is dropped,
+/// so the Info panel no longer shows a difference for this kind.
+pub fn save_file_hash(state: AppState, file_id: u64, kind: HashKind) {
+    state.library.files().update(|files| {
+        if let Some(saved) = files
+            .iter_mut()
+            .find(|f| f.id == file_id)
+            .and_then(|f| f.saved_hashes.as_mut())
+        {
+            match kind {
+                HashKind::Spot => saved.spot_hash_b3 = None,
+                HashKind::Blake3 => saved.blake3 = None,
+                HashKind::Sha256 => saved.sha256 = None,
+                HashKind::Content => saved.content_hash = None,
+            }
+        }
+    });
+    if let Some(file_index) = state.file_idx_for_id(file_id) {
+        crate::opfs::save_annotations_to_opfs(state, file_index);
+    }
 }
 
 /// Whether the identity stored in a saved annotation set can be that of
@@ -1191,6 +1238,16 @@ mod tests {
             None,
             Some(&before)
         )));
+        // The full SHA-256 is the saved one, so the whole file is.
+        id.full_sha256 = Some("sha".into());
+        before.sha256 = Some("sha".into());
+        assert!(!only_audio_matches(&hash_rows(
+            Some(&id),
+            None,
+            Some(&before)
+        )));
+        id.full_sha256 = None;
+        before.sha256 = None;
         // The audio differs too.
         before.blake3 = Some("old".into());
         before.content_hash = Some("other".into());

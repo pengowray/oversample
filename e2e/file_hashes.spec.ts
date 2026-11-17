@@ -251,3 +251,195 @@ test("a large file shows its spot hash, and a saved hash has a Check button", as
   await expect(sha.locator(".hash-pair .hash-value").nth(0)).toHaveAttribute("data-full", sha256(changed));
   await shot(page, group, "large-mismatch");
 });
+
+/** The text of every saved annotation file. */
+const savedTexts = (page: Page): Promise<string[]> =>
+  page.evaluate(async () => {
+    const out: string[] = [];
+    try {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle("oversample-annotations");
+      const entries = (dir as unknown as { entries: () => AsyncIterable<[string, FileSystemFileHandle]> }).entries();
+      for await (const [name, handle] of entries) {
+        if (!name.startsWith("b3_")) continue;
+        try {
+          out.push(await (await handle.getFile()).text());
+        } catch {}
+      }
+    } catch {}
+    return out;
+  });
+
+test("a hash that differs from saved annotations is kept until the file's hash is saved", async ({ page }) => {
+  const wav = noiseWav(96_000, 4, 41);
+  await saveAnnotationsWithSha(page, "kept.wav", wav.length, WRONG_SHA);
+  await open(page, "kept.wav", wav);
+  let group = await identity(page);
+  await expect(row(group, "sha256")).toHaveAttribute("data-state", "mismatch");
+  // The annotations are saved again under the file's spot hash, still with
+  // the saved SHA-256 and not the file's.
+  await expect.poll(async () => (await savedTexts(page)).join("\n")).toContain(WRONG_SHA);
+  expect((await savedTexts(page)).join("\n")).not.toContain(sha256(wav));
+
+  await page.reload();
+  await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+  await open(page, "kept.wav", wav);
+  group = await identity(page);
+  const sha = row(group, "sha256");
+  await expect(sha).toHaveAttribute("data-state", "mismatch");
+  const save = sha.locator("button", { hasText: "Save this file's hash" });
+  await expect(save).toBeVisible();
+  await shot(page, group, "mismatch-with-save-button");
+
+  await save.click();
+  await expect(sha).toHaveAttribute("data-state", "computed");
+  await expect.poll(async () => (await savedTexts(page)).join("\n")).toContain(sha256(wav));
+  expect((await savedTexts(page)).join("\n")).not.toContain(WRONG_SHA);
+});
+
+test("a changed header with the same audio is reported as the same audio", async ({ page }) => {
+  const wav = noiseWav(96_000, 4, 51);
+  // Node has no BLAKE3: read the file's content hash from the panel.
+  await open(page, "header.wav", wav);
+  let group = await identity(page);
+  await group.locator("details.hash-others summary").click();
+  const content = (await row(group, "content").locator(".hash-value").getAttribute("data-full"))!;
+  expect(content).toMatch(/^[0-9a-f]{64}$/);
+
+  // Saved annotations for a file with this audio and another full BLAKE3.
+  const wrongBlake3 = "fedcba9876543210".repeat(4);
+  await page.evaluate(
+    async ([key, text]) => {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle("oversample-annotations", { create: true });
+      const handle = await dir.getFileHandle(key, { create: true });
+      const w = await handle.createWritable();
+      await w.write(text);
+      await w.close();
+    },
+    [
+      `header.wav_${wav.length}.batm`,
+      `version: 3\nid: set-header\napp_version: 0.5.0\ncreated_at: 2026-01-01T00:00:00.000Z\n` +
+        `modified_at: 2026-01-01T00:00:00.000Z\nfile_identity:\n  filename: header.wav\n  file_size: ${wav.length}\n` +
+        `  content_hash: ${content}\n  full_blake3: ${wrongBlake3}\nannotations: []\n`,
+    ],
+  );
+  await page.reload();
+  await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+  await open(page, "header.wav", wav);
+  group = await identity(page);
+  await expect(row(group, "blake3")).toHaveAttribute("data-state", "mismatch");
+  await expect(row(group, "content")).toHaveAttribute("data-state", "match");
+  await expect(group.locator(".hash-note")).toHaveText(
+    "The audio is the same. Only the file's header or embedded metadata is different.",
+  );
+  await shot(page, group, "same-audio-note");
+});
+
+test("a Xeno-canto recording's hashes and size are compared with its metadata file", async ({ page }) => {
+  const audio = noiseWav(96_000, 2, 61);
+  const sidecar = {
+    id: "815138",
+    en: "Fringed Long-footed Myotis",
+    gen: "Myotis",
+    sp: "fimbriatus",
+    rec: "Test",
+    cnt: "Brazil",
+    type: "social call",
+    url: "https://xeno-canto.org/815138",
+    // The SHA-256 of this audio, another file's BLAKE3, and a size 10 bytes off.
+    _app: { sha256: sha256(audio), blake3: "fedcba9876543210".repeat(4), file_size: audio.length + 10 },
+  };
+  const handler = async (route: any) => {
+    const url: string = route.request().url();
+    if (url.endsWith("/index.json")) {
+      return route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          version: 1,
+          sounds: [
+            {
+              en: "Fringed Long-footed Myotis",
+              filename: "XC815138 demo.wav",
+              metadata: "XC815138 demo.xc.json",
+              source: "xeno-canto",
+              species: "Myotis fimbriatus",
+              xc_id: 815138,
+            },
+          ],
+        }),
+      });
+    }
+    if (url.endsWith(".xc.json")) {
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify(sidecar) });
+    }
+    if (url.endsWith(".wav")) return route.fulfill({ contentType: "audio/wav", body: audio });
+    return route.fulfill({ status: 404, body: "" });
+  };
+  await page.route("https://archive.oversample.com/**", handler);
+  await page.route("https://cdn.jsdelivr.net/gh/pengowray/bat-demo-sounds@main/**", handler);
+  // The page is open already, so the new address alone would not load it again.
+  await page.goto("/#XC815138");
+  await page.reload();
+  await expect(page.locator(".chart-stage canvas").first()).toBeVisible({ timeout: 60_000 });
+  const group = await identity(page);
+
+  await expect(row(group, "size").locator(".hash-status-mismatch")).toHaveText(
+    new RegExp(`Different size in Xeno-canto: ${audio.length + 10} bytes`),
+  );
+  const blake3 = row(group, "blake3");
+  await expect(blake3).toHaveAttribute("data-state", "mismatch");
+  await expect(blake3.locator(".hash-status-mismatch")).toHaveText(/Does not match the Xeno-canto hash/);
+  await expect(blake3.locator(".hash-pair-label").nth(1)).toHaveText("Xeno-canto");
+  // A hash from Xeno-canto cannot be replaced with the file's.
+  await expect(blake3.locator("button", { hasText: "Save this file's hash" })).toHaveCount(0);
+  await group.locator("details.hash-others summary").click();
+  await expect(row(group, "sha256").locator(".hash-status")).toHaveText(/Matches the Xeno-canto hash/);
+  await shot(page, group, "xeno-canto");
+});
+
+test("a read of a large file shows its progress, and a failed read says so", async ({ page }) => {
+  test.setTimeout(240_000);
+  const wav = noiseWav(384_000, 33, 71);
+  await saveAnnotationsWithSha(page, "slow.wav", wav.length, sha256(wav));
+  await open(page, "slow.wav", wav);
+  const group = await identity(page);
+  await group.locator("details.hash-others summary").click();
+  const sha = row(group, "sha256");
+  await expect(sha).toHaveAttribute("data-state", "saved");
+
+  // Each 1 MB read takes 60 ms longer, so the progress can be seen.
+  await page.evaluate(() => {
+    const w = window as unknown as { __read: typeof FileReader.prototype.readAsArrayBuffer };
+    w.__read = FileReader.prototype.readAsArrayBuffer;
+    FileReader.prototype.readAsArrayBuffer = function (blob: Blob) {
+      setTimeout(() => w.__read.call(this, blob), 60);
+    };
+  });
+  await sha.locator("button", { hasText: "Check" }).click();
+  await expect(sha.locator(".hash-status-busy")).toHaveText(/^Reading file to compare: \d+%$/);
+  // No Check button while the file is read.
+  await expect(sha.locator("button", { hasText: "Check" })).toHaveCount(0);
+  await shot(page, group, "reading-progress");
+  await expect(sha).toHaveAttribute("data-state", "match", { timeout: 60_000 });
+
+  // A read that fails.
+  await page.evaluate(() => {
+    FileReader.prototype.readAsArrayBuffer = function () {
+      throw new Error("no access");
+    };
+  });
+  const blake3 = row(group, "blake3");
+  await blake3.locator("button", { hasText: "Compute" }).click();
+  await expect(blake3.locator(".hash-status-failed")).toHaveText(/^Could not read the file: /);
+  await shot(page, group, "read-failed");
+
+  // The button is still there, and works once the file can be read.
+  await page.evaluate(() => {
+    const w = window as unknown as { __read: typeof FileReader.prototype.readAsArrayBuffer };
+    FileReader.prototype.readAsArrayBuffer = w.__read;
+  });
+  await blake3.locator("button", { hasText: "Compute" }).click();
+  await expect(blake3).toHaveAttribute("data-state", "computed", { timeout: 60_000 });
+  await expect(blake3.locator(".hash-status-failed")).toHaveCount(0);
+});
