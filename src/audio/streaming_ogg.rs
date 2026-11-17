@@ -3,9 +3,7 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use super::streaming_source::{
-    mix_to_mono, CachedChunk, ChunkCache, FileHandle, CHUNK_FRAMES,
-};
+use super::streaming_source::{mix_to_mono, CachedChunk, ChunkCache, FileHandle, CHUNK_FRAMES};
 use crate::audio::loader::OggHeader;
 use crate::audio::source::{AudioSource, ChannelView};
 

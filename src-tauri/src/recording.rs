@@ -820,14 +820,12 @@ pub fn open_mic(
     // A device with more than 2 channels opens a setting with enough channels
     // for the pick, whatever the Mono/Stereo setting.
     let wide = device_channels > 2;
-    let pick: &[u32] = if wide
-        && !pick.is_empty()
-        && pick.iter().all(|&c| (c as u16) < device_channels)
-    {
-        pick
-    } else {
-        &[]
-    };
+    let pick: &[u32] =
+        if wide && !pick.is_empty() && pick.iter().all(|&c| (c as u16) < device_channels) {
+            pick
+        } else {
+            &[]
+        };
 
     let pref_fmts = preferred_formats_for_bit_depth(max_bit_depth);
 
@@ -973,8 +971,7 @@ pub fn open_mic(
     // A 16-bit device with several channels mixed to mono is stored as 24-bit,
     // keeping the half steps of the mix. Detection still writes it as 16-bit
     // when every channel carries the same audio.
-    let mix_i16_deeper =
-        format == NativeSampleFormat::I16 && map.average && map.sources.len() > 1;
+    let mix_i16_deeper = format == NativeSampleFormat::I16 && map.average && map.sources.len() > 1;
     let storage_format = if mix_i16_deeper {
         NativeSampleFormat::I24
     } else {
@@ -1052,9 +1049,8 @@ pub fn open_mic(
                 // Detection sees the samples as stored (after any mono mix)
                 // whenever the stream runs, so the depth is known when a
                 // recording starts.
-                let stored = map.store(data, |frame| {
-                    frame.iter().sum::<f32>() / frame.len() as f32
-                });
+                let stored =
+                    map.store(data, |frame| frame.iter().sum::<f32>() / frame.len() as f32);
                 let mut buf = buf.lock().unwrap();
                 buf.note_f32_bits(&stored);
                 let recording = rec.load(Ordering::Relaxed);

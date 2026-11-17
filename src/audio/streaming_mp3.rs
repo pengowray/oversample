@@ -3,9 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
-use super::streaming_source::{
-    mix_to_mono, CachedChunk, ChunkCache, FileHandle, CHUNK_FRAMES,
-};
+use super::streaming_source::{mix_to_mono, CachedChunk, ChunkCache, FileHandle, CHUNK_FRAMES};
 use crate::audio::source::{AudioSource, ChannelView};
 
 /// Size of each compressed read window for MP3 streaming (4 MB).

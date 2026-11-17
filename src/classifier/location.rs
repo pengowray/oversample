@@ -7,8 +7,8 @@
 //! The place is the recording's own (GPS in its metadata), or else this
 //! device's position if the user asked for it this session.
 
-use crate::recording_place::{file_place, file_week, Place};
 use super::{catalog, store, worker, ClassifierError, Method, SpeciesLabel};
+use crate::recording_place::{file_place, file_week, Place};
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
