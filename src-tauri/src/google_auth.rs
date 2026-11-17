@@ -425,22 +425,29 @@ fn parse_callback(head: &str) -> Option<Redirect> {
 }
 
 /// Accept connections until one is Google's redirect; answer anything else
-/// (a favicon request, another path) with "Not found".
+/// (a favicon request, another path) with "Not found". Each connection is
+/// read in its own task: browsers may open a connection and send nothing on
+/// it, which must not hold up the redirect on another one.
 async fn wait_for_redirect(listener: &TcpListener) -> Result<(TcpStream, Redirect), AuthError> {
+    let (found_tx, mut found_rx) = tokio::sync::mpsc::channel::<(TcpStream, Redirect)>(4);
     loop {
-        let (mut stream, _) = listener
-            .accept()
-            .await
-            .map_err(|e| AuthError::Failed(format!("loopback accept: {e}")))?;
-        match read_head(&mut stream)
-            .await
-            .as_deref()
-            .and_then(parse_callback)
-        {
-            Some(r) => return Ok((stream, r)),
-            None => {
-                let _ = write_page(&mut stream, "404 Not Found", PAGE_NOT_FOUND).await;
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (mut stream, _) =
+                    accepted.map_err(|e| AuthError::Failed(format!("loopback accept: {e}")))?;
+                let found_tx = found_tx.clone();
+                tokio::spawn(async move {
+                    match read_head(&mut stream).await.as_deref().and_then(parse_callback) {
+                        Some(r) => {
+                            let _ = found_tx.send((stream, r)).await;
+                        }
+                        None => {
+                            let _ = write_page(&mut stream, "404 Not Found", PAGE_NOT_FOUND).await;
+                        }
+                    }
+                });
             }
+            Some(found) = found_rx.recv() => return Ok(found),
         }
     }
 }
@@ -726,6 +733,45 @@ mod tests {
         let (path, f) = reqs.last().unwrap();
         assert_eq!(path, "/revoke");
         assert_eq!(f["token"], "rt-1");
+    }
+
+    /// A browser may open a connection and send nothing on it; the redirect
+    /// on another connection still gets through.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_idle_connection_does_not_hold_up_the_redirect() {
+        let mock = Arc::new(Mock::default());
+        let base = serve_mock(mock.clone()).await;
+        let page = Arc::new(Mutex::new(None));
+        let real = browser(
+            mock.clone(),
+            |state| format!("code=good-code&state={state}"),
+            page.clone(),
+        );
+        let started = std::time::Instant::now();
+        let tokens = sign_in(
+            &config(&base),
+            &http(),
+            move |url: &str| {
+                let q: HashMap<String, String> = oauth2::url::Url::parse(url)
+                    .unwrap()
+                    .query_pairs()
+                    .into_owned()
+                    .collect();
+                let addr = q["redirect_uri"].trim_start_matches("http://").to_string();
+                // An idle connection first, kept open past the redirect.
+                tokio::spawn(async move {
+                    let _idle = TcpStream::connect(addr).await.unwrap();
+                    tokio::time::sleep(Duration::from_secs(20)).await;
+                });
+                real(url)
+            },
+            Arc::new(Notify::new()),
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("sign-in works");
+        assert_eq!(tokens.access_token, "at-1");
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[tokio::test(flavor = "multi_thread")]

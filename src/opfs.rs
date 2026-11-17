@@ -934,8 +934,15 @@ fn load_annotations_tauri(
             }
         });
 
-        let (winner, needs_resave) =
-            newer_of_central_and_beside(central, sidecar, central_via_fallback);
+        // A Google Drive copy downloaded while this recording's place was
+        // unknown: the central copy is the newer content, whatever the time
+        // on the .batm beside the recording says; both get it.
+        let drive_copy_first = crate::cloud::sync::local::take_unplaced(&key);
+        let (winner, needs_resave) = if drive_copy_first && central.is_some() && sidecar.is_some() {
+            (central, true)
+        } else {
+            newer_of_central_and_beside(central, sidecar, central_via_fallback)
+        };
 
         if let Some(loaded) = winner {
             if !apply_saved_set(state, file_id, loaded) {

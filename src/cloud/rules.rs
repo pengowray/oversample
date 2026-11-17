@@ -167,13 +167,44 @@ pub fn annotation_fingerprint(set: &AnnotationSet) -> String {
     hash_json(&content)
 }
 
-/// Fingerprint of a project: all of it except `modified_at` and
-/// `app_version`. 32 hex digits.
+/// Fingerprint of a project: all of it except `modified_at`,
+/// `app_version` and the recordings' paths (which only the desktop app's
+/// copy holds, and Drive never gets). 32 hex digits.
 pub fn project_fingerprint(project: &BatProject) -> String {
-    let mut p = project.clone();
+    let mut p = without_paths(project);
     p.modified_at = None;
     p.app_version = String::new();
     hash_json(&p)
+}
+
+fn without_paths(project: &BatProject) -> BatProject {
+    let mut p = project.clone();
+    for f in &mut p.files {
+        f.identity.file_path = None;
+    }
+    p
+}
+
+/// The text uploaded to Drive for a project: its YAML without the
+/// recordings' paths (`files[].identity.file_path`, desktop only). Every
+/// project upload goes through this.
+pub fn project_drive_text(project: &BatProject) -> Option<String> {
+    yaml_serde::to_string(&without_paths(project)).ok()
+}
+
+/// A project downloaded from Drive, with the recordings' paths on this
+/// device put back from the local copy (matched as `BatProject::find_file`
+/// matches files).
+pub fn with_local_paths(mut from_drive: BatProject, local: Option<&BatProject>) -> BatProject {
+    let Some(local) = local else {
+        return from_drive;
+    };
+    for f in &mut from_drive.files {
+        if let Some(i) = local.find_file(&f.identity) {
+            f.identity.file_path = local.files[i].identity.file_path.clone();
+        }
+    }
+    from_drive
 }
 
 fn hash_json(value: &impl Serialize) -> String {
@@ -211,13 +242,18 @@ pub fn drive_key(local_key: &str) -> String {
 pub const KEY_PROPERTY: &str = "osKey";
 
 /// Whether `key` may be used as a file name in local storage: a Drive file
-/// could carry any text in its key property.
+/// could carry any text in its key property. Only the characters the app's
+/// own keys use are allowed (letters, digits, `.`, `-`, `_`), so no path
+/// separator, drive letter (`C:`) or `..` can reach a file path.
 pub fn local_key_is_safe(key: &str, extension: &str) -> bool {
     !key.is_empty()
         && key.len() <= 255
         && key.ends_with(extension)
         && !key.starts_with('.')
-        && !key.contains(['/', '\\', '\0'])
+        && !key.contains("..")
+        && key
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }
 
 /// The local key of a Drive annotation file: its key property, or for a
@@ -517,6 +553,35 @@ mod tests {
         assert_eq!(local_annotation_key("../evil.batm", &[]), None);
         assert_eq!(local_annotation_key("a/b.batm", &[]), None);
         assert_eq!(local_annotation_key("notes.txt", &[]), None);
+        assert_eq!(local_annotation_key("C:x.batm", &[]), None);
+        assert_eq!(local_annotation_key("a..b.batm", &[]), None);
+        assert_eq!(
+            local_annotation_key("Fledermäuse_teich.wav_100.batm", &[]),
+            Some("Fledermäuse_teich.wav_100.batm".to_string())
+        );
+    }
+
+    #[test]
+    fn projects_go_to_drive_without_paths_and_get_them_back_on_download() {
+        let yaml = "version: 1\nid: p1\nname: Survey\nfiles:\n\
+                    - identity:\n    filename: pond.wav\n    file_size: 100\n    spot_hash_b3: abc\n    \
+                    file_path: /home/someone/bats/pond.wav\n\
+                    - identity:\n    filename: wood.wav\n    file_size: 200\n";
+        let local: BatProject = yaml_serde::from_str(yaml).unwrap();
+        let text = project_drive_text(&local).unwrap();
+        assert!(!text.contains("file_path") && !text.contains("/home/someone"));
+        let from_drive: BatProject = yaml_serde::from_str(&text).unwrap();
+        // The copy without paths counts as the same content.
+        assert_eq!(
+            project_fingerprint(&from_drive),
+            project_fingerprint(&local)
+        );
+        let restored = with_local_paths(from_drive, Some(&local));
+        assert_eq!(
+            restored.files[0].identity.file_path.as_deref(),
+            Some("/home/someone/bats/pond.wav")
+        );
+        assert_eq!(restored.files[1].identity.file_path, None);
     }
 
     #[test]

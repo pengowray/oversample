@@ -36,8 +36,8 @@ fn project_key(id: &str) -> String {
 /// Save a project to OPFS as YAML, then hand it to the Google Drive copy
 /// (if signed in).
 pub async fn save_project(project: &BatProject) -> Result<(), String> {
-    let yaml = write_project_local(project).await?;
-    crate::cloud::sync::project_saved(project, yaml);
+    write_project_local(project).await?;
+    crate::cloud::sync::project_saved(project);
     Ok(())
 }
 

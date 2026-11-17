@@ -110,6 +110,10 @@ struct Sync {
     uploads_running: usize,
     /// Counts sign-in attempts; an older attempt's polling stops.
     sign_in_attempt: u64,
+    /// Google sign-in is offered here. Until it is known (and on Android or
+    /// a desktop build with no Google client) saves are not queued: a
+    /// comparison at sign-in covers them.
+    available: bool,
     /// Goes up whenever the per-file state may have changed, so that
     /// `file_drive_state` callers update (browser only; made in `init`).
     version: Option<ArcRwSignal<u64>>,
@@ -279,6 +283,7 @@ pub fn init(state: AppState) {
         match google_auth::status().await {
             None => state.drive.available().set(false),
             Some(status) => {
+                with(|s| s.available = true);
                 state.drive.available().set(true);
                 state.drive.persistent().set(status.persistent);
                 if status.signed_in {
@@ -629,17 +634,20 @@ pub fn next_save_seq() -> u64 {
 /// An annotation set was written to local storage under `key`. `text` is
 /// what goes to Drive (without the Tauri-only file path).
 pub fn annotation_saved(key: &str, audio_name: &str, text: String, seq: u64) {
-    if with(|s| s.state.is_none()) {
+    if !with(|s| s.available) {
         return;
     }
     queue(batm_key(key), format!("{audio_name}.batm"), text, seq);
 }
 
 /// A project was written to local storage.
-pub fn project_saved(project: &BatProject, text: String) {
-    if with(|s| s.state.is_none()) {
+pub fn project_saved(project: &BatProject) {
+    if !with(|s| s.available) {
         return;
     }
+    let Some(text) = rules::project_drive_text(project) else {
+        return;
+    };
     let seq = next_save_seq();
     queue(
         project_key(&project.id),
@@ -662,7 +670,7 @@ fn project_file_name(project: &BatProject) -> String {
 /// A project was deleted from local storage: its Drive copy goes to the
 /// Drive trash (now, or at the next sign-in).
 pub fn project_deleted(id: &str) {
-    if with(|s| s.state.is_none()) {
+    if !with(|s| s.available) {
         return;
     }
     let mut ids = deleted_projects();
@@ -972,7 +980,7 @@ fn drop_pending(sync_key: &str, seq: u64) {
 /// Where annotation sets are kept on this device: the browser's private
 /// folder (OPFS), or on the desktop the app's own annotations folder
 /// (Tauri commands). Projects are in OPFS on both.
-mod local {
+pub(crate) mod local {
     use super::google_auth::{self, Provider};
 
     fn desktop() -> bool {
@@ -1003,6 +1011,49 @@ mod local {
         } else {
             crate::opfs::opfs_save(key, text).await
         }
+    }
+
+    /// localStorage: keys of sets downloaded into the central folder while
+    /// the recording's place on this computer was unknown.
+    const UNPLACED_KEY: &str = "oversample_drive_unplaced";
+
+    fn unplaced() -> Vec<String> {
+        crate::settings::get_raw(UNPLACED_KEY)
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    fn set_unplaced(keys: &[String]) {
+        if keys.is_empty() {
+            crate::settings::remove_raw(UNPLACED_KEY);
+        } else if let Ok(json) = serde_json::to_string(keys) {
+            crate::settings::set_raw(UNPLACED_KEY, &json);
+        }
+    }
+
+    /// Desktop: note that `key` was downloaded with no known recording
+    /// path, so a .batm beside the recording (found at its next open) was
+    /// not rewritten and may hold an older set with a later time.
+    pub fn mark_unplaced(key: &str) {
+        if !desktop() {
+            return;
+        }
+        let mut keys = unplaced();
+        if !keys.iter().any(|k| k == key) {
+            keys.push(key.to_string());
+            set_unplaced(&keys);
+        }
+    }
+
+    /// Whether `key` was marked by `mark_unplaced`; the mark is removed.
+    pub fn take_unplaced(key: &str) -> bool {
+        let keys = unplaced();
+        if !keys.iter().any(|k| k == key) {
+            return false;
+        }
+        let rest: Vec<String> = keys.into_iter().filter(|k| k != key).collect();
+        set_unplaced(&rest);
+        true
     }
 
     /// Desktop: rewrite the .batm beside the recording at `audio_path`, if
@@ -1359,10 +1410,12 @@ async fn check_annotations(
                     // Left as it was, the next open could prefer it over the
                     // central copy (the later modified_at wins there) and
                     // upload the old set.
-                    if let (Some(path), Some(t)) =
-                        (&on_device.file_identity.file_path, &upload_text)
-                    {
-                        local::rewrite_beside_recording(path, t).await;
+                    match (&on_device.file_identity.file_path, &upload_text) {
+                        (Some(path), Some(t)) => local::rewrite_beside_recording(path, t).await,
+                        // The recording's place is not known yet: at its next
+                        // open the central copy is used and written beside it.
+                        (None, _) => local::mark_unplaced(&key),
+                        _ => {}
                     }
                     set_seen(&sk, Some(seen_from(&d)));
                     if let (true, Some(text)) = (out_fp != d.fp, upload_text) {
@@ -1463,7 +1516,7 @@ async fn check_project(
                 None => set_seen(&sk, None),
             }
             if let Some(p) = &local {
-                if let Some(text) = yaml_of(p) {
+                if let Some(text) = rules::project_drive_text(p) {
                     let seq = next_save_seq();
                     let name = project_file_name(p);
                     with(|s| {
@@ -1487,6 +1540,9 @@ async fn check_project(
                 with(|s| s.blocked.insert(sk.clone()));
                 return Ok(());
             }
+            // The recordings' paths on this device (desktop) come back from
+            // the local copy; Drive never has them.
+            let project = rules::with_local_paths(project, local.as_ref());
             if let Err(e) = crate::project_store::write_project_local(&project).await {
                 log::warn!("Google Drive: could not store project {id} locally: {e}");
                 return Ok(());

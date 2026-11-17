@@ -22,11 +22,31 @@ pub fn write_sidecar(path: String, yaml: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether `file_key` is safe as a file name in the central folder: only
+/// letters, digits, `.`, `-` and `_` (the app's own keys), so no path
+/// separator, drive letter or `..` can reach the path. Keys can come from
+/// Google Drive copies.
+fn check_key(file_key: &str) -> Result<(), String> {
+    let ok = !file_key.is_empty()
+        && file_key.len() <= 255
+        && !file_key.starts_with('.')
+        && !file_key.contains("..")
+        && file_key
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '.' | '-' | '_'));
+    if ok {
+        Ok(())
+    } else {
+        Err("invalid annotation key".into())
+    }
+}
+
 #[tauri::command]
 pub fn read_central_annotations(
     app: tauri::AppHandle,
     file_key: String,
 ) -> Result<Option<String>, String> {
+    check_key(&file_key)?;
     let dir = app
         .path()
         .app_data_dir()
@@ -80,6 +100,7 @@ pub fn write_central_annotations(
     file_key: String,
     yaml: String,
 ) -> Result<(), String> {
+    check_key(&file_key)?;
     let dir = app
         .path()
         .app_data_dir()
@@ -152,6 +173,28 @@ pub async fn open_file_dialog() -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn keys_that_could_leave_the_folder_are_refused() {
+        for bad in [
+            "C:x.batm",
+            "../x.batm",
+            "a/b.batm",
+            "a\\b.batm",
+            ".hidden.batm",
+            "",
+            "a..b.batm",
+        ] {
+            assert!(super::check_key(bad).is_err(), "{bad}");
+        }
+        for good in [
+            "b3_0123abcd.batm",
+            "Fledermäuse_teich.wav_100.batm",
+            "x-y.wav_1.batm",
+        ] {
+            assert!(super::check_key(good).is_ok(), "{good}");
+        }
+    }
+
     #[test]
     fn central_keys_drop_one_batm_and_temp_files() {
         let names = [
