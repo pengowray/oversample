@@ -116,11 +116,19 @@ fn parse<T: for<'de> Deserialize<'de>>(reply: &Reply) -> Result<T, DriveError> {
 
 /// The signed-in account's email address.
 pub async fn account_email() -> Result<String, DriveError> {
+    Ok(account().await?.0)
+}
+
+/// The signed-in account's email address and its stable Drive id
+/// (`permissionId`, which stays the same if the email changes).
+pub async fn account() -> Result<(String, String), DriveError> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct User {
         #[serde(default)]
         email_address: String,
+        #[serde(default)]
+        permission_id: String,
     }
     #[derive(Deserialize)]
     struct About {
@@ -128,11 +136,11 @@ pub async fn account_email() -> Result<String, DriveError> {
     }
     let url = format!(
         "{API}/about?fields={}",
-        http::encode("user(emailAddress,displayName)")
+        http::encode("user(emailAddress,displayName,permissionId)")
     );
     let reply = call("GET", &url, None, None).await?;
     let about: About = parse(&reply)?;
-    Ok(about.user.email_address)
+    Ok((about.user.email_address, about.user.permission_id))
 }
 
 /// A Drive query string literal: in single quotes, with `\` and `'` escaped.

@@ -56,11 +56,20 @@ const FULL: &str =
 const REFUSED: &str =
     "Google Drive rejected a change. Changes are saved on this device and will upload later.";
 
-fn problem_text(p: DriveProblem) -> &'static str {
+/// Drive no longer shows the Oversample folder (see `DriveProblem`).
+const FOLDER_MISSING: &str =
+    "Can't find the Oversample folder in Google Drive. Copying to Drive is paused. Everything is still saved in this browser. If you deleted the folder, it may be in Drive's trash.";
+
+fn problem_text(p: DriveProblem) -> String {
     match p {
-        DriveProblem::Unreachable => UNREACHABLE,
-        DriveProblem::Full => FULL,
-        DriveProblem::Refused => REFUSED,
+        DriveProblem::Unreachable => UNREACHABLE.to_string(),
+        DriveProblem::Full => FULL.to_string(),
+        DriveProblem::Refused => REFUSED.to_string(),
+        DriveProblem::FolderMissing => FOLDER_MISSING.to_string(),
+        DriveProblem::FilesMissing(n) => format!(
+            "{n} files are missing from the Oversample folder in Google Drive. Copying to Drive is paused. \
+             Everything is still saved in this browser. If you didn't delete them, check Drive's trash."
+        ),
     }
 }
 

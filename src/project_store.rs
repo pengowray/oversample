@@ -1,116 +1,71 @@
-use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::JsFuture;
-use web_sys::{
-    FileSystemDirectoryHandle, FileSystemFileHandle, FileSystemWritableFileStream, WritableStream,
-};
+//! Projects (.batproj) in the browser's private storage (OPFS).
+//!
+//! A project lives in one store (`cloud::store`): the device store, or the
+//! signed-in Google account's cache. Its home is noted when it is loaded or
+//! saved, and later saves go there. While signed in, the project list shows
+//! the account's projects and the device store's ones, so nothing made while
+//! signed out is hidden.
 
+use crate::cloud::store::{self, Store};
 use crate::project::BatProject;
-
-const OPFS_PROJECTS_DIR: &str = "oversample-projects";
-
-/// Get the OPFS oversample-projects directory, creating it if needed.
-async fn get_projects_dir() -> Result<FileSystemDirectoryHandle, String> {
-    let window = web_sys::window().ok_or("no window")?;
-    let navigator = window.navigator();
-    let storage = navigator.storage();
-    let root: FileSystemDirectoryHandle = JsFuture::from(storage.get_directory())
-        .await
-        .map_err(|e| format!("OPFS root: {e:?}"))?
-        .unchecked_into();
-
-    let opts = web_sys::FileSystemGetDirectoryOptions::new();
-    opts.set_create(true);
-    let dir: FileSystemDirectoryHandle =
-        JsFuture::from(root.get_directory_handle_with_options(OPFS_PROJECTS_DIR, &opts))
-            .await
-            .map_err(|e| format!("OPFS projects dir: {e:?}"))?
-            .unchecked_into();
-    Ok(dir)
-}
 
 /// Storage key for a project file.
 fn project_key(id: &str) -> String {
     format!("{}.batproj", id)
 }
 
-/// Save a project to OPFS as YAML, then hand it to the Google Drive copy
-/// (if signed in).
+/// The stores to look in, in order: the active one, then (when signed in)
+/// the device store.
+fn stores() -> Vec<Store> {
+    let active = store::active();
+    if active == Store::Device {
+        vec![Store::Device]
+    } else {
+        vec![active, Store::Device]
+    }
+}
+
+/// Save a project to its home as YAML, then hand it to the Google Drive copy
+/// (only a project in the signed-in account's cache goes there).
 pub async fn save_project(project: &BatProject) -> Result<(), String> {
     write_project_local(project).await?;
-    crate::cloud::sync::project_saved(project);
+    if matches!(store::project_home(&project.id), Store::Account(_)) {
+        crate::cloud::sync::project_saved(project);
+    }
     Ok(())
 }
 
-/// Save a project to OPFS as YAML, without telling the Google Drive copy
+/// Save a project to its home as YAML, without telling the Google Drive copy
 /// (for a project that came from Drive). Returns the YAML written.
 pub async fn write_project_local(project: &BatProject) -> Result<String, String> {
     let yaml = yaml_serde::to_string(project).map_err(|e| format!("YAML serialize: {e}"))?;
-
-    let dir = get_projects_dir().await?;
-    let key = project_key(&project.id);
-
-    let opts = web_sys::FileSystemGetFileOptions::new();
-    opts.set_create(true);
-    let file_handle: FileSystemFileHandle =
-        JsFuture::from(dir.get_file_handle_with_options(&key, &opts))
-            .await
-            .map_err(|e| format!("OPFS get file: {e:?}"))?
-            .unchecked_into();
-
-    let writable: FileSystemWritableFileStream = JsFuture::from(file_handle.create_writable())
-        .await
-        .map_err(|e| format!("OPFS create writable: {e:?}"))?
-        .unchecked_into();
-
-    JsFuture::from(
-        writable
-            .write_with_str(&yaml)
-            .map_err(|e| format!("OPFS write: {e:?}"))?,
-    )
-    .await
-    .map_err(|e| format!("OPFS write await: {e:?}"))?;
-
-    let ws: &WritableStream = writable.unchecked_ref();
-    JsFuture::from(ws.close())
-        .await
-        .map_err(|e| format!("OPFS close: {e:?}"))?;
-
+    let home = store::project_home(&project.id);
+    store::set_project_home(&project.id, home.clone());
+    write_project_in(&home, &project.id, &yaml).await?;
     Ok(yaml)
 }
 
-/// Ids of every project in OPFS.
-pub async fn project_ids() -> Result<Vec<String>, String> {
-    let names = crate::opfs::list_names_in(OPFS_PROJECTS_DIR).await?;
-    Ok(names
-        .into_iter()
-        .filter_map(|n| n.strip_suffix(".batproj").map(str::to_string))
-        .collect())
+/// Write project `id` into `store` as `yaml`.
+pub async fn write_project_in(store: &Store, id: &str, yaml: &str) -> Result<(), String> {
+    store::write(&store.projects_dir(), &project_key(id), yaml).await
 }
 
-/// Load a project from OPFS by its ID. Returns None if not found.
-pub async fn load_project(id: &str) -> Result<Option<BatProject>, String> {
-    let dir = get_projects_dir().await?;
-    let key = project_key(id);
+/// Ids of the projects in `store`.
+pub async fn project_ids_in(store: &Store) -> Vec<String> {
+    store::keys(&store.projects_dir(), ".batproj")
+        .await
+        .into_iter()
+        .filter_map(|n| n.strip_suffix(".batproj").map(str::to_string))
+        .collect()
+}
 
-    let file_handle_result = JsFuture::from(dir.get_file_handle(&key)).await;
-    let file_handle: FileSystemFileHandle = match file_handle_result {
-        Ok(h) => h.unchecked_into(),
-        Err(_) => return Ok(None),
+/// Read project `id` from `store`.
+pub async fn load_project_in(store: &Store, id: &str) -> Result<Option<BatProject>, String> {
+    let Some(text) = store::read(&store.projects_dir(), &project_key(id)).await else {
+        return Ok(None);
     };
-
-    let file: web_sys::File = JsFuture::from(file_handle.get_file())
-        .await
-        .map_err(|e| format!("OPFS get file: {e:?}"))?
-        .unchecked_into();
-
-    let text = JsFuture::from(file.text())
-        .await
-        .map_err(|e| format!("OPFS read text: {e:?}"))?;
-
-    let yaml_str = text.as_string().ok_or("OPFS text not a string")?;
     let project: BatProject =
-        yaml_serde::from_str(&yaml_str).map_err(|e| format!("YAML deserialize: {e}"))?;
-
+        yaml_serde::from_str(&text).map_err(|e| format!("YAML deserialize: {e}"))?;
     if project.version > crate::project::PROJECT_FORMAT_VERSION {
         log::warn!(
             "Project {id} is format version {} but this app supports {}; loading \
@@ -119,8 +74,19 @@ pub async fn load_project(id: &str) -> Result<Option<BatProject>, String> {
             crate::project::PROJECT_FORMAT_VERSION
         );
     }
-
     Ok(Some(project))
+}
+
+/// Load a project by its ID (the account's cache first, then the device
+/// store), and note its home. Returns None if not found.
+pub async fn load_project(id: &str) -> Result<Option<BatProject>, String> {
+    for st in stores() {
+        if let Some(p) = load_project_in(&st, id).await? {
+            store::set_project_home(id, st);
+            return Ok(Some(p));
+        }
+    }
+    Ok(None)
 }
 
 /// Summary info for a saved project (for the list picker).
@@ -133,36 +99,16 @@ pub struct ProjectSummary {
     pub modified_at: Option<String>,
 }
 
-/// List all project IDs stored in OPFS.
-/// Returns Vec of project summaries.
+/// Every project in the active store and (when signed in) the device store,
+/// most recently changed first.
 pub async fn list_projects() -> Result<Vec<ProjectSummary>, String> {
-    let dir = get_projects_dir().await?;
-    let mut result = Vec::new();
-
-    // Iterate directory entries via JS async iterator
-    let entries = dir.entries();
-    loop {
-        let next = JsFuture::from(entries.next().map_err(|e| format!("iter: {e:?}"))?)
-            .await
-            .map_err(|e| format!("iter next: {e:?}"))?;
-
-        let done = js_sys::Reflect::get(&next, &"done".into())
-            .map_err(|e| format!("done: {e:?}"))?
-            .as_bool()
-            .unwrap_or(true);
-        if done {
-            break;
-        }
-
-        let value =
-            js_sys::Reflect::get(&next, &"value".into()).map_err(|e| format!("value: {e:?}"))?;
-        let arr = js_sys::Array::from(&value);
-        let key_js = arr.get(0);
-        let key = key_js.as_string().unwrap_or_default();
-
-        if key.ends_with(".batproj") {
-            let id = key.trim_end_matches(".batproj").to_string();
-            match load_project(&id).await {
+    let mut result: Vec<ProjectSummary> = Vec::new();
+    for st in stores() {
+        for id in project_ids_in(&st).await {
+            if result.iter().any(|r| r.id == id) {
+                continue;
+            }
+            match load_project_in(&st, &id).await {
                 Ok(Some(proj)) => result.push(ProjectSummary {
                     id,
                     name: proj.name,
@@ -189,17 +135,25 @@ pub async fn list_projects() -> Result<Vec<ProjectSummary>, String> {
     Ok(result)
 }
 
-/// Delete a project from OPFS by ID.
+/// Delete a project by ID from the store that holds it.
 pub async fn delete_project(id: &str) -> Result<(), String> {
-    let dir = get_projects_dir().await?;
-    let key = project_key(id);
-
-    JsFuture::from(dir.remove_entry(&key))
-        .await
-        .map_err(|e| format!("OPFS delete: {e:?}"))?;
-
-    // Its Google Drive copy goes to the Drive trash, or it would come back.
-    crate::cloud::sync::project_deleted(id);
+    let mut home = None;
+    for st in stores() {
+        if store::read(&st.projects_dir(), &project_key(id))
+            .await
+            .is_some()
+        {
+            home = Some(st);
+            break;
+        }
+    }
+    let home = home.unwrap_or_else(|| store::project_home(id));
+    store::remove(&home.projects_dir(), &project_key(id)).await?;
+    // A project of the account: its Google Drive copy goes to the Drive
+    // trash, or it would come back.
+    if matches!(home, Store::Account(_)) {
+        crate::cloud::sync::project_deleted(id);
+    }
     Ok(())
 }
 

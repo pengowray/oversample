@@ -1989,6 +1989,12 @@ pub enum DriveProblem {
     Full,
     /// Drive refused the request.
     Refused,
+    /// Drive no longer shows the "Oversample" folder, though files were
+    /// synced with it before: nothing was compared or removed.
+    FolderMissing,
+    /// Most of the files synced before came back as deleted in one
+    /// comparison (this many): nothing was removed.
+    FilesMissing(usize),
 }
 
 /// Timeline / multi-file selection state.

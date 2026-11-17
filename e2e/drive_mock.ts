@@ -6,6 +6,8 @@ import type { Page, Route } from "@playwright/test";
  */
 
 export const EMAIL = "bat.person@example.com";
+/** The mock account's Drive `permissionId` (its cache folder on this device). */
+export const ACCOUNT_ID = "04512345678901234567";
 
 type DriveFile = {
   id: string;
@@ -116,7 +118,7 @@ export async function mockServer(page: Page, drive: MockDrive) {
     const path = url.pathname;
 
     if (path === "/drive/v3/about") {
-      return json(route, 200, { user: { emailAddress: EMAIL, displayName: "Bat Person" } });
+      return json(route, 200, { user: { emailAddress: EMAIL, displayName: "Bat Person", permissionId: ACCOUNT_ID } });
     }
 
     const upload = path.startsWith("/upload/drive/v3/files");

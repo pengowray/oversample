@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { EMAIL, MockDrive, mockServer } from "./drive_mock";
+import { ACCOUNT_ID, EMAIL, MockDrive, mockServer } from "./drive_mock";
 
 /**
  * Google Drive copies of annotation files (src/cloud/, the "Google Drive"
@@ -89,24 +89,57 @@ async function openSettings(page: Page) {
   await expect(page.locator(".setting-group-title", { hasText: "Beta" })).toBeVisible();
 }
 
+/** Every saved annotation file in every store, by path from the storage root. */
 const savedFiles = (page: Page): Promise<Record<string, string>> =>
   page.evaluate(async () => {
-    const root = await navigator.storage.getDirectory();
     const out: Record<string, string> = {};
-    let dir: FileSystemDirectoryHandle;
-    try {
-      dir = await root.getDirectoryHandle("oversample-annotations");
-    } catch {
-      return out;
-    }
-    const entries = (dir as unknown as { entries: () => AsyncIterable<[string, FileSystemFileHandle]> }).entries();
-    for await (const [name, handle] of entries) {
-      try {
-        out[name] = await (await handle.getFile()).text();
-      } catch {}
-    }
+    const walk = async (dir: FileSystemDirectoryHandle, prefix: string) => {
+      const entries = (dir as unknown as { entries: () => AsyncIterable<[string, FileSystemHandle]> }).entries();
+      for await (const [name, handle] of entries) {
+        if (handle.kind === "directory") await walk(handle as FileSystemDirectoryHandle, `${prefix}${name}/`);
+        else if (name.endsWith(".batm") || name.endsWith(".batproj") || name === "sync.json") {
+          try {
+            out[prefix + name] = await (await (handle as FileSystemFileHandle).getFile()).text();
+          } catch {}
+        }
+      }
+    };
+    await walk(await navigator.storage.getDirectory(), "");
     return out;
   });
+
+const DEVICE = "oversample-annotations/";
+const ACCOUNT = `oversample-accounts/${ACCOUNT_ID}/annotations/`;
+const inStore = (files: Record<string, string>, prefix: string) =>
+  Object.keys(files).filter((k) => k.startsWith(prefix));
+
+/** Write files into the browser's storage, by path from its root. */
+const writeFiles = (page: Page, files: [string, string][]) =>
+  page.evaluate(async (files) => {
+    for (const [path, text] of files) {
+      const parts = path.split("/");
+      let dir = await navigator.storage.getDirectory();
+      for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
+      const w = await (await dir.getFileHandle(parts[parts.length - 1], { create: true })).createWritable();
+      await w.write(text);
+      await w.close();
+    }
+  }, files);
+
+/** Sign in through the pop-up flow (the mocked status turns to signed in). */
+async function signInViaPopup(page: Page, drive: MockDrive) {
+  if (!(await page.getByRole("button", { name: "Sign in with Google" }).isVisible())) await openSettings(page);
+  const popup = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Sign in with Google" }).click();
+  await popup;
+  drive.signedIn = true;
+  await expect(page.locator(".drive-account")).toHaveText(EMAIL, { timeout: 15_000 });
+}
+
+/** Run the comparison of all files now (the app runs it when the browser comes back online). */
+const compareAll = (page: Page) => page.evaluate(() => window.dispatchEvent(new Event("online")));
+
+const regionsIn = (text: string) => (text.match(/time_start:/g) ?? []).length;
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -173,7 +206,7 @@ test.describe("Google Drive copies", () => {
     await expect(page.locator(".drive-status")).toHaveText("Saved to Google Drive");
   });
 
-  test("a Drive copy of a file with no local copy is used, and no empty set is uploaded", async ({ page }) => {
+  test("a Drive copy of a file with no local copy is used, and no set without its regions is uploaded", async ({ page }) => {
     const drive = new MockDrive();
     const name = "drive-download.wav";
     const wav = noiseWav(96_000, 8, 2222);
@@ -202,100 +235,90 @@ test.describe("Google Drive copies", () => {
     await expect
       .poll(async () => Object.values(await savedFiles(page)).some((t) => t.includes("from-drive-2")))
       .toBe(true);
-    // Nothing goes back up.
+    // Opening the recording adds its hashes to the set, so it may go back
+    // up once, as an update of the same Drive file and with both regions.
     await page.waitForTimeout(7_000);
-    expect(drive.uploads).toEqual([]);
+    expect(drive.uploads.length).toBeLessThanOrEqual(1);
+    for (const up of drive.uploads) {
+      expect(up.method).toBe("PATCH");
+      expect(up.content).toContain("from-drive-1");
+      expect(up.content).toContain("from-drive-2");
+    }
+    expect([...drive.files.values()].filter((f) => f.appProperties.osKind === "batm")).toHaveLength(1);
   });
 
-  test("sign out clears the Drive state and keeps the local copy", async ({ page }) => {
+  test("sign-out with a file open: its annotations stop showing, nothing is deleted, and they come back at sign-in", async ({ page }) => {
     const drive = new MockDrive();
     await mockServer(page, drive);
     await page.goto("/");
     await openSettings(page);
     await expect(page.locator(".drive-account")).toHaveText(EMAIL);
-
-    await page.getByRole("button", { name: "Sign out" }).click();
-    await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
-    await expect(page.locator(".drive-account")).toHaveCount(0);
-    await expect.poll(() => drive.logouts).toBe(1);
-    // Drive ids and revisions are forgotten; content fingerprints stay.
-    const seen = await page.evaluate(() => localStorage.getItem("oversample_drive_seen"));
-    for (const f of Object.values((seen ? JSON.parse(seen) : { files: {} }).files) as { id: string; rev: string | null }[]) {
-      expect(f.id).toBe("");
-      expect(f.rev).toBeNull();
-    }
-
-    // A save while signed out stays local and is not uploaded.
-    await open(page, "signed-out.wav", noiseWav(96_000, 8, 3333));
+    await open(page, "account-file.wav", noiseWav(96_000, 8, 3333));
     await annotate(page, 0.2, 0.4);
-    await expect
-      .poll(async () => Object.keys(await savedFiles(page)).length)
-      .toBeGreaterThan(0);
-    await page.waitForTimeout(6_000);
-    expect(drive.uploads).toEqual([]);
-  });
-
-  test("a change made while signed out is uploaded at the next sign-in, not merged away", async ({ page }) => {
-    const drive = new MockDrive();
-    await mockServer(page, drive);
-    await page.goto("/");
-    await openSettings(page);
-    await expect(page.locator(".drive-account")).toHaveText(EMAIL);
-    await open(page, "offline-edit.wav", noiseWav(96_000, 8, 4444));
-    await annotate(page, 0.1, 0.2);
-    await annotate(page, 0.5, 0.6);
-    const regionsIn = (text: string) => (text.match(/time_start:/g) ?? []).length;
     await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
-    expect(regionsIn(drive.uploads[0].content)).toBe(2);
+    expect(inStore(await savedFiles(page), ACCOUNT)).toHaveLength(1);
+    expect(inStore(await savedFiles(page), DEVICE)).toHaveLength(0);
 
     await openSettings(page);
     await page.getByRole("button", { name: "Sign out" }).click();
     await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
-    // Remove the second annotation while signed out (undo).
-    // (A label edit is an undo step of its own, so press until one is left.)
-    for (let i = 0; i < 4 && (await snap(page)).regions.length > 1; i++) {
-      await page.keyboard.press("Control+z");
-      await page.waitForTimeout(200);
-    }
-    expect((await snap(page)).regions.length).toBe(1);
-    await expect
-      .poll(async () => Object.values(await savedFiles(page)).some((t) => regionsIn(t) === 1))
-      .toBe(true);
+    await expect.poll(() => drive.logouts).toBe(1);
+    // The account's annotations are not shown any more; nothing was deleted.
+    await expect.poll(async () => (await snap(page)).regions.length).toBe(0);
+    expect(inStore(await savedFiles(page), ACCOUNT)).toHaveLength(1);
+    await page.waitForTimeout(1_000);
+    // Nothing was written into this browser's own store.
+    expect(inStore(await savedFiles(page), DEVICE)).toHaveLength(0);
 
-    drive.signedIn = true;
-    await page.reload();
-    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(2);
-    expect(drive.uploads[1].method).toBe("PATCH");
-    expect(regionsIn(drive.uploads[1].content)).toBe(1);
+    // Signing in again brings them back.
+    await signInViaPopup(page, drive);
+    await expect.poll(async () => (await snap(page)).regions.length, { timeout: 15_000 }).toBe(1);
+    await page.waitForTimeout(6_000);
+    expect(drive.uploads).toHaveLength(1);
   });
 
-  test("first sign-in with two local sets makes one set of folders", async ({ page }) => {
+  test("annotations made while signed out stay in this browser and are not uploaded at the next sign-in", async ({ page }) => {
     const drive = new MockDrive();
     drive.signedIn = false;
     await mockServer(page, drive);
     await page.goto("/");
-    await openSettings(page);
-    await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
+    await open(page, "made-signed-out.wav", noiseWav(96_000, 8, 4444));
+    await annotate(page, 0.2, 0.4);
+    await expect.poll(async () => inStore(await savedFiles(page), DEVICE).length).toBe(1);
+
+    // Sign in with that file open: its annotations stay, and edits keep
+    // going to this browser's store.
+    await signInViaPopup(page, drive);
+    await expect.poll(async () => (await snap(page)).regions.length).toBe(1);
+    await annotate(page, 0.5, 0.6);
+    await expect
+      .poll(async () => Object.entries(await savedFiles(page)).some(([k, t]) => k.startsWith(DEVICE) && regionsIn(t) === 2))
+      .toBe(true);
+    await page.waitForTimeout(7_000);
+    expect(drive.uploads).toEqual([]);
+    expect(inStore(await savedFiles(page), ACCOUNT)).toHaveLength(0);
+    // The line says where they are, with no Drive row.
+    const show = page.locator('button[title="Show info panel"]');
+    if (await show.isVisible()) await show.click();
+    await page.locator(".sidebar-tab-dropdown").click();
+    await page.locator(".sidebar-tab-option", { hasText: "Annotations" }).dispatchEvent("mousedown");
+    await expect(page.locator(".right-sidebar .annotation-storage")).toHaveText("Saved in this browser");
+  });
+
+  test("first sign-in with two files in the account's cache makes one set of folders", async ({ page }) => {
+    const drive = new MockDrive();
+    drive.signedIn = false;
+    await mockServer(page, drive);
+    await page.goto("/");
     const set = (file: string) =>
       `version: 3\nid: set-${file}\napp_version: 0.5.200\nmodified_at: 2026-11-01T10:00:00.000Z\n` +
       `file_identity:\n  filename: ${file}.wav\n  file_size: 100\nannotations:\n` +
       `- id: r-${file}\n  type: Region\n  time_start: 1.0\n  time_end: 2.0\n` +
       `  created_at: 2026-11-01T10:00:00.000Z\n  modified_at: 2026-11-01T10:00:00.000Z\n`;
-    await page.evaluate(
-      async (files) => {
-        const root = await navigator.storage.getDirectory();
-        const dir = await root.getDirectoryHandle("oversample-annotations", { create: true });
-        for (const [name, text] of files) {
-          const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
-          await w.write(text);
-          await w.close();
-        }
-      },
-      [
-        ["first.wav_100.batm", set("first")],
-        ["second.wav_100.batm", set("second")],
-      ],
-    );
+    await writeFiles(page, [
+      [`${ACCOUNT}first.wav_100.batm`, set("first")],
+      [`${ACCOUNT}second.wav_100.batm`, set("second")],
+    ]);
     drive.signedIn = true;
     await page.reload();
     await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(2);
@@ -304,6 +327,167 @@ test.describe("Google Drive copies", () => {
       [...drive.files.values()].filter((f) => f.appProperties.osFolder === marker).length;
     expect(folders("root")).toBe(1);
     expect(folders("annotations")).toBe(1);
+  });
+
+  test("migration: files synced before move into the account's cache, with no upload and no change", async ({ page }) => {
+    const drive = new MockDrive();
+    drive.signedIn = false;
+    const set = (file: string) =>
+      `version: 3\nid: set-${file}\napp_version: 0.5.200\nmodified_at: 2026-11-01T10:00:00.000Z\n` +
+      `file_identity:\n  filename: ${file}.wav\n  file_size: 100\nannotations:\n` +
+      `- id: r-${file}\n  type: Region\n  time_start: 1.0\n  time_end: 2.0\n` +
+      `  created_at: 2026-11-01T10:00:00.000Z\n  modified_at: 2026-11-01T10:00:00.000Z\n`;
+    const project = "version: 1\nid: p1\nname: Survey\nmodified_at: 2026-11-01T10:00:00.000Z\n";
+    const root = drive.add({ name: "Oversample", mimeType: "application/vnd.google-apps.folder", appProperties: { osFolder: "root" } });
+    const a = drive.add({ name: "a.wav.batm", parents: [root.id], appProperties: { osKind: "batm", osKey: "a.wav_100.batm" }, content: set("a") });
+    const b = drive.add({ name: "b.wav.batm", parents: [root.id], appProperties: { osKind: "batm", osKey: "b.wav_100.batm" }, content: set("b") });
+    const p = drive.add({ name: "Survey.batproj", parents: [root.id], appProperties: { osKind: "batproj", osKey: "p1" }, content: project });
+    await mockServer(page, drive);
+    await page.goto("/");
+    // The state of a browser that used the earlier version, signed in.
+    await writeFiles(page, [
+      [`${DEVICE}a.wav_100.batm`, set("a")],
+      [`${DEVICE}b.wav_100.batm`, set("b")],
+      ["oversample-projects/p1.batproj", project],
+      [`${DEVICE}c.wav_100.batm`, set("c")],
+    ]);
+    await page.evaluate(
+      ([a, b, p]) =>
+        localStorage.setItem(
+          "oversample_drive_seen",
+          JSON.stringify({
+            account: "bat.person@example.com",
+            files: {
+              "batm:a.wav_100.batm": { id: a.id, rev: a.rev, fp: "old-style" },
+              "batm:b.wav_100.batm": { id: b.id, rev: b.rev, fp: "old-style" },
+              "batproj:p1": { id: p.id, rev: p.rev, fp: "old-style" },
+            },
+          }),
+        ),
+      [a, b, p].map((f) => ({ id: f.id, rev: f.headRevisionId })),
+    );
+    const before = await savedFiles(page);
+    drive.signedIn = true;
+    await page.reload();
+    await expect
+      .poll(async () => inStore(await savedFiles(page), ACCOUNT).sort(), { timeout: 20_000 })
+      .toEqual([`${ACCOUNT}a.wav_100.batm`, `${ACCOUNT}b.wav_100.batm`]);
+    await expect
+      .poll(async () => JSON.parse((await savedFiles(page))[`oversample-accounts/${ACCOUNT_ID}/sync.json`] ?? "{}").migrated)
+      .toBe(true);
+    const after = await savedFiles(page);
+    // Moved unchanged; the file with no record stays in this browser's store.
+    expect(after[`${ACCOUNT}a.wav_100.batm`]).toBe(before[`${DEVICE}a.wav_100.batm`]);
+    expect(after[`oversample-accounts/${ACCOUNT_ID}/projects/p1.batproj`]).toBe(project);
+    expect(inStore(after, DEVICE)).toEqual([`${DEVICE}c.wav_100.batm`]);
+    expect(after["oversample-projects/p1.batproj"]).toBeUndefined();
+    expect(await page.evaluate(() => localStorage.getItem("oversample_drive_seen"))).toBeNull();
+    // Nothing went up, and Drive's files are as they were.
+    await page.waitForTimeout(7_000);
+    expect(drive.uploads).toEqual([]);
+    expect([a, b, p].every((f) => !f.trashed)).toBe(true);
+  });
+
+  test("a file deleted on Drive leaves this browser, also when it is open", async ({ page }) => {
+    const drive = new MockDrive();
+    await mockServer(page, drive);
+    await page.goto("/");
+    await open(page, "deleted-on-drive.wav", noiseWav(96_000, 8, 5151));
+    await annotate(page, 0.2, 0.4);
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
+    const onDrive = [...drive.files.values()].find((f) => f.appProperties.osKind === "batm")!;
+    onDrive.trashed = true;
+    await compareAll(page);
+    await expect.poll(async () => inStore(await savedFiles(page), ACCOUNT).length, { timeout: 15_000 }).toBe(0);
+    await expect.poll(async () => (await snap(page)).regions.length).toBe(0);
+    await page.waitForTimeout(6_000);
+    expect(drive.uploads).toHaveLength(1);
+  });
+
+  test("a file deleted on Drive but edited since in another tab is kept and uploaded again", async ({ page, context }) => {
+    const drive = new MockDrive();
+    await mockServer(page, drive);
+    await page.goto("/");
+    await open(page, "edited-elsewhere.wav", noiseWav(96_000, 8, 6262));
+    await annotate(page, 0.2, 0.4);
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
+    const first = [...drive.files.values()].find((f) => f.appProperties.osKind === "batm")!;
+    first.trashed = true;
+    // An edit in this tab, saved before the other tab compares.
+    await annotate(page, 0.5, 0.6);
+    await expect
+      .poll(async () => Object.entries(await savedFiles(page)).some(([k, t]) => k.startsWith(ACCOUNT) && regionsIn(t) === 2))
+      .toBe(true);
+    const other = await context.newPage();
+    await mockServer(other, drive);
+    await other.goto("/");
+    await expect
+      .poll(() => [...drive.files.values()].some((f) => f.appProperties.osKind === "batm" && !f.trashed), { timeout: 30_000 })
+      .toBe(true);
+    expect(inStore(await savedFiles(page), ACCOUNT)).toHaveLength(1);
+    expect((await snap(page)).regions.length).toBe(2);
+  });
+
+  test("Drive no longer showing the Oversample folder removes nothing and says so", async ({ page }) => {
+    const drive = new MockDrive();
+    await mockServer(page, drive);
+    await page.goto("/");
+    await open(page, "folder-gone.wav", noiseWav(96_000, 8, 7373));
+    await annotate(page, 0.2, 0.4);
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
+    for (const f of drive.files.values()) f.trashed = true;
+    const filesBefore = drive.files.size;
+    await compareAll(page);
+    await openSettings(page);
+    await expect(page.locator(".drive-settings")).toContainText(
+      "Can't find the Oversample folder in Google Drive. Copying to Drive is paused. Everything is still saved in this browser. If you deleted the folder, it may be in Drive's trash.",
+      { timeout: 15_000 },
+    );
+    expect(inStore(await savedFiles(page), ACCOUNT)).toHaveLength(1);
+    expect((await snap(page)).regions.length).toBe(1);
+    // An edit now waits: no upload, and no new folder.
+    await annotate(page, 0.5, 0.6);
+    await page.waitForTimeout(7_000);
+    expect(drive.uploads).toHaveLength(1);
+    expect(drive.files.size).toBe(filesBefore);
+
+    // The folder is back from the trash: the edit goes up.
+    for (const f of drive.files.values()) f.trashed = false;
+    await compareAll(page);
+    await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(2);
+    expect(regionsIn(drive.uploads[1].content)).toBe(2);
+    await expect(page.locator(".drive-settings")).not.toContainText("Can't find the Oversample folder");
+  });
+
+  test("most synced files missing from Drive at once: nothing is removed, and it says so", async ({ page }) => {
+    const drive = new MockDrive();
+    drive.signedIn = false;
+    await mockServer(page, drive);
+    await page.goto("/");
+    const set = (file: string) =>
+      `version: 3\nid: set-${file}\napp_version: 0.5.200\nmodified_at: 2026-11-01T10:00:00.000Z\n` +
+      `file_identity:\n  filename: ${file}.wav\n  file_size: 100\nannotations:\n` +
+      `- id: r-${file}\n  type: Region\n  time_start: 1.0\n  time_end: 2.0\n` +
+      `  created_at: 2026-11-01T10:00:00.000Z\n  modified_at: 2026-11-01T10:00:00.000Z\n`;
+    await writeFiles(page, [
+      [`${ACCOUNT}one.wav_100.batm`, set("one")],
+      [`${ACCOUNT}two.wav_100.batm`, set("two")],
+      [`${ACCOUNT}three.wav_100.batm`, set("three")],
+    ]);
+    drive.signedIn = true;
+    await page.reload();
+    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(3);
+    // All three are deleted on Drive (not trashed); the folders stay.
+    for (const [id, f] of [...drive.files.entries()]) if (f.appProperties.osKind === "batm") drive.files.delete(id);
+    await compareAll(page);
+    await openSettings(page);
+    await expect(page.locator(".drive-settings")).toContainText(
+      "3 files are missing from the Oversample folder in Google Drive. Copying to Drive is paused.",
+      { timeout: 15_000 },
+    );
+    expect(inStore(await savedFiles(page), ACCOUNT)).toHaveLength(3);
+    await page.waitForTimeout(3_000);
+    expect(drive.uploads).toHaveLength(3);
   });
 
   test("Retry uploads a change whose upload failed", async ({ page }) => {

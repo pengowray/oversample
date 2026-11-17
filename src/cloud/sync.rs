@@ -29,7 +29,8 @@
 
 use super::drive::{self, DriveError, DriveFile};
 use super::google_auth;
-use super::rules::{self, Action, FileCopy, Kind};
+use super::rules::{self, Action, DriveSide, FileCopy, Kind};
+use super::store::{self, Store};
 use crate::annotations::AnnotationSet;
 use crate::project::BatProject;
 use crate::state::store_fields::*;
@@ -53,17 +54,40 @@ const AFTER_CLOSE_MS: f64 = 3_000.0;
 const BATM: &str = "batm";
 const BATPROJ: &str = "batproj";
 
-/// localStorage: what this device last saw of each Drive file (`Memory`).
-const MEMORY_KEY: &str = "oversample_drive_seen";
-/// localStorage: projects deleted on this device whose Drive copies still
-/// have to go to the Drive trash.
-const DELETED_PROJECTS_KEY: &str = "oversample_drive_deleted_projects";
+/// localStorage, before per-account caches: what this browser last saw of
+/// each Drive file. Read once, by the migration (`migrate_legacy`).
+const LEGACY_MEMORY_KEY: &str = "oversample_drive_seen";
+/// localStorage, before per-account caches: projects deleted here whose
+/// Drive copies still had to go to the Drive trash.
+const LEGACY_DELETED_PROJECTS_KEY: &str = "oversample_drive_deleted_projects";
+/// File in an account's folder that holds its `Memory`.
+const MEMORY_FILE: &str = "sync.json";
 
-/// What this device last saw of the Drive files of one account.
-#[derive(Default, Serialize, Deserialize)]
+/// What this device last saw of the Drive files of one account, kept in the
+/// account's folder (`sync.json`).
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct Memory {
-    account: String,
+    /// The account's email when last seen (shown only).
+    #[serde(default)]
+    email: String,
     /// By sync key (`batm:<key>` or `batproj:<id>`).
+    #[serde(default)]
+    files: BTreeMap<String, Seen>,
+    /// Projects deleted here whose Drive copies still have to go to the
+    /// Drive trash.
+    #[serde(default)]
+    deleted_projects: Vec<String>,
+    /// The old per-browser record has been moved in (once per account).
+    #[serde(default)]
+    migrated: bool,
+}
+
+/// The old per-browser record.
+#[derive(Default, Deserialize)]
+struct LegacyMemory {
+    #[serde(default)]
+    account: String,
+    #[serde(default)]
     files: BTreeMap<String, Seen>,
 }
 
@@ -97,10 +121,20 @@ struct Sync {
     pending: HashMap<String, Pending>,
     timers: HashMap<String, i32>,
     uploading: HashSet<String>,
+    /// Per key, the `save_seq` value when its last upload ended. A
+    /// comparison of all files skips keys uploaded after its Drive listing
+    /// was made, since that listing is out of date for them.
+    uploaded_at: HashMap<String, u64>,
     /// Keys whose Drive copy belongs to a different recording (same name and
     /// size). They are neither uploaded nor downloaded.
     blocked: HashSet<String>,
     memory: Memory,
+    /// The signed-in account's store (its cache on this device), once known.
+    account: Option<Store>,
+    /// Keys a comparison found deleted on Drive and unchanged here. They are
+    /// removed from the cache after the comparison of all files, if
+    /// `rules::removals_allowed` says so.
+    gone: Vec<String>,
     reconciling: bool,
     save_seq: u64,
     /// A folder lookup or creation is running (one at a time, so that
@@ -177,44 +211,110 @@ fn spawn(fut: impl std::future::Future<Output = Result<(), DriveError>> + 'stati
 
 // ── Memory (localStorage) ───────────────────────────────────────────────
 
-fn load_memory() -> Memory {
-    crate::settings::get_raw(MEMORY_KEY)
-        .and_then(|s| serde_json::from_str(&s).ok())
+/// The signed-in account's folder (where `sync.json` is).
+fn account_dir() -> Option<String> {
+    with(|s| s.account.as_ref().and_then(Store::account_dir))
+}
+
+/// Read an account's `Memory` from its folder.
+async fn read_memory(account_dir: &str) -> Memory {
+    store::read(account_dir, MEMORY_FILE)
+        .await
+        .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
 }
 
-fn save_memory(memory: &Memory) {
-    if let Ok(json) = serde_json::to_string(memory) {
-        crate::settings::set_raw(MEMORY_KEY, &json);
+/// Change the account's `sync.json` under its lock: read it, apply `change`,
+/// write it. Every tab writes this way, so two tabs never overwrite each
+/// other's entries. The copy in memory gets the same change.
+async fn update_memory(change: impl Fn(&mut Memory) + Clone + 'static) {
+    with(|s| change(&mut s.memory));
+    let Some(dir) = account_dir() else {
+        return;
+    };
+    let lock = store::sync_lock(&dir);
+    store::with_lock(&lock, move || {
+        Box::pin(async move {
+            let mut m = read_memory(&dir).await;
+            change(&mut m);
+            if let Ok(json) = serde_json::to_string(&m) {
+                if let Err(e) = store::write(&dir, MEMORY_FILE, &json).await {
+                    log::warn!("Google Drive: could not save sync.json: {e}");
+                }
+            }
+        })
+    })
+    .await;
+}
+
+/// Read the latest record of one key from `sync.json` (another tab may have
+/// changed it) into memory, and return it.
+async fn refresh_seen(sync_key: &str) -> Option<Seen> {
+    if let Some(dir) = account_dir() {
+        let on_disk = read_memory(&dir).await;
+        let v = on_disk.files.get(sync_key).cloned();
+        with(|s| match &v {
+            Some(v) => {
+                s.memory.files.insert(sync_key.to_string(), v.clone());
+            }
+            None => {
+                s.memory.files.remove(sync_key);
+            }
+        });
+        return v;
     }
+    seen(sync_key)
 }
 
 fn seen(sync_key: &str) -> Option<Seen> {
     with(|s| s.memory.files.get(sync_key).cloned())
 }
 
+/// Record what was seen of a key's Drive file (or forget it).
 fn set_seen(sync_key: &str, value: Option<Seen>) {
-    with(|s| {
-        match value {
-            Some(v) => s.memory.files.insert(sync_key.to_string(), v),
-            None => s.memory.files.remove(sync_key),
-        };
-        save_memory(&s.memory);
+    let sk = sync_key.to_string();
+    let gen = generation();
+    with(|s| match &value {
+        Some(v) => {
+            s.memory.files.insert(sk.clone(), v.clone());
+        }
+        None => {
+            s.memory.files.remove(&sk);
+        }
+    });
+    wasm_bindgen_futures::spawn_local(async move {
+        if with(|s| s.generation) != gen {
+            return;
+        }
+        update_memory(move |m| match &value {
+            Some(v) => {
+                m.files.insert(sk.clone(), v.clone());
+            }
+            None => {
+                m.files.remove(&sk);
+            }
+        })
+        .await;
     });
 }
 
 fn deleted_projects() -> Vec<String> {
-    crate::settings::get_raw(DELETED_PROJECTS_KEY)
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    with(|s| s.memory.deleted_projects.clone())
 }
 
-fn set_deleted_projects(ids: &[String]) {
-    if ids.is_empty() {
-        crate::settings::remove_raw(DELETED_PROJECTS_KEY);
-    } else if let Ok(json) = serde_json::to_string(ids) {
-        crate::settings::set_raw(DELETED_PROJECTS_KEY, &json);
-    }
+async fn add_deleted_project(id: &str) {
+    let id = id.to_string();
+    update_memory(move |m| {
+        if !m.deleted_projects.contains(&id) {
+            m.deleted_projects.push(id.clone());
+        }
+    })
+    .await;
+}
+
+async fn remove_deleted_project(id: &str) {
+    let id = id.to_string();
+    update_memory(move |m| m.deleted_projects.retain(|i| *i != id)).await;
 }
 
 // ── Settings block state ────────────────────────────────────────────────
@@ -243,7 +343,34 @@ fn publish() {
     }
 }
 
+/// Whether uploads wait: Drive no longer shows the "Oversample" folder, or
+/// most of the files synced before (`reconcile_inner`). Nothing is created
+/// on Drive until a comparison of all files passes again.
+fn uploads_held() -> bool {
+    app_state().is_some_and(|state| {
+        matches!(
+            state.drive.problem().get_untracked(),
+            Some(DriveProblem::FolderMissing | DriveProblem::FilesMissing(_))
+        )
+    })
+}
+
+/// Show `problem` in the Drive group, or none. Clearing leaves a held state
+/// (`uploads_held`) in place: only a comparison of all files that passes,
+/// or a new session, ends it (`clear_problem`).
 fn set_problem(problem: Option<DriveProblem>) {
+    if problem.is_none() && uploads_held() {
+        return;
+    }
+    clear_or_set_problem(problem);
+}
+
+/// End any problem, a held state too.
+fn clear_problem() {
+    clear_or_set_problem(None);
+}
+
+fn clear_or_set_problem(problem: Option<DriveProblem>) {
     if let Some(state) = app_state() {
         if state.drive.problem().get_untracked() != problem {
             state.drive.problem().set(problem);
@@ -283,7 +410,6 @@ pub fn init(state: AppState) {
         .set(provider == google_auth::Provider::Desktop);
     with(|s| {
         s.state = Some(state);
-        s.memory = load_memory();
         s.version = Some(ArcRwSignal::new(0));
     });
     add_window_listeners();
@@ -419,8 +545,8 @@ async fn start_session() {
     };
     state.drive.signed_in().set(true);
     state.drive.session_ended().set(false);
-    let email = match drive::account_email().await {
-        Ok(email) => email,
+    let (email, account_id) = match drive::account().await {
+        Ok(a) => a,
         Err(e) => {
             on_error(gen, e);
             return;
@@ -434,21 +560,189 @@ async fn start_session() {
         desktop_check(gen).await;
         return;
     }
+    if !store::account_id_is_safe(&account_id) {
+        log::warn!("Google Drive: the account id is not usable as a folder name");
+        set_problem(Some(DriveProblem::Refused));
+        return;
+    }
+    // This account's cache becomes the home of its files on this device.
+    let account = Store::Account(account_id);
+    let Some(dir) = account.account_dir() else {
+        return;
+    };
+    let memory = read_memory(&dir).await;
     with(|s| {
-        // Another account: what was seen of the last one's Drive is no base.
-        if s.memory.account != email {
-            s.memory = Memory {
-                account: email.clone(),
-                files: BTreeMap::new(),
-            };
-            save_memory(&s.memory);
-        }
+        s.account = Some(account.clone());
+        s.memory = memory;
     });
+    if !with(|s| s.memory.migrated) {
+        migrate_legacy(&account, &email).await;
+    }
+    if !alive(gen) {
+        return;
+    }
+    store::set_active(account.clone());
+    // Open files whose set is not in the device store now belong to the
+    // account: reload them from its cache.
+    switch_open_files(state);
     state.drive.email().set(Some(email));
     set_problem(None);
     if let Err(e) = reconcile(gen).await {
         on_error(gen, e);
     }
+}
+
+/// Move what the old per-browser record says was synced with this account
+/// into the account's cache (once per account, `Memory::migrated`).
+///
+/// Only when the record was made by the same account (by email; the old
+/// record kept no id). For each such file in the device store: copy it into
+/// the cache, read the copy back, and only if it is the same, delete it from
+/// the device store. An interrupted run finds both copies the same next time
+/// and finishes. The old record's fingerprints left out the file identity,
+/// so each key keeps its Drive id and revision but an unknown fingerprint
+/// (""): the first comparison reads Drive's copy, which is the synced one
+/// while its revision is unchanged, and takes its fingerprint as the base.
+async fn migrate_legacy(account: &Store, email: &str) {
+    let legacy: LegacyMemory = crate::settings::get_raw(LEGACY_MEMORY_KEY)
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    let keys = rules::keys_to_migrate(
+        &legacy.account,
+        email,
+        legacy.files.keys().map(String::as_str),
+    );
+    for sk in &keys {
+        let (kind, key) = split(sk);
+        let (src_dir, dst_dir, name) = if kind == BATPROJ {
+            (
+                Store::Device.projects_dir(),
+                account.projects_dir(),
+                format!("{key}.batproj"),
+            )
+        } else {
+            (
+                Store::Device.annotations_dir(),
+                account.annotations_dir(),
+                key.to_string(),
+            )
+        };
+        let moved = move_file(&src_dir, &dst_dir, &name).await;
+        if moved {
+            // An open file whose set moved now saves to the account's cache
+            // (the content is the same, so it is not reloaded).
+            if kind == BATM {
+                if let Some(state) = app_state() {
+                    if let Some(file_id) = open_file_with_key(state, key) {
+                        store::set_home(file_id, account.clone());
+                    }
+                }
+            } else {
+                store::set_project_home(key, account.clone());
+            }
+        }
+        if let Some(old) = legacy.files.get(sk) {
+            let entry = Seen {
+                id: old.id.clone(),
+                rev: old.rev.clone(),
+                fp: String::new(),
+            };
+            let sk2 = sk.clone();
+            update_memory(move |m| {
+                m.files.entry(sk2.clone()).or_insert(entry.clone());
+            })
+            .await;
+        }
+    }
+    let legacy_deleted: Vec<String> = crate::settings::get_raw(LEGACY_DELETED_PROJECTS_KEY)
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    let same_account = !keys.is_empty() || legacy.account.eq_ignore_ascii_case(email);
+    let email = email.to_string();
+    update_memory(move |m| {
+        if same_account {
+            for id in &legacy_deleted {
+                if !m.deleted_projects.contains(id) {
+                    m.deleted_projects.push(id.clone());
+                }
+            }
+        }
+        m.email = email.clone();
+        m.migrated = true;
+    })
+    .await;
+    if same_account {
+        crate::settings::remove_raw(LEGACY_MEMORY_KEY);
+        crate::settings::remove_raw(LEGACY_DELETED_PROJECTS_KEY);
+    }
+}
+
+/// Copy `name` from `src_dir` to `dst_dir`, check the copy, then delete it
+/// from `src_dir`. Returns whether it moved. Under the file's lock in the
+/// source folder (and then the destination's), so no save lands in between.
+async fn move_file(src_dir: &str, dst_dir: &str, name: &str) -> bool {
+    let (src, dst, name) = (src_dir.to_string(), dst_dir.to_string(), name.to_string());
+    let lock = store::file_lock(&src, &name);
+    store::with_lock(&lock, move || {
+        Box::pin(async move {
+            let Some(text) = store::read(&src, &name).await else {
+                return false;
+            };
+            let dst_lock = store::file_lock(&dst, &name);
+            let (dst2, name2, text2) = (dst.clone(), name.clone(), text.clone());
+            let copied = store::with_lock(&dst_lock, move || {
+                Box::pin(async move {
+                    match store::read(&dst2, &name2).await {
+                        // A newer copy is there already (another tab moved it).
+                        Some(existing) if existing != text2 => true,
+                        _ => {
+                            store::write(&dst2, &name2, &text2).await.is_ok()
+                                && store::read(&dst2, &name2).await.as_deref()
+                                    == Some(text2.as_str())
+                        }
+                    }
+                })
+            })
+            .await
+            .unwrap_or(false);
+            if !copied {
+                return false;
+            }
+            store::bump_epoch(&src, &name);
+            store::remove(&src, &name).await.is_ok()
+        })
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// After the active store changed: each open file's home is worked out
+/// again (a set in the device store stays there; any other file follows the
+/// active store), and a file whose home changes is reloaded from it (saves
+/// held, undo cleared).
+fn switch_open_files(state: AppState) {
+    let open: Vec<u64> = state
+        .library
+        .files()
+        .with_untracked(|files| files.iter().map(|f| f.id).collect());
+    wasm_bindgen_futures::spawn_local(async move {
+        for file_id in open {
+            let Some(key) = open_file_key(state, file_id) else {
+                continue;
+            };
+            let in_device = store::read(&Store::Device.annotations_dir(), &key)
+                .await
+                .is_some();
+            let wanted = if in_device {
+                Store::Device
+            } else {
+                store::active()
+            };
+            if store::home_of(file_id) != wanted {
+                crate::opfs::reload_annotations(state, file_id);
+            }
+        }
+    });
 }
 
 /// Desktop: look, read-only, for the "Oversample" folder and the app's
@@ -503,17 +797,15 @@ fn clear_session() {
         s.checked.clear();
         s.checking.clear();
         s.uploading.clear();
+        s.uploaded_at.clear();
         s.blocked.clear();
         s.reconciling = false;
         s.folder_busy = false;
         s.uploads_running = 0;
-        // Keep each key's fingerprint (see the module notes); forget the
-        // Drive ids and revisions.
-        for seen in s.memory.files.values_mut() {
-            seen.id.clear();
-            seen.rev = None;
-        }
-        save_memory(&s.memory);
+        s.gone.clear();
+        // What was seen of the account's Drive stays in its folder
+        // (`sync.json`) for its next sign-in.
+        s.memory = Memory::default();
         let window = web_sys::window();
         for (_, handle) in s.timers.drain() {
             if let Some(w) = &window {
@@ -538,9 +830,21 @@ fn end_session() {
     }
 }
 
-/// Sign out at the user's request.
+/// Sign out at the user's request. The account's files stop being the
+/// active store: open files that belong to it are reloaded from the device
+/// store (where they usually have no set, so they show none). Nothing is
+/// deleted. A sign-out the user did not ask for (`end_session`) keeps the
+/// account's cache as the active store, so open files keep their sets and
+/// edits are kept for the next sign-in.
 pub fn sign_out(state: AppState) {
     clear_session();
+    let account = with(|s| s.account.take());
+    store::set_active(Store::Device);
+    if let Some(account) = account {
+        for file_id in store::files_with_home(&account) {
+            crate::opfs::reload_annotations(state, file_id);
+        }
+    }
     state.drive.session_ended().set(false);
     wasm_bindgen_futures::spawn_local(async move {
         google_auth::logout().await;
@@ -732,27 +1036,31 @@ pub fn project_deleted(id: &str) {
     if !with(|s| s.available) {
         return;
     }
-    let mut ids = deleted_projects();
-    if !ids.iter().any(|i| i == id) {
-        ids.push(id.to_string());
-        set_deleted_projects(&ids);
-    }
     let sk = project_key(id);
     with(|s| {
         s.pending.remove(&sk);
         s.checked.remove(&sk);
     });
     publish();
-    if with(|s| s.signed_in) {
-        let gen = generation();
-        spawn(async move { trash_deleted_projects(gen).await });
-    }
+    let id = id.to_string();
+    let gen = generation();
+    spawn(async move {
+        add_deleted_project(&id).await;
+        if alive(gen) {
+            trash_deleted_projects(gen).await?;
+        }
+        Ok(())
+    });
 }
 
 /// A file's saved annotations have been read from local storage (or there
 /// were none): compare with the Drive copy.
 pub fn annotations_loaded(state: AppState, file_id: u64) {
     if !copies_enabled() || !with(|s| s.signed_in) {
+        return;
+    }
+    // A file shown from the device store is not the account's.
+    if with(|s| s.account.clone()).is_none_or(|a| store::home_of(file_id) != a) {
         return;
     }
     let Some(key) = open_file_key(state, file_id) else {
@@ -894,7 +1202,7 @@ fn fingerprint_of(kind: &str, text: &str) -> Option<String> {
     } else {
         yaml_serde::from_str::<AnnotationSet>(text)
             .ok()
-            .map(|s| rules::annotation_fingerprint(&s))
+            .map(|s| rules::content_fingerprint(&s))
     }
 }
 
@@ -907,7 +1215,9 @@ fn properties(kind: &str, key: &str) -> BTreeMap<String, String> {
 
 /// Upload the waiting text of `sync_key`, if it differs from the Drive copy.
 async fn upload(gen: u64, sync_key: String) -> Result<(), DriveError> {
-    if !alive(gen) {
+    if !alive(gen) || uploads_held() {
+        // Held: the change waits, and goes up after the next comparison of
+        // all files that passes.
         return Ok(());
     }
     if !with(|s| s.checked.contains(&sync_key)) {
@@ -948,6 +1258,8 @@ async fn upload(gen: u64, sync_key: String) -> Result<(), DriveError> {
         s.uploads_running = s.uploads_running.saturating_sub(1);
         s.uploading.remove(&sync_key);
     });
+    let done = next_save_seq();
+    with(|s| s.uploaded_at.insert(sync_key.clone(), done));
     if !alive(gen) {
         publish();
         return Ok(());
@@ -1046,10 +1358,19 @@ pub(crate) mod local {
         google_auth::provider() == Provider::Desktop
     }
 
-    /// Keys of every annotation set on this device.
+    /// The signed-in account's folder of annotation sets (browser).
+    fn account_annotations() -> Option<String> {
+        super::with(|s| s.account.as_ref().map(|a| a.annotations_dir()))
+    }
+
+    /// Keys of every annotation set of the signed-in account on this device
+    /// (its cache; on the desktop, the app's annotations folder).
     pub async fn keys() -> Vec<String> {
         if !desktop() {
-            return crate::opfs::annotation_keys().await.unwrap_or_default();
+            return match account_annotations() {
+                Some(dir) => super::store::keys(&dir, ".batm").await,
+                None => Vec::new(),
+            };
         }
         crate::tauri_bridge::tauri_invoke_typed_no_args::<Vec<String>>("list_central_annotations")
             .await
@@ -1058,18 +1379,24 @@ pub(crate) mod local {
 
     pub async fn read(key: &str) -> Option<String> {
         if desktop() {
-            crate::opfs::tauri_load_central(key).await.ok().flatten()
-        } else {
-            crate::opfs::opfs_load(key).await.ok().flatten()
+            return crate::opfs::tauri_load_central(key).await.ok().flatten();
         }
+        super::store::read(&account_annotations()?, key).await
     }
 
+    /// Write a set into the account's cache, under the file's lock.
     pub async fn write(key: &str, text: &str) -> Result<(), String> {
         if desktop() {
-            crate::opfs::tauri_save_central(key, text).await
-        } else {
-            crate::opfs::opfs_save(key, text).await
+            return crate::opfs::tauri_save_central(key, text).await;
         }
+        let dir = account_annotations().ok_or("not signed in")?;
+        let lock = super::store::file_lock(&dir, key);
+        let (key, text) = (key.to_string(), text.to_string());
+        super::store::with_lock(&lock, move || {
+            Box::pin(async move { super::store::write(&dir, &key, &text).await })
+        })
+        .await
+        .unwrap_or(Err("lock".into()))
     }
 
     /// localStorage: keys of sets downloaded into the central folder while
@@ -1176,7 +1503,10 @@ async fn drive_copy(
     };
     let last = seen(sync_key);
     if let Some(last) = last.filter(|l| {
-        l.id == newest.id && newest.head_revision_id.is_some() && l.rev == newest.head_revision_id
+        !l.fp.is_empty()
+            && l.id == newest.id
+            && newest.head_revision_id.is_some()
+            && l.rev == newest.head_revision_id
     }) {
         return Ok(Some(DriveCopy {
             file: newest,
@@ -1226,6 +1556,13 @@ fn open_file_key(state: AppState, file_id: u64) -> Option<String> {
         }
         f.identity.as_ref().map(crate::opfs::opfs_key)
     })
+}
+
+/// The open file with key `key` whose home is the signed-in account (a file
+/// shown from the device store is not the account's).
+fn open_account_file(state: AppState, key: &str) -> Option<u64> {
+    let account = with(|s| s.account.clone())?;
+    open_file_with_key(state, key).filter(|id| store::home_of(*id) == account)
 }
 
 /// The open file whose key is `key`, if any.
@@ -1280,18 +1617,20 @@ async fn check_annotations(
     if !alive(gen) {
         return Ok(());
     }
+    let (files, gone) = confirm_missing(&sk, files).await?;
     let parse_fp = |text: &str| {
         yaml_serde::from_str::<AnnotationSet>(text)
             .ok()
-            .map(|s| rules::annotation_fingerprint(&s))
+            .map(|s| rules::content_fingerprint(&s))
     };
     let drive = drive_copy(&sk, &files, parse_fp).await?;
     if !alive(gen) || with(|s| s.blocked.contains(&sk)) {
         return Ok(());
     }
 
-    // The local copy: the open file's set, or the one in local storage.
-    let open = open_file_with_key(state, &key);
+    // The local copy: the open file's set, or the one in the account's
+    // cache on this device.
+    let open = open_account_file(state, &key);
     if let Some(file_id) = open {
         let read_only = state.file_idx_for_id(file_id).is_some_and(|idx| {
             state
@@ -1311,9 +1650,35 @@ async fn check_annotations(
             None => None,
         },
     };
-    let local_fp = local.as_ref().map(rules::annotation_fingerprint);
-    let base = seen(&sk).map(|s| s.fp);
-    let action = rules::decide(
+    let local_fp = local.as_ref().map(rules::content_fingerprint);
+    let base = base_for(&sk, drive.as_ref()).await;
+    let side = match (&drive, gone) {
+        (_, true) => DriveSide::Gone,
+        (Some(d), _) => DriveSide::Present(FileCopy {
+            fingerprint: &d.fp,
+            modified_at: None,
+        }),
+        (None, false) => DriveSide::Absent,
+    };
+    if let (Action::RemoveLocal, true) = (
+        rules::decide_with(
+            Kind::Annotations,
+            local
+                .as_ref()
+                .zip(local_fp.as_deref())
+                .map(|(set, fp)| FileCopy {
+                    fingerprint: fp,
+                    modified_at: set.modified_at.as_deref(),
+                }),
+            side,
+            base.as_deref(),
+        ),
+        gone,
+    ) {
+        note_gone(&sk);
+        return Ok(());
+    }
+    let action = rules::decide_with(
         Kind::Annotations,
         local
             .as_ref()
@@ -1322,10 +1687,7 @@ async fn check_annotations(
                 fingerprint: fp,
                 modified_at: set.modified_at.as_deref(),
             }),
-        drive.as_ref().map(|d| FileCopy {
-            fingerprint: &d.fp,
-            modified_at: None,
-        }),
+        side,
         base.as_deref(),
     );
     // `decide` needs the Drive copy's time only when both copies changed;
@@ -1417,7 +1779,7 @@ async fn check_annotations(
                     // The user may have changed the set while Drive was read.
                     let now_fp = open_file_set(state, file_id)
                         .as_ref()
-                        .map(rules::annotation_fingerprint);
+                        .map(rules::content_fingerprint);
                     if now_fp != local_fp {
                         drop(_checking);
                         start_check(sk);
@@ -1446,7 +1808,7 @@ async fn check_annotations(
                         drive_set
                     };
                     let out_fp = if action == Action::Merge {
-                        rules::annotation_fingerprint(&out)
+                        rules::content_fingerprint(&out)
                     } else {
                         d.fp.clone()
                     };
@@ -1485,12 +1847,66 @@ async fn check_annotations(
                 }
             }
         }
-        (Action::Download | Action::Merge, None) => {}
+        (Action::Download | Action::Merge, None) | (Action::RemoveLocal, _) => {}
     }
     mark_checked(&sk);
     set_problem(None);
     publish();
     Ok(())
+}
+
+/// When no Drive file has the key: ask Drive about the file last seen for
+/// it, by id. Returns the files to compare, and whether that file is gone
+/// (Drive answered "not found" or "in the trash" for it; a missing entry in
+/// a listing is never taken as gone).
+async fn confirm_missing(
+    sync_key: &str,
+    files: Vec<DriveFile>,
+) -> Result<(Vec<DriveFile>, bool), DriveError> {
+    if !files.is_empty() {
+        return Ok((files, false));
+    }
+    let Some(last) = refresh_seen(sync_key).await.filter(|l| !l.id.is_empty()) else {
+        return Ok((files, false));
+    };
+    match drive::metadata(&last.id).await? {
+        Some(f) => Ok((vec![f], false)),
+        None => Ok((files, true)),
+    }
+}
+
+/// The base of the three-way comparison: the fingerprint of the Drive copy
+/// as last seen. A key moved in from the old record has none yet; while its
+/// Drive revision is still the one last seen, Drive's current copy is the
+/// synced one, and its fingerprint becomes the base.
+async fn base_for(sync_key: &str, drive: Option<&DriveCopy>) -> Option<String> {
+    let last = refresh_seen(sync_key).await?;
+    if !last.fp.is_empty() {
+        return Some(last.fp);
+    }
+    let d = drive?;
+    if d.file.id == last.id
+        && d.file.head_revision_id.is_some()
+        && d.file.head_revision_id == last.rev
+    {
+        set_seen(sync_key, Some(seen_from(d)));
+        return Some(d.fp.clone());
+    }
+    None
+}
+
+/// A key found deleted on Drive and unchanged here: it is removed after the
+/// comparison of all files (which runs now if none is running).
+fn note_gone(sync_key: &str) {
+    with(|s| {
+        if !s.gone.iter().any(|k| k == sync_key) {
+            s.gone.push(sync_key.to_string());
+        }
+    });
+    if !with(|s| s.reconciling) {
+        let gen = generation();
+        spawn(async move { reconcile(gen).await });
+    }
 }
 
 /// Compare the project `id` with its Drive copy and act.
@@ -1516,6 +1932,7 @@ async fn check_project(
         Some(f) => f,
         None => drive::files_with_key(BATPROJ, &rules::drive_key(&id)).await?,
     };
+    let (files, gone) = confirm_missing(&sk, files).await?;
     let parse_fp = |text: &str| {
         yaml_serde::from_str::<BatProject>(text)
             .ok()
@@ -1525,16 +1942,24 @@ async fn check_project(
     if !alive(gen) {
         return Ok(());
     }
+    let Some(account) = with(|s| s.account.clone()) else {
+        return Ok(());
+    };
+    // The open project counts only if it belongs to the account.
     let is_open = |state: AppState| {
         state
             .project
             .current()
             .with_untracked(|p| p.as_ref().is_some_and(|p| p.id == id))
+            && store::project_home(&id) == account
     };
     let local: Option<BatProject> = if is_open(state) {
         state.project.current().get_untracked()
     } else {
-        crate::project_store::load_project(&id).await.ok().flatten()
+        crate::project_store::load_project_in(&account, &id)
+            .await
+            .ok()
+            .flatten()
     };
     let local_fp = local.as_ref().map(rules::project_fingerprint);
     // Projects need the Drive copy's time for a first comparison too.
@@ -1545,8 +1970,18 @@ async fn check_project(
     let drive_project: Option<BatProject> = drive_text_now
         .as_deref()
         .and_then(|t| yaml_serde::from_str(t).ok());
-    let base = seen(&sk).map(|s| s.fp);
-    let action = rules::decide(
+    let base = base_for(&sk, drive.as_ref()).await;
+    let side = match (&drive, gone) {
+        (_, true) => DriveSide::Gone,
+        (Some(d), _) => DriveSide::Present(FileCopy {
+            fingerprint: &d.fp,
+            modified_at: drive_project
+                .as_ref()
+                .and_then(|p| p.modified_at.as_deref()),
+        }),
+        (None, false) => DriveSide::Absent,
+    };
+    let action = rules::decide_with(
         Kind::Project,
         local
             .as_ref()
@@ -1555,14 +1990,13 @@ async fn check_project(
                 fingerprint: fp,
                 modified_at: p.modified_at.as_deref(),
             }),
-        drive.as_ref().map(|d| FileCopy {
-            fingerprint: &d.fp,
-            modified_at: drive_project
-                .as_ref()
-                .and_then(|p| p.modified_at.as_deref()),
-        }),
+        side,
         base.as_deref(),
     );
+    if action == Action::RemoveLocal {
+        note_gone(&sk);
+        return Ok(());
+    }
     if !alive(gen) {
         return Ok(());
     }
@@ -1602,6 +2036,7 @@ async fn check_project(
             // The recordings' paths on this device (desktop) come back from
             // the local copy; Drive never has them.
             let project = rules::with_local_paths(project, local.as_ref());
+            store::set_project_home(&id, account.clone());
             if let Err(e) = crate::project_store::write_project_local(&project).await {
                 log::warn!("Google Drive: could not store project {id} locally: {e}");
                 return Ok(());
@@ -1618,7 +2053,7 @@ async fn check_project(
                 .projects_changed()
                 .update(|n| *n = n.wrapping_add(1));
         }
-        (Action::Download | Action::Merge, None) => {}
+        (Action::Download | Action::Merge, None) | (Action::RemoveLocal, _) => {}
     }
     mark_checked(&sk);
     set_problem(None);
@@ -1627,6 +2062,15 @@ async fn check_project(
 }
 
 // ── Comparing everything ────────────────────────────────────────────────
+
+/// Whether `sync_key` is being uploaded, or was uploaded after `listed` (a
+/// `save_seq` value taken before a Drive listing): the listing is out of
+/// date for it, and the upload left it compared.
+fn changed_since(sync_key: &str, listed: u64) -> bool {
+    with(|s| {
+        s.uploading.contains(sync_key) || s.uploaded_at.get(sync_key).is_some_and(|&t| t > listed)
+    })
+}
 
 /// Group Drive files by their key property.
 fn by_key(files: Vec<DriveFile>) -> HashMap<String, Vec<DriveFile>> {
@@ -1658,9 +2102,29 @@ async fn reconcile_inner(gen: u64) -> Result<(), DriveError> {
     let Some(state) = app_state() else {
         return Ok(());
     };
+    let Some(account) = with(|s| s.account.clone()) else {
+        return Ok(());
+    };
+    // Files were synced with this account before, but Drive no longer shows
+    // its "Oversample" folder: compare, upload and remove nothing (a client
+    // also gets "not found" for what it can no longer see), and say so.
+    let synced_before = with(|s| s.memory.files.values().filter(|v| !v.id.is_empty()).count());
+    let folder_visible = !drive::find_folders("root").await?.is_empty();
+    if !alive(gen) {
+        return Ok(());
+    }
+    if !folder_visible && synced_before > 0 {
+        with(|s| {
+            s.gone.clear();
+            s.folders.clear();
+        });
+        set_problem(Some(DriveProblem::FolderMissing));
+        return Ok(());
+    }
     trash_deleted_projects(gen).await?;
 
     // Annotation sets.
+    let listed = next_save_seq();
     let mut drive_sets = by_key(drive::files_of_kind(BATM).await?);
     if !alive(gen) {
         return Ok(());
@@ -1670,7 +2134,7 @@ async fn reconcile_inner(gen: u64) -> Result<(), DriveError> {
         let files = drive_sets
             .remove(&rules::drive_key(&key))
             .unwrap_or_default();
-        if with(|s| s.checked.contains(&batm_key(&key))) {
+        if changed_since(&batm_key(&key), listed) {
             continue;
         }
         check_annotations(gen, key, Some(files)).await?;
@@ -1702,7 +2166,7 @@ async fn reconcile_inner(gen: u64) -> Result<(), DriveError> {
         let Some(key) = key else {
             continue;
         };
-        if with(|s| s.checked.contains(&batm_key(&key))) {
+        if changed_since(&batm_key(&key), listed) {
             continue;
         }
         check_annotations(gen, key, Some(files)).await?;
@@ -1712,17 +2176,17 @@ async fn reconcile_inner(gen: u64) -> Result<(), DriveError> {
     }
 
     // Projects.
+    let listed = next_save_seq();
     let mut drive_projects = by_key(drive::files_of_kind(BATPROJ).await?);
     if !alive(gen) {
         return Ok(());
     }
-    let mut local_ids = crate::project_store::project_ids()
-        .await
-        .unwrap_or_default();
+    let mut local_ids = crate::project_store::project_ids_in(&account).await;
     if let Some(open) = state
         .project
         .current()
         .with_untracked(|p| p.as_ref().map(|p| p.id.clone()))
+        .filter(|id| store::project_home(id) == account)
     {
         if !local_ids.contains(&open) {
             local_ids.push(open);
@@ -1732,13 +2196,18 @@ async fn reconcile_inner(gen: u64) -> Result<(), DriveError> {
         let files = drive_projects
             .remove(&rules::drive_key(&id))
             .unwrap_or_default();
+        if changed_since(&project_key(&id), listed) {
+            continue;
+        }
         check_project(gen, id, Some(files)).await?;
         if !alive(gen) {
             return Ok(());
         }
     }
     for (property, files) in drive_projects {
-        if !rules::local_key_is_safe(&format!("{property}.batproj"), ".batproj") {
+        if !rules::local_key_is_safe(&format!("{property}.batproj"), ".batproj")
+            || changed_since(&project_key(&property), listed)
+        {
             continue;
         }
         check_project(gen, property, Some(files)).await?;
@@ -1759,10 +2228,102 @@ async fn reconcile_inner(gen: u64) -> Result<(), DriveError> {
     for sk in waiting {
         start_check(sk);
     }
+
+    // Files deleted on Drive and unchanged here leave the cache, unless
+    // most synced files came back deleted at once.
+    let gone = with(|s| std::mem::take(&mut s.gone));
+    if !gone.is_empty() {
+        if !rules::removals_allowed(folder_visible, synced_before, gone.len()) {
+            set_problem(Some(DriveProblem::FilesMissing(gone.len())));
+            publish();
+            return Ok(());
+        }
+        for sk in gone {
+            remove_local(gen, &account, &sk).await;
+            if !alive(gen) {
+                return Ok(());
+            }
+        }
+    }
+    clear_problem();
     restart_waiting_uploads();
-    set_problem(None);
     publish();
     Ok(())
+}
+
+/// Remove `sync_key` from the account's cache, because its Drive file was
+/// deleted. Only if the copy here (and an open file's set) is still the one
+/// last synced, checked again under the file's lock, so a save that landed
+/// since keeps it (and it is uploaded again). An open file's set is dropped
+/// inside the lock, so no later save writes it back. An open project is left
+/// until it is closed.
+async fn remove_local(gen: u64, account: &Store, sync_key: &str) {
+    let Some(state) = app_state() else {
+        return;
+    };
+    let Some(base) = refresh_seen(sync_key).await.filter(|s| !s.fp.is_empty()) else {
+        return;
+    };
+    let (kind, key) = split(sync_key);
+    let (kind, key) = (kind.to_string(), key.to_string());
+    let (dir, name, open) = if kind == BATPROJ {
+        let open_project = state
+            .project
+            .current()
+            .with_untracked(|p| p.as_ref().is_some_and(|p| p.id == key));
+        if open_project {
+            return;
+        }
+        (account.projects_dir(), format!("{key}.batproj"), None)
+    } else {
+        (
+            account.annotations_dir(),
+            key.clone(),
+            open_account_file(state, &key),
+        )
+    };
+    let lock = store::file_lock(&dir, &name);
+    let (dir2, name2, kind2, base_fp) = (dir.clone(), name.clone(), kind.clone(), base.fp.clone());
+    let removed = store::with_lock(&lock, move || {
+        Box::pin(async move {
+            let open_fp = open
+                .and_then(|id| open_file_set(state, id))
+                .map(|s| rules::content_fingerprint(&s));
+            // A file that does not parse is not the synced one.
+            let disk_fp = store::read(&dir2, &name2)
+                .await
+                .map(|text| fingerprint_of(&kind2, &text).unwrap_or_default());
+            if !rules::may_remove(&base_fp, disk_fp.as_deref(), open_fp.as_deref()) {
+                return false;
+            }
+            if let Some(file_id) = open {
+                crate::opfs::drop_annotations(state, file_id);
+            }
+            store::bump_epoch(&dir2, &name2);
+            store::remove(&dir2, &name2).await.is_ok()
+        })
+    })
+    .await
+    .unwrap_or(false);
+    if !alive(gen) {
+        return;
+    }
+    if removed {
+        set_seen(sync_key, None);
+        with(|s| s.checked.insert(sync_key.to_string()));
+        if kind == BATPROJ {
+            state
+                .drive
+                .projects_changed()
+                .update(|n| *n = n.wrapping_add(1));
+        }
+    } else {
+        // Changed here since: compared again, and uploaded (an edit beats a
+        // delete).
+        with(|s| s.checked.remove(sync_key));
+        start_check(sync_key.to_string());
+    }
+    publish();
 }
 
 /// Move the Drive copies of projects deleted on this device to the Drive
@@ -1777,11 +2338,7 @@ async fn trash_deleted_projects(gen: u64) -> Result<(), DriveError> {
             return Ok(());
         }
         set_seen(&project_key(&id), None);
-        let rest: Vec<String> = deleted_projects()
-            .into_iter()
-            .filter(|i| *i != id)
-            .collect();
-        set_deleted_projects(&rest);
+        remove_deleted_project(&id).await;
     }
     Ok(())
 }

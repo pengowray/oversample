@@ -12,4 +12,5 @@ pub mod drive;
 pub mod google_auth;
 pub mod http;
 pub mod rules;
+pub mod store;
 pub mod sync;

@@ -12,7 +12,8 @@ async fn get_opfs_dir() -> Result<FileSystemDirectoryHandle, String> {
     get_opfs_subdir(OPFS_DIR).await
 }
 
-/// Get (creating if needed) a top-level OPFS directory by name.
+/// Get (creating if needed) an OPFS directory by its path from the root
+/// (`a` or `a/b/c`).
 pub(crate) async fn get_opfs_subdir(name: &str) -> Result<FileSystemDirectoryHandle, String> {
     let window = web_sys::window().ok_or("no window")?;
     let navigator = window.navigator();
@@ -24,12 +25,27 @@ pub(crate) async fn get_opfs_subdir(name: &str) -> Result<FileSystemDirectoryHan
 
     let opts = web_sys::FileSystemGetDirectoryOptions::new();
     opts.set_create(true);
-    let dir: FileSystemDirectoryHandle =
-        JsFuture::from(root.get_directory_handle_with_options(name, &opts))
+    let mut dir = root;
+    for part in name.split('/').filter(|p| !p.is_empty()) {
+        dir = JsFuture::from(dir.get_directory_handle_with_options(part, &opts))
             .await
             .map_err(|e| format!("OPFS dir: {e:?}"))?
             .unchecked_into();
+    }
     Ok(dir)
+}
+
+/// Delete `key` from the OPFS directory `dir_name` (no error if it is not
+/// there).
+pub(crate) async fn opfs_remove_in(dir_name: &str, key: &str) -> Result<(), String> {
+    let dir = get_opfs_subdir(dir_name).await?;
+    if JsFuture::from(dir.get_file_handle(key)).await.is_err() {
+        return Ok(());
+    }
+    JsFuture::from(dir.remove_entry(key))
+        .await
+        .map_err(|e| format!("OPFS delete: {e:?}"))?;
+    Ok(())
 }
 
 /// Build a storage key for a file. Uses spot_hash_b3 if available, else legacy_spot_hash, else filename+size.
@@ -405,16 +421,37 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
             }
         });
     } else {
-        // Browser: save to OPFS, then hand the same set to the Google Drive
-        // copy.
+        // Browser: save to the file's home (the device store or the signed-in
+        // account's cache), under the file's lock. A save queued before the
+        // file was removed or reloaded there skips its write. Only a set in
+        // the account's cache goes to the Google Drive copy.
+        use crate::cloud::store;
+        let home = store::home_of(file_id);
+        let dir = home.annotations_dir();
+        let epoch = store::epoch(&dir, &key);
+        let to_account = matches!(home, store::Store::Account(_));
         wasm_bindgen_futures::spawn_local(async move {
-            if let Err(e) = opfs_save(&key, &yaml).await {
-                log::warn!("OPFS save error: {e}");
-            } else {
-                log::debug!("OPFS saved annotations: {key}");
-                if let Some(text) = drive_text {
-                    crate::cloud::sync::annotation_saved(&key, &audio_name, text, seq);
+            let lock = store::file_lock(&dir, &key);
+            let (dir2, key2) = (dir.clone(), key.clone());
+            let written = store::with_lock(&lock, move || {
+                Box::pin(async move {
+                    if store::epoch(&dir2, &key2) != epoch {
+                        return Ok(false);
+                    }
+                    store::write(&dir2, &key2, &yaml).await.map(|()| true)
+                })
+            })
+            .await;
+            match written {
+                Some(Ok(true)) => {
+                    log::debug!("OPFS saved annotations: {dir}/{key}");
+                    if let (true, Some(text)) = (to_account, drive_text) {
+                        crate::cloud::sync::annotation_saved(&key, &audio_name, text, seq);
+                    }
                 }
+                Some(Ok(false)) => log::debug!("OPFS save of {key} skipped: removed or reloaded"),
+                Some(Err(e)) => log::warn!("OPFS save error: {e}"),
+                None => {}
             }
         });
     }
@@ -466,6 +503,60 @@ pub(crate) fn adopt_drive_copy(
         save_annotations(state, idx);
     }
     true
+}
+
+/// Forget open file `file_id`'s annotation set in memory: the set, its undo
+/// and redo steps, and the marks that it was read and saved. Writes of it
+/// that were queued to `old_home` are skipped (its epoch goes up).
+fn forget_open_set(state: crate::state::AppState, file_id: u64, key: &str) {
+    use crate::cloud::store;
+    use leptos::prelude::Update;
+    store::bump_epoch(&store::home_of(file_id).annotations_dir(), key);
+    state.annotations.store().update(|s| {
+        s.remove(file_id);
+    });
+    state.annotations.undo_stack().update(|u| {
+        u.undo.retain(|e| e.file_id != file_id);
+        u.redo.retain(|e| e.file_id != file_id);
+    });
+    SAVED_SET_APPLIED.with(|s| s.borrow_mut().remove(&file_id));
+    LAST_SAVED_FINGERPRINT.with(|m| m.borrow_mut().remove(&file_id));
+}
+
+/// The key and identity of open file `file_id`.
+fn open_file_identity(
+    state: crate::state::AppState,
+    file_id: u64,
+) -> Option<(usize, crate::annotations::FileIdentity)> {
+    use leptos::prelude::WithUntracked;
+    let idx = state.file_idx_for_id(file_id)?;
+    let identity = state
+        .library
+        .files()
+        .with_untracked(|f| f.get(idx).and_then(|f| f.identity.clone()))?;
+    Some((idx, identity))
+}
+
+/// Read open file `file_id`'s annotations again, from the store that holds
+/// them now (after the active store changed). What it had in memory is
+/// dropped first, with its undo steps; saves wait until the read is done.
+pub(crate) fn reload_annotations(state: crate::state::AppState, file_id: u64) {
+    let Some((idx, identity)) = open_file_identity(state, file_id) else {
+        return;
+    };
+    forget_open_set(state, file_id, &opfs_key(&identity));
+    crate::cloud::store::forget_home(file_id);
+    load_annotations(state, idx, identity);
+}
+
+/// Drop open file `file_id`'s annotations from memory after its copy in the
+/// store was removed (it was deleted on Google Drive). The file then shows
+/// no annotations.
+pub(crate) fn drop_annotations(state: crate::state::AppState, file_id: u64) {
+    let Some((_, identity)) = open_file_identity(state, file_id) else {
+        return;
+    };
+    forget_open_set(state, file_id, &opfs_key(&identity));
 }
 
 /// Keys of every annotation set in local storage.
@@ -787,8 +878,29 @@ fn load_annotations_opfs(
             keys_to_try.push(fallback);
         }
 
+        // Signed in: the account's cache first, then the device store (a set
+        // made while signed out stays there until the user moves it).
+        // The store it is found in becomes the file's home.
+        use crate::cloud::store;
+        let mut stores = vec![store::active()];
+        if stores[0] != store::Store::Device {
+            stores.push(store::Store::Device);
+        }
+        let mut found_in = None;
+        'stores: for st in &stores {
+            for try_key in &keys_to_try {
+                if store::read(&st.annotations_dir(), try_key).await.is_some() {
+                    found_in = Some(st.clone());
+                    break 'stores;
+                }
+            }
+        }
+        let home = found_in.unwrap_or_else(store::active);
+        store::set_home(file_id, home.clone());
+        let dir = home.annotations_dir();
+
         for (i, try_key) in keys_to_try.iter().enumerate() {
-            match opfs_load(try_key).await {
+            match opfs_load_in(&dir, try_key).await {
                 Ok(Some(yaml)) => {
                     match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                         Ok(loaded) => {

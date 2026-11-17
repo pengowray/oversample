@@ -33,6 +33,9 @@ fn drive_text(s: FileDriveState) -> (&'static str, bool) {
         FileDriveState::Problem(DriveProblem::Unreachable) => ("Can't reach Google Drive", true),
         FileDriveState::Problem(DriveProblem::Full) => ("Google Drive is full", true),
         FileDriveState::Problem(DriveProblem::Refused) => ("Google Drive rejected a change", true),
+        FileDriveState::Problem(DriveProblem::FolderMissing | DriveProblem::FilesMissing(_)) => {
+            ("Google Drive copying paused", true)
+        }
         FileDriveState::NotCopied => ("Not copied to Google Drive", true),
     }
 }
@@ -65,6 +68,8 @@ struct OpenFile {
     name: String,
     /// Key of its saved annotations, once its hash is known.
     key: Option<String>,
+    /// `LoadedFile.id`.
+    id: u64,
 }
 
 #[component]
@@ -76,6 +81,7 @@ pub fn AnnotationStorage() -> impl IntoView {
             let f = files.get(idx)?;
             let name = f.name.rsplit(['/', '\\']).next().unwrap_or(&f.name);
             Some(OpenFile {
+                id: f.id,
                 read_only: f.read_only,
                 had_sidecar: f.had_sidecar,
                 name: name.to_string(),
@@ -121,7 +127,15 @@ pub fn AnnotationStorage() -> impl IntoView {
                         </div>
                     })}
                     {move || {
+                        // Only a set whose home is the signed-in account has a
+                        // Drive copy (one shown from the device store has none).
                         let s = sync::file_drive_state(state, key.as_deref()?)?;
+                        if !matches!(
+                            crate::cloud::store::home_of(file.id),
+                            crate::cloud::store::Store::Account(_)
+                        ) {
+                            return None;
+                        }
                         let (text, warning) = drive_text(s);
                         let class = if warning {
                             "annotation-storage-drive drive-warning"
