@@ -116,6 +116,21 @@ fn NoProjectView() -> impl IntoView {
     let project_list: RwSignal<Option<Vec<project_store::ProjectSummary>>> = RwSignal::new(None);
     let loading_list = RwSignal::new(false);
 
+    // A project arrived from Google Drive: reload the list if it is shown.
+    Effect::new(move |prev: Option<u32>| {
+        let n = state.drive.projects_changed().get();
+        if prev.is_some_and(|p| p != n) && project_list.get_untracked().is_some() {
+            spawn_local(async move {
+                if let Ok(projects) = project_store::list_projects().await {
+                    if project_list.try_get_untracked().flatten().is_some() {
+                        project_list.set(Some(projects));
+                    }
+                }
+            });
+        }
+        n
+    });
+
     let on_create = move |_: web_sys::MouseEvent| {
         let files = state.library.files().get_untracked();
         let mut proj = BatProject::new();

@@ -33,8 +33,17 @@ fn project_key(id: &str) -> String {
     format!("{}.batproj", id)
 }
 
-/// Save a project to OPFS as YAML.
+/// Save a project to OPFS as YAML, then hand it to the Google Drive copy
+/// (if signed in).
 pub async fn save_project(project: &BatProject) -> Result<(), String> {
+    let yaml = write_project_local(project).await?;
+    crate::cloud::sync::project_saved(project, yaml);
+    Ok(())
+}
+
+/// Save a project to OPFS as YAML, without telling the Google Drive copy
+/// (for a project that came from Drive). Returns the YAML written.
+pub async fn write_project_local(project: &BatProject) -> Result<String, String> {
     let yaml = yaml_serde::to_string(project).map_err(|e| format!("YAML serialize: {e}"))?;
 
     let dir = get_projects_dir().await?;
@@ -66,7 +75,16 @@ pub async fn save_project(project: &BatProject) -> Result<(), String> {
         .await
         .map_err(|e| format!("OPFS close: {e:?}"))?;
 
-    Ok(())
+    Ok(yaml)
+}
+
+/// Ids of every project in OPFS.
+pub async fn project_ids() -> Result<Vec<String>, String> {
+    let names = crate::opfs::list_names_in(OPFS_PROJECTS_DIR).await?;
+    Ok(names
+        .into_iter()
+        .filter_map(|n| n.strip_suffix(".batproj").map(str::to_string))
+        .collect())
 }
 
 /// Load a project from OPFS by its ID. Returns None if not found.
@@ -180,6 +198,8 @@ pub async fn delete_project(id: &str) -> Result<(), String> {
         .await
         .map_err(|e| format!("OPFS delete: {e:?}"))?;
 
+    // Its Google Drive copy goes to the Drive trash, or it would come back.
+    crate::cloud::sync::project_deleted(id);
     Ok(())
 }
 

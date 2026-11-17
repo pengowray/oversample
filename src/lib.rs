@@ -5,6 +5,7 @@ pub mod bat_book;
 pub mod call_annotations;
 pub mod canvas;
 pub mod classifier;
+pub mod cloud;
 pub mod components;
 pub mod denoise;
 pub mod denoise_copy;

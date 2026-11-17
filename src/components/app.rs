@@ -73,6 +73,8 @@ pub fn App() -> impl IntoView {
     crate::test_hook::install(state);
     // Expose synth-test start/stop on window for e2e (dev/test feature).
     crate::audio::synthetic_mic::install_test_hooks(state);
+    // Google Drive copies of annotations and projects (browser only).
+    crate::cloud::sync::init(state);
 
     // Detect browser's default audio output sample rate
     {

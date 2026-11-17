@@ -44,7 +44,7 @@ pub fn opfs_key(identity: &crate::annotations::FileIdentity) -> String {
 }
 
 /// Build the filename+size fallback key.
-fn opfs_fallback_key(filename: &str, file_size: u64) -> String {
+pub(crate) fn opfs_fallback_key(filename: &str, file_size: u64) -> String {
     let safe_name: String = filename
         .chars()
         .map(|c| {
@@ -77,6 +77,22 @@ thread_local! {
     /// once while it opens; only the first read that finds them is used.
     static SAVED_SET_APPLIED: std::cell::RefCell<std::collections::HashSet<u64>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
+    /// Files (by `LoadedFile.id`): fingerprint (`cloud::rules`) of the
+    /// annotation set last read or written. A browser save whose content
+    /// matches it keeps the set's `modified_at`, so that the time means
+    /// "last changed" and not "last saved". Google Drive copies compare it.
+    static LAST_SAVED_FINGERPRINT: std::cell::RefCell<std::collections::HashMap<u64, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Note the fingerprint of the set file `file_id` now has on disk.
+fn remember_fingerprint(file_id: u64, fingerprint: String) {
+    LAST_SAVED_FINGERPRINT.with(|m| m.borrow_mut().insert(file_id, fingerprint));
+}
+
+/// Whether `fingerprint` is what file `file_id` was last read or saved with.
+fn fingerprint_unchanged(file_id: u64, fingerprint: &str) -> bool {
+    LAST_SAVED_FINGERPRINT.with(|m| m.borrow().get(&file_id).is_some_and(|f| f == fingerprint))
 }
 
 /// While one of these exists for a file, `save_annotations` does not write
@@ -280,7 +296,7 @@ fn sidecar_yaml_without_full_path(set: &crate::annotations::AnnotationSet) -> St
 /// Save annotations for a specific file index (OPFS on browser, central store on Tauri).
 /// Respects read_only (skips all saves) and had_sidecar (only writes file-adjacent if it existed).
 pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
-    use leptos::prelude::{GetUntracked, Update, WithUntracked};
+    use leptos::prelude::{Update, WithUntracked};
 
     // Check read_only flag — skip all saves
     let (read_only, had_sidecar) =
@@ -308,7 +324,7 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
         return;
     }
 
-    // Sync file identity, noise profile, and touch modified_at before saving
+    // Sync file identity and noise profile before saving
     state.annotations.store().update(|store| {
         if let Some(set) = store.get_mut(file_id) {
             // Sync file identity from the LoadedFile (may have been updated after AnnotationSet creation)
@@ -321,16 +337,34 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
             }
             // Capture current NR state into the sidecar
             set.noise_profile = sync_noise_profile_from_state(state);
-            set.touch();
         }
     });
 
-    let store = state.annotations.store().get_untracked();
-    let set = match store.get(file_id) {
-        Some(s) => s.clone(),
+    let set = match state
+        .annotations
+        .store()
+        .with_untracked(|store| store.get(file_id).cloned())
+    {
+        Some(s) => s,
         None => return,
     };
-    let set = crate::te_correction::to_file_units_at(state, file_idx, set);
+    let mut set = crate::te_correction::to_file_units_at(state, file_idx, set);
+
+    // Touch modified_at. In the browser only when the content changed since
+    // the file was read or last saved: saves on file switch, after a hash is
+    // computed or under a new key are not edits, and a later time would let
+    // an untouched copy win over a Google Drive copy. (Tauri keeps touching
+    // on every save; its sidecar and central copies compare these times.)
+    let fingerprint = crate::cloud::rules::annotation_fingerprint(&set);
+    if state.is_tauri || !fingerprint_unchanged(file_id, &fingerprint) {
+        state.annotations.store().update(|store| {
+            if let Some(stored) = store.get_mut(file_id) {
+                stored.touch();
+            }
+        });
+        set.touch();
+    }
+    remember_fingerprint(file_id, fingerprint);
 
     let key = opfs_key(&set.file_identity);
     let yaml = match yaml_serde::to_string(&set) {
@@ -361,15 +395,101 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
             }
         });
     } else {
-        // Browser: save to OPFS
+        // Browser: save to OPFS, then hand the same set to the Google Drive
+        // copy (without the file path, which the browser does not have).
+        let drive_text = sidecar_yaml_without_full_path(&set);
+        let audio_name = set.file_identity.filename.clone();
+        let seq = crate::cloud::sync::next_save_seq();
         wasm_bindgen_futures::spawn_local(async move {
             if let Err(e) = opfs_save(&key, &yaml).await {
                 log::warn!("OPFS save error: {e}");
             } else {
                 log::debug!("OPFS saved annotations: {key}");
+                crate::cloud::sync::annotation_saved(&key, &audio_name, drive_text, seq);
             }
         });
     }
+}
+
+/// Use a Google Drive copy of the annotations of open file `file_id`, through
+/// the same path as a set read from local storage (identity check, file
+/// units, Xeno-canto annotations), then save it locally.
+///
+/// `keep_local`: also keep the annotations the file has now that the Drive
+/// copy lacks (a first comparison, see `cloud::rules`). Otherwise the Drive
+/// copy replaces them.
+///
+/// The file's undo and redo steps are dropped: they hold whole sets from
+/// before, and undoing one would put the old set back and upload it.
+pub(crate) fn adopt_drive_copy(
+    state: crate::state::AppState,
+    file_id: u64,
+    drive_set: crate::annotations::AnnotationSet,
+    keep_local: bool,
+) -> bool {
+    use leptos::prelude::{Update, WithUntracked};
+
+    let Some(file_idx) = state.file_idx_for_id(file_id) else {
+        return false;
+    };
+    let identity = state
+        .library
+        .files()
+        .with_untracked(|files| files.get(file_idx).and_then(|f| f.identity.clone()));
+    let Some(identity) = identity else {
+        return false;
+    };
+    if !crate::file_identity::saved_identity_agrees(&drive_set.file_identity, &identity) {
+        return false;
+    }
+    if !keep_local {
+        state.annotations.store().update(|store| {
+            store.remove(file_id);
+        });
+    }
+    state.annotations.undo_stack().update(|u| {
+        u.undo.retain(|e| e.file_id != file_id);
+        u.redo.retain(|e| e.file_id != file_id);
+    });
+    SAVED_SET_APPLIED.with(|s| s.borrow_mut().insert(file_id));
+    apply_loaded_sidecar(state, file_id, drive_set);
+    if let Some(idx) = state.file_idx_for_id(file_id) {
+        save_annotations(state, idx);
+    }
+    true
+}
+
+/// Keys of every annotation set in local storage.
+pub async fn annotation_keys() -> Result<Vec<String>, String> {
+    let mut keys = list_names_in(OPFS_DIR).await?;
+    keys.retain(|k| k.ends_with(".batm"));
+    Ok(keys)
+}
+
+/// Names of the files in the OPFS directory `dir_name`.
+pub(crate) async fn list_names_in(dir_name: &str) -> Result<Vec<String>, String> {
+    let dir = get_opfs_subdir(dir_name).await?;
+    let entries = dir.keys();
+    let mut names = Vec::new();
+    loop {
+        let next = JsFuture::from(entries.next().map_err(|e| format!("iter: {e:?}"))?)
+            .await
+            .map_err(|e| format!("iter next: {e:?}"))?;
+        let done = js_sys::Reflect::get(&next, &"done".into())
+            .ok()
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        if done {
+            break;
+        }
+        if let Some(name) = js_sys::Reflect::get(&next, &"value".into())
+            .ok()
+            .and_then(|v| v.as_string())
+        {
+            names.push(name);
+        }
+    }
+    Ok(names)
 }
 
 /// Explicitly save a file-adjacent .batm sidecar (Tauri only).
@@ -511,6 +631,11 @@ fn apply_loaded_sidecar(
     let Some(file_idx) = state.file_idx_for_id(file_id) else {
         return;
     };
+    // What is on disk now; a save with the same content keeps its time.
+    remember_fingerprint(
+        file_id,
+        crate::cloud::rules::annotation_fingerprint(&loaded),
+    );
     // The file on disk is in the file's own seconds and Hz. If the user
     // corrected the file's rate before it finished loading, convert it.
     let mut loaded = crate::te_correction::from_file_units_at(state, file_idx, loaded);
@@ -682,12 +807,14 @@ fn load_annotations_opfs(
                         }
                         Err(e) => log::warn!("OPFS deserialize error for {try_key}: {e}"),
                     }
-                    return; // Found it, stop trying
+                    break; // Found it, stop trying
                 }
                 Ok(None) => {} // Not found, try next key
                 Err(e) => log::warn!("OPFS load error for {try_key}: {e}"),
             }
         }
+        // Compare with the Google Drive copy, if signed in (found or not).
+        crate::cloud::sync::annotations_loaded(state, file_id);
     });
 }
 

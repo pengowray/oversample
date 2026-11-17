@@ -1927,6 +1927,44 @@ pub struct ProjectState {
     pub save_status: &'static str,
 }
 
+/// Google Drive copies of annotation and project files (`crate::cloud`).
+/// Browser build only; in Tauri `available` stays false.
+#[derive(Clone, Debug, Default, Store)]
+pub struct DriveState {
+    /// The server offers Google sign-in. False hides the settings block.
+    pub available: bool,
+    pub signed_in: bool,
+    /// A sign-in window is open and the app is waiting for it to finish.
+    pub signing_in: bool,
+    /// The browser did not open the sign-in window.
+    pub popup_blocked: bool,
+    /// The signed-in account's email address.
+    pub email: Option<String>,
+    /// Files whose changes have not reached Google Drive yet.
+    pub waiting: usize,
+    /// An upload is running.
+    pub uploading: bool,
+    /// Why the last Drive request failed, until one succeeds.
+    pub problem: Option<DriveProblem>,
+    /// The sign-in ended without the user signing out (the server answered
+    /// 401, for example after access was withdrawn in the Google account).
+    pub session_ended: bool,
+    /// Goes up by one each time a project arrives from Drive, so that an
+    /// open project list loads again.
+    pub projects_changed: u32,
+}
+
+/// Why a Google Drive request failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DriveProblem {
+    /// No answer, a server error or rate limiting.
+    Unreachable,
+    /// The Drive storage is full.
+    Full,
+    /// Drive refused the request.
+    Refused,
+}
+
 /// Timeline / multi-file selection state.
 #[derive(Clone, Debug, Store)]
 pub struct TimelineState {
@@ -2123,6 +2161,7 @@ pub mod store_fields {
     };
     // Its own line, so adding it did not reflow the list above.
     pub use super::ClassifierStateStoreFields;
+    pub use super::DriveStateStoreFields;
 }
 
 /// Microphone capture + recording lifecycle (independent listen + record).
@@ -2582,6 +2621,8 @@ pub struct AppState {
     pub annotations: Store<AnnotationsState>,
     /// Project (.batproj) state.
     pub project: Store<ProjectState>,
+    /// Google Drive copies of annotation and project files.
+    pub drive: Store<DriveState>,
     /// Timeline / multi-file selection state.
     pub timeline: Store<TimelineState>,
     /// Bat Book reference subsystem state.
@@ -2978,6 +3019,7 @@ impl AppState {
             }),
 
             classifier: Store::new(ClassifierState::default()),
+            drive: Store::new(DriveState::default()),
 
             annotations: Store::new(AnnotationsState {
                 store: AnnotationStore::default(),
