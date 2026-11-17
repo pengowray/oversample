@@ -2394,6 +2394,11 @@ pub struct DialogsState {
     pub notif_rationale: bool,
     /// Persisted: notification rationale already surfaced.
     pub notif_perm_asked: bool,
+    /// The notice that Android hides the capture notification (notifications
+    /// off) is showing.
+    pub notif_hidden_notice: bool,
+    /// Persisted: that notice was closed; it is not shown again.
+    pub notif_hidden_notice_dismissed: bool,
     pub xc_browser_open: bool,
     pub wiki_browser_open: bool,
     /// The "Find recordings" dialog (combined species search).
@@ -2883,6 +2888,11 @@ impl AppState {
                 notif_rationale: false,
                 notif_perm_asked: crate::settings::get_bool(
                     crate::settings::keys::NOTIF_PERM_ASKED,
+                    false,
+                ),
+                notif_hidden_notice: false,
+                notif_hidden_notice_dismissed: crate::settings::get_bool(
+                    crate::settings::keys::NOTIF_HIDDEN_NOTICE_DISMISSED,
                     false,
                 ),
                 xc_browser_open: false,

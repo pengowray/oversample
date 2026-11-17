@@ -16,6 +16,8 @@ pub mod keys {
     pub const DEVICE_MODEL: &str = "oversample_device_model";
     pub const BG_AUDIO_HINT_DISMISSED: &str = "oversample_bg_audio_hint_dismissed";
     pub const NOTIF_PERM_ASKED: &str = "oversample_notif_perm_asked";
+    /// "true" after the notice about a hidden capture notification was closed.
+    pub const NOTIF_HIDDEN_NOTICE_DISMISSED: &str = "oversample_notif_hidden_notice_dismissed";
     /// "false" after "Don't show again" on the card that suggests HFR when an
     /// ultrasonic recording plays at 1:1. Settings > Bats turns it back on.
     pub const HFR_NUDGE_ENABLED: &str = "oversample_hfr_nudge_enabled";

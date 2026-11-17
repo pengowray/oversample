@@ -60,6 +60,8 @@ pub const PLUGIN_COMMANDS: &[(&str, &[&str])] = &[
             "requestDisableBatteryOptimization",
             "isNotificationPermissionGranted",
             "requestNotificationPermission",
+            "areCaptureNotificationsShown",
+            "openNotificationSettings",
         ],
     ),
 ];

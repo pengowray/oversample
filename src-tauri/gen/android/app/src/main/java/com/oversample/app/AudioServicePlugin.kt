@@ -8,15 +8,18 @@ package com.oversample.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.webkit.WebView
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -177,6 +180,45 @@ class AudioServicePlugin(private val activity: Activity) : Plugin(activity) {
         } catch (e: Exception) {
             Log.w(TAG, "battery settings intent failed: ${e.message}")
             invoke.reject("Could not open battery settings: ${e.message}")
+        }
+    }
+
+    /** Whether Android shows the capture notification: notifications are allowed
+     *  for the app and its "Audio capture" category is not switched off. */
+    @Command
+    fun areCaptureNotificationsShown(invoke: Invoke) {
+        var shown = NotificationManagerCompat.from(activity).areNotificationsEnabled()
+        if (shown && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val mgr = activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = mgr.getNotificationChannel(CAPTURE_CHANNEL_ID)
+            if (channel != null && channel.importance == NotificationManager.IMPORTANCE_NONE) {
+                shown = false
+            }
+        }
+        val result = JSObject()
+        result.put("shown", shown)
+        invoke.resolve(result)
+    }
+
+    /** Open Android's notification settings page for this app. */
+    @Command
+    fun openNotificationSettings(invoke: Invoke) {
+        try {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+            } else {
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(Uri.parse("package:${activity.packageName}"))
+            }
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            activity.startActivity(intent)
+            val result = JSObject()
+            result.put("opened", true)
+            invoke.resolve(result)
+        } catch (e: Exception) {
+            Log.w(TAG, "notification settings intent failed: ${e.message}")
+            invoke.reject("Could not open notification settings: ${e.message}")
         }
     }
 

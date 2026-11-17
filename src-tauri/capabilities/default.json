@@ -28,6 +28,8 @@
     "audio-service:allow-isIgnoringBatteryOptimizations",
     "audio-service:allow-requestDisableBatteryOptimization",
     "audio-service:allow-isNotificationPermissionGranted",
-    "audio-service:allow-requestNotificationPermission"
+    "audio-service:allow-requestNotificationPermission",
+    "audio-service:allow-areCaptureNotificationsShown",
+    "audio-service:allow-openNotificationSettings"
   ]
 }

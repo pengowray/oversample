@@ -25,7 +25,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 
 private const val TAG = "ForegroundAudioService"
-private const val CHANNEL_ID = "oversample_audio_capture"
+/** The "Audio capture" notification category. AudioServicePlugin checks it too. */
+internal const val CAPTURE_CHANNEL_ID = "oversample_audio_capture"
 private const val NOTIFICATION_ID = 0x0A11
 // Backstop so a wake lock can never leak indefinitely if the service is torn
 // down abnormally; normal stop releases it well before this.
@@ -135,7 +136,7 @@ class ForegroundAudioService : Service() {
         val stopPi = PendingIntent.getService(
             this, 1, stopIntent, PendingIntent.FLAG_IMMUTABLE,
         )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        return NotificationCompat.Builder(this, CAPTURE_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(label)
@@ -149,9 +150,9 @@ class ForegroundAudioService : Service() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val mgr = getSystemService(NotificationManager::class.java)
-            if (mgr.getNotificationChannel(CHANNEL_ID) == null) {
+            if (mgr.getNotificationChannel(CAPTURE_CHANNEL_ID) == null) {
                 val channel = NotificationChannel(
-                    CHANNEL_ID, "Audio capture",
+                    CAPTURE_CHANNEL_ID, "Audio capture",
                     NotificationManager.IMPORTANCE_LOW, // no sound / heads-up
                 ).apply { setShowBadge(false) }
                 mgr.createNotificationChannel(channel)

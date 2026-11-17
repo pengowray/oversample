@@ -177,6 +177,12 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the areCaptureNotificationsShown command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-areCaptureNotificationsShown",
+          "markdownDescription": "Enables the areCaptureNotificationsShown command without any pre-configured scope."
+        },
+        {
           "description": "Enables the isIgnoringBatteryOptimizations command without any pre-configured scope.",
           "type": "string",
           "const": "audio-service:allow-isIgnoringBatteryOptimizations",
@@ -187,6 +193,12 @@
           "type": "string",
           "const": "audio-service:allow-isNotificationPermissionGranted",
           "markdownDescription": "Enables the isNotificationPermissionGranted command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the openNotificationSettings command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-openNotificationSettings",
+          "markdownDescription": "Enables the openNotificationSettings command without any pre-configured scope."
         },
         {
           "description": "Enables the requestDisableBatteryOptimization command without any pre-configured scope.",
@@ -219,6 +231,12 @@
           "markdownDescription": "Enables the updateForegroundAudio command without any pre-configured scope."
         },
         {
+          "description": "Denies the areCaptureNotificationsShown command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-areCaptureNotificationsShown",
+          "markdownDescription": "Denies the areCaptureNotificationsShown command without any pre-configured scope."
+        },
+        {
           "description": "Denies the isIgnoringBatteryOptimizations command without any pre-configured scope.",
           "type": "string",
           "const": "audio-service:deny-isIgnoringBatteryOptimizations",
@@ -229,6 +247,12 @@
           "type": "string",
           "const": "audio-service:deny-isNotificationPermissionGranted",
           "markdownDescription": "Denies the isNotificationPermissionGranted command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the openNotificationSettings command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-openNotificationSettings",
+          "markdownDescription": "Denies the openNotificationSettings command without any pre-configured scope."
         },
         {
           "description": "Denies the requestDisableBatteryOptimization command without any pre-configured scope.",

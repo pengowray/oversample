@@ -393,6 +393,28 @@ async fn start_foreground_service(state: &AppState, mode: &str) {
     .await
     {
         state.log_debug("warn", format!("startForegroundAudio failed: {}", e));
+        return;
+    }
+    check_capture_notification(state).await;
+}
+
+/// Show the notice about a hidden capture notification when Android will not
+/// show it (notifications off for the app or its "Audio capture" category),
+/// unless the user closed that notice before.
+async fn check_capture_notification(state: &AppState) {
+    if state
+        .dialogs
+        .notif_hidden_notice_dismissed()
+        .get_untracked()
+    {
+        return;
+    }
+    if let Ok(status) = tauri_invoke_typed_no_args::<
+        oversample_ipc::plugins::CaptureNotificationStatus,
+    >("plugin:audio-service|areCaptureNotificationsShown")
+    .await
+    {
+        state.dialogs.notif_hidden_notice().set(!status.shown);
     }
 }
 
@@ -401,6 +423,7 @@ pub(crate) async fn stop_foreground_service(state: &AppState) {
     if !state.is_tauri || !state.status.is_mobile().get_untracked() {
         return;
     }
+    state.dialogs.notif_hidden_notice().set(false);
     if let Err(e) = tauri_invoke_no_args("plugin:audio-service|stopForegroundAudio").await {
         state.log_debug("warn", format!("stopForegroundAudio failed: {}", e));
     }

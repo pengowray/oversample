@@ -5401,6 +5401,10 @@ a.open-link-btn {
     top: 44px;
     left: 50%;
     transform: translateX(-50%);
+    /* max-content: an absolute box at left 50% otherwise shrinks to half the
+       window, so a wrapping notice would be squeezed and sit off-centre. */
+    width: max-content;
+    max-width: 92vw;
     z-index: 200;
     pointer-events: none;
 }
@@ -5421,6 +5425,51 @@ a.open-link-btn {
     background: rgba(180, 150, 40, 0.9);
     border: 1px solid rgba(220, 190, 60, 0.6);
     color: #ffe;
+}
+
+/* Shown while recording or listening on Android with Oversample's
+   notifications off. Amber like the info toast (amber marks warnings), but it
+   stays until capture stops or the user acts, so it wraps and has controls. */
+.capture-notice {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 440px;
+    margin-top: 4px;
+    padding: 4px 4px 4px 10px;
+    background: rgba(132, 105, 20, 0.97);
+    border: 1px solid rgba(220, 190, 60, 0.6);
+    border-radius: 4px;
+    color: #fff;
+    font-size: 12px;
+    line-height: 1.35;
+}
+.capture-notice-text {
+    flex: 1;
+}
+.capture-notice-btn {
+    flex: none;
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 0;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.35);
+    color: #fff;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.capture-notice-close {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    background: transparent;
+    color: #fff;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
 }
 
 /* ── Layer panels (shared popover style) ────────────────────────────────── */

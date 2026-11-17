@@ -18,6 +18,44 @@ pub fn ToastDisplay() -> impl IntoView {
                     <span class="status-toast status-toast-info">"Buffering\u{2026}"</span>
                 }
             })}
+            {move || state.dialogs.notif_hidden_notice().get().then(|| {
+                // Names match the notification's own titles (ForegroundAudioService.kt).
+                let title = if state.mic.recording().get() {
+                    "\u{201c}Recording audio\u{201d}"
+                } else {
+                    "\u{201c}Listening (live)\u{201d}"
+                };
+                let on_open = move |_: web_sys::MouseEvent| {
+                    state.dialogs.notif_hidden_notice().set(false);
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let _ = crate::tauri_bridge::tauri_invoke_no_args(
+                            "plugin:audio-service|openNotificationSettings",
+                        )
+                        .await;
+                    });
+                };
+                let on_close = move |_: web_sys::MouseEvent| {
+                    state.dialogs.notif_hidden_notice().set(false);
+                    state.dialogs.notif_hidden_notice_dismissed().set(true);
+                    crate::settings::set_bool(
+                        crate::settings::keys::NOTIF_HIDDEN_NOTICE_DISMISSED,
+                        true,
+                    );
+                };
+                view! {
+                    <div class="capture-notice" role="status">
+                        <span class="capture-notice-text">
+                            "Oversample notifications are off. The " {title}
+                            " notification, with its Stop button, is hidden."
+                        </span>
+                        <button class="capture-notice-btn" on:click=on_open>"Open settings"</button>
+                        <button class="capture-notice-close"
+                            title="Close and don\u{2019}t show again"
+                            aria-label="Close and don\u{2019}t show again"
+                            on:click=on_close>"\u{00d7}"</button>
+                    </div>
+                }
+            })}
             {move || state.status.message().get().map(|msg| {
                 let state2 = state;
                 wasm_bindgen_futures::spawn_local(async move {

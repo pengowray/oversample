@@ -59,6 +59,13 @@ pub struct NotificationPermissionStatus {
     pub runtime_required: bool,
 }
 
+/// Result of `plugin:audio-service|areCaptureNotificationsShown`: whether
+/// Android shows the "Recording audio" / "Listening (live)" notification.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CaptureNotificationStatus {
+    pub shown: bool,
+}
+
 // ── usb-audio plugin ────────────────────────────────────────────────────
 
 /// One entry from `plugin:usb-audio|listUsbDevices`. All keys are always
