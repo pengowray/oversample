@@ -10054,6 +10054,24 @@ button.canvas-overflow-action-btn.disabled {
     border: 1px solid #2c2c2c;
     border-radius: 3px;
 }
+/* Component maps under the species map: four to a row. */
+.live-emb-pcs {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+}
+.live-emb-pc canvas {
+    display: block;
+    border: 1px solid #2c2c2c;
+    border-radius: 3px;
+}
+.live-emb-pc-label {
+    font-size: 10px;
+    color: #9a9a9a;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
 
 /* Live explorer tab (experimental). */
 .live-exp {

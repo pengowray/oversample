@@ -8,7 +8,9 @@
 //   rows: [name...], strip: [[secondsAgo, row, score]...],
 //   change: [[secondsAgo, distance]...], history }
 // `speciesJson` is [[x, y, name]...] for the map's grey points, or null when
-// it was sent before.
+// it was sent before. `pcJson` comes with it: { variance: [share...],
+// ranks: [[0..255 per point]...] } for the component maps; `json.pc` then
+// holds the reading's percentile (0 to 1) on each component.
 (function () {
   let loading = null;
   function loadEcharts() {
@@ -128,7 +130,7 @@
           type: 'text',
           left: 16,
           top: rowsH + 3,
-          style: { text: 'Change in phase space', fill: MUTED, fontSize: 10 },
+          style: { text: 'Change in latent space', fill: MUTED, fontSize: 10 },
         },
       ],
       series: [
@@ -277,6 +279,90 @@
     };
   }
 
+  // Component maps: small copies of the species map, one per principal
+  // component of BirdNET's class rows (research/live-embedding/pc_bands.py).
+  // Each lights the species whose percentile on that component is near the
+  // reading's percentile among real recordings. Plain canvas: each point
+  // group is drawn once into an offscreen canvas, so a reading costs a few
+  // drawImage calls per map.
+  const PC_BANDS = 20; // 5 % of the species each
+  const PC_FALLOFF = 0.1; // a band this far from the reading is not lit
+  const PC_PER_ROW = 4;
+  // What lies at the two ends of each component (pc_bands.txt).
+  const PC_ENDS = [
+    ['Amazonian antshrikes and antbirds', 'larks'],
+    ['waterbirds: cormorants, gulls, herons', 'Andean tanagers and warblers'],
+    ['southern seabirds and waterfowl', 'Asian flycatchers and drongos'],
+    ['African larks and scrub robins', 'North American woodpeckers and warblers'],
+    ['North American warblers and sparrows', 'African and Asian forest birds'],
+    ['North American orioles and thrashers', 'a mix: canastero, flowerpecker, bay owl, hornbill'],
+    ['dry-country thrashers, meadowlark, wheatear', 'South Asian sunbirds, coucal, crow'],
+    ['terns and Asian forest birds', 'African doves, turacos, coucals'],
+  ];
+
+  function pcBuild(div, species, pc) {
+    const n = pc.variance.length;
+    const gap = 4;
+    const size = Math.floor((div.clientWidth - gap * (PC_PER_ROW - 1)) / PC_PER_ROW);
+    if (size < 20) return null;
+    const dpr = window.devicePixelRatio || 1;
+    const px = Math.round(size * dpr);
+    const at = (v) => ((v + 1.05) / 2.1) * px;
+    const layer = (pts, color, r) => {
+      const c = document.createElement('canvas');
+      c.width = c.height = px;
+      const g = c.getContext('2d');
+      g.fillStyle = color;
+      for (const p of pts) g.fillRect(at(p[0]) - r / 2, at(-p[1]) - r / 2, r, r);
+      return c;
+    };
+    const base = layer(species, 'rgba(170,170,170,0.22)', Math.max(1, dpr));
+    div.innerHTML = '';
+    const maps = [];
+    for (let k = 0; k < n; k++) {
+      const groups = Array.from({ length: PC_BANDS }, () => []);
+      pc.ranks[k].forEach((r, i) => groups[Math.min(PC_BANDS - 1, Math.floor((r * PC_BANDS) / 256))].push(species[i]));
+      const bands = groups.map((g) => layer(g, HIT, Math.max(1, dpr)));
+      const cell = document.createElement('div');
+      cell.className = 'live-emb-pc';
+      const [lo, hi] = PC_ENDS[k] || ['', ''];
+      cell.title =
+        `PC${k + 1}: ${(pc.variance[k] * 100).toFixed(1)}% of the variation between BirdNET's classes.` +
+        (lo ? `\nLow end: ${lo}.\nHigh end: ${hi}.` : '');
+      const label = document.createElement('div');
+      label.className = 'live-emb-pc-label';
+      label.textContent = `PC${k + 1} ${(pc.variance[k] * 100).toFixed(1)}%`;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = px;
+      canvas.style.width = canvas.style.height = `${size}px`;
+      cell.append(label, canvas);
+      div.appendChild(cell);
+      maps.push({ ctx: canvas.getContext('2d'), bands });
+    }
+    return { width: div.clientWidth, base, maps, px };
+  }
+
+  function pcDraw(el, d) {
+    const div = el.__parts.pcs;
+    const pc = el.__pc;
+    if (!pc || !el.__species || !d.pc || !d.pc.length) return;
+    if (!div.__built || div.__built.width !== div.clientWidth) div.__built = pcBuild(div, el.__species, pc);
+    const b = div.__built;
+    if (!b) return;
+    b.maps.forEach((m, k) => {
+      const p = d.pc[k];
+      m.ctx.globalAlpha = 1;
+      m.ctx.clearRect(0, 0, b.px, b.px);
+      m.ctx.drawImage(b.base, 0, 0);
+      m.bands.forEach((band, i) => {
+        const a = 1 - Math.abs((i + 0.5) / PC_BANDS - p) / PC_FALLOFF;
+        if (a <= 0) return;
+        m.ctx.globalAlpha = a;
+        m.ctx.drawImage(band, 0, 0);
+      });
+    });
+  }
+
   function readout(el, d) {
     const [first, ...rest] = d.top;
     if (!first) return;
@@ -310,6 +396,7 @@
         readout: mk('live-emb-readout'),
         strip: mk('live-emb-strip'),
         map: mk('live-emb-map'),
+        pcs: mk('live-emb-pcs'),
       };
     }
     return el.__parts;
@@ -326,13 +413,14 @@
   }
 
   window.oversampleLiveEmbedding = {
-    async update(el, json, speciesJson) {
+    async update(el, json, speciesJson, pcJson) {
       const d = JSON.parse(json);
       el.__last = d;
       if (speciesJson) {
         el.__species = JSON.parse(speciesJson);
         el.__liveSpecies = true;
       }
+      if (pcJson) el.__pc = JSON.parse(pcJson);
       await loadEcharts();
       const p = parts(el);
       readout(p.readout, d);
@@ -348,6 +436,9 @@
         map.setOption({ series: mapSeries(d) });
       }
       el.__ms = performance.now() - t0;
+      const t1 = performance.now();
+      pcDraw(el, d);
+      el.__pcMs = performance.now() - t1;
     },
     dispose(el) {
       if (!el.__parts) return;

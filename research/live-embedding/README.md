@@ -60,7 +60,7 @@ In the app, the live view and the classifier agreed on the test recordings:
    engine, dog, and so on) appear in the same rows when they score; a fixed set
    of non-bird rows was dropped because most of the time they are empty rows
    that push the species rows down.
-3. **"Change in phase space"**: the cosine distance between each reading's embedding
+3. **"Change in latent space"**: the cosine distance between each reading's embedding
    and the one before. A steady sound stays under 0.1; a new call or a change
    of scene reaches 0.2 to 0.5. It shows change that the scores miss, for
    example a new sound that BirdNET has no class for.
@@ -73,6 +73,38 @@ In the app, the live view and the classifier agreed on the test recordings:
    draws across the gap between unrelated groups. At sidebar size the map
    shows which part of the bird world the sound is in and whether it is
    moving; the name comes from the text above it.
+
+5. **Component maps (prototype)**: eight small copies of the species map, four
+   to a row, one per principal component of the class rows (the same PCA as
+   `pca_axes.py`, a fixed basis). Each lights the species at the reading's
+   place on that component. Data: `birdnet-pc.bin` from `pc_bands.py` (86 KB:
+   the 8 axes, 21 reference quantiles each, and one rank byte per class per
+   component); `pc_bands.txt` has its output and check.
+   - The class rows and the embedding share the 1,024 dimensions, but not
+     their spread: the embedding is non-negative and sits to one side of the
+     rows. Compared directly, a reading falls in the top or bottom tenth of
+     species on most components nearly always (PC4: 72% of BirdSet readings
+     in the top tenth). So each reading's projection is turned into a
+     percentile among real recordings (BirdSet HSN and POW, about 50,000
+     readings, both North American), and the species at the same percentile
+     are lit.
+   - Bands are 5% of the species each; the band at the reading's percentile
+     is drawn at full strength, fading to nothing 10% away, so the light
+     moves smoothly. Each band is pre-drawn to an offscreen canvas; all eight maps take
+     about 0.5 ms per reading in Chrome, against about 5 ms for the main
+     map's ECharts update.
+   - In use (a Powdermill recording, Wood Thrush steady at the top), the
+     percentiles jump by 0.3 to 0.5 between readings 0.25 s apart while the
+     top class stays the same, and mid-axis bands light points all over the
+     map. Only the ends of an axis light a compact region.
+   - Check (`pc_bands.txt`, readings with a class at 0.5 or more): the
+     reading's percentile and its top class's percentile correlate 0.4 to 0.6
+     on PC1, PC4 and PC6 and under 0.2 on PC3, PC7 and PC8, but the light is
+     on the top class's own band little more often than chance (mean gap
+     0.23 to 0.51 against 0.26 to 0.52 shuffled; PC6 is the best). The
+     direction tracks, the place mostly does not. Mid-axis bands are the
+     weakest part: in a linear readout only the ends of an axis are tied to
+     the embedding.
 
 ## Tried and dropped
 

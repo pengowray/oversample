@@ -108,6 +108,8 @@ thread_local! {
     static CHART: RefCell<Option<web_sys::HtmlElement>> = const { RefCell::new(None) };
     static LABELS: RefCell<Option<Arc<Vec<SpeciesLabel>>>> = const { RefCell::new(None) };
     static MAP: RefCell<Option<Arc<Vec<Option<(f32, f32)>>>>> = const { RefCell::new(None) };
+    /// Principal components of the class rows, for the component maps.
+    static PCS: RefCell<Option<Arc<Components>>> = const { RefCell::new(None) };
     /// The strip's rows, in the order they first appeared.
     static ROWS: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
     /// Interval between the last two readings, smoothed.
@@ -146,6 +148,83 @@ pub struct SessionPoint {
     pub top: Vec<(usize, f32)>,
     /// All scores of the newest reading only (kept for the explorer's bars).
     pub scores: Option<Vec<f32>>,
+}
+
+/// The component maps' data, made by `research/live-embedding/pc_bands.py`.
+const PC_FILE: &str = "birdnet-pc.bin";
+
+/// The first principal components of BirdNET's class rows (see
+/// `pc_bands.py`): each axis, where real recordings fall on it, and each
+/// class's percentile rank on it.
+pub struct Components {
+    /// Share of the class rows' variance, per component.
+    pub variance: Vec<f32>,
+    axes: Vec<Vec<f32>>,
+    /// Reference recordings' projections at 0, 5, ..., 100 %.
+    quantiles: Vec<Vec<f32>>,
+    /// Per component, each class's rank, 0 (lowest score) to 255.
+    pub ranks: Vec<Vec<u8>>,
+}
+
+impl Components {
+    pub fn parse(b: &[u8]) -> Option<Components> {
+        if b.get(..4)? != b"OPC1" {
+            return None;
+        }
+        let u16_at = |i: usize| Some(u16::from_le_bytes([*b.get(i)?, *b.get(i + 1)?]) as usize);
+        let (n, d, c, q) = (u16_at(4)?, u16_at(6)?, u16_at(8)?, u16_at(10)?);
+        if d != EMBEDDING_LEN || b.len() != 12 + 4 * (n + n * d + n * q) + n * c {
+            return None;
+        }
+        let mut at = 12;
+        let mut floats = |len: usize| -> Vec<f32> {
+            let v = b[at..at + 4 * len]
+                .chunks_exact(4)
+                .map(|x| f32::from_le_bytes([x[0], x[1], x[2], x[3]]))
+                .collect();
+            at += 4 * len;
+            v
+        };
+        let variance = floats(n);
+        let axes = (0..n).map(|_| floats(d)).collect();
+        let quantiles = (0..n).map(|_| floats(q)).collect();
+        let ranks = b[at..].chunks_exact(c).map(<[u8]>::to_vec).collect();
+        Some(Components {
+            variance,
+            axes,
+            quantiles,
+            ranks,
+        })
+    }
+
+    /// Where `embedding` falls on each component, as a percentile (0 to 1)
+    /// among the reference recordings.
+    pub fn percentiles(&self, embedding: &[f32]) -> Vec<f32> {
+        let norm = embedding.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-9);
+        self.axes
+            .iter()
+            .zip(&self.quantiles)
+            .map(|(axis, q)| {
+                let v = axis.iter().zip(embedding).map(|(a, e)| a * e).sum::<f32>() / norm;
+                interp_quantile(q, v)
+            })
+            .collect()
+    }
+}
+
+/// The percentile of `v` among values whose evenly spaced quantiles are `q`.
+fn interp_quantile(q: &[f32], v: f32) -> f32 {
+    let steps = (q.len() - 1) as f32;
+    let i = q.partition_point(|&x| x <= v);
+    if i == 0 {
+        return 0.0;
+    }
+    if i >= q.len() {
+        return 1.0;
+    }
+    let (a, b) = (q[i - 1], q[i]);
+    let f = if b > a { (v - a) / (b - a) } else { 0.5 };
+    ((i - 1) as f32 + f) / steps
 }
 
 /// Power spectrum of the last 3 s.
@@ -274,6 +353,14 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
         {
             let m = classifier::species_map::parse_map(&bytes);
             MAP.with(|c| *c.borrow_mut() = Some(Arc::new(m)));
+        }
+    }
+    if PCS.with(|m| m.borrow().is_none()) {
+        // Optional too: without it the component maps are not shown.
+        if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes(PC_FILE).await {
+            if let Some(c) = Components::parse(&bytes) {
+                PCS.with(|p| *p.borrow_mut() = Some(Arc::new(c)));
+            }
         }
     }
     let bytes = classifier::store::read_js(&catalog::BACKBONE)
@@ -735,7 +822,14 @@ fn draw(state: AppState) {
             .filter_map(|r| Some((ago(r), round3(r.change?))))
             .collect();
         let row_names: Vec<_> = rows.iter().map(|&c| name(c as usize)).collect();
+        let pc: Vec<f32> = PCS
+            .with(|p| p.borrow().as_ref().map(|p| p.percentiles(&latest.embedding)))
+            .unwrap_or_default()
+            .into_iter()
+            .map(round3)
+            .collect();
         Some(serde_json::json!({
+            "pc": pc,
             "min": min,
             "top": top,
             "trail": trail,
@@ -752,20 +846,36 @@ fn draw(state: AppState) {
             .map(|v| v.is_truthy())
             .unwrap_or(false)
     });
+    let pcs = PCS.with(|p| p.borrow().clone());
+    let mut pc_json = None;
     let species_json = species.map(|m| {
-        let s: Vec<_> = m
+        let kept: Vec<usize> = (0..m.len()).filter(|&i| m[i].is_some()).collect();
+        let s: Vec<_> = kept
             .iter()
-            .enumerate()
-            .filter_map(|(i, p)| p.map(|(x, y)| (round3(x), round3(y), name(i))))
+            .map(|&i| {
+                let (x, y) = m[i].expect("kept");
+                (round3(x), round3(y), name(i))
+            })
             .collect();
+        // Each component's ranks, in the same order as the points.
+        pc_json = pcs.as_ref().map(|p| {
+            let ranks: Vec<Vec<u8>> = p
+                .ranks
+                .iter()
+                .map(|r| kept.iter().map(|&i| r.get(i).copied().unwrap_or(0)).collect())
+                .collect();
+            serde_json::json!({ "variance": p.variance, "ranks": ranks }).to_string()
+        });
         serde_json::json!(s).to_string()
     });
+    let str_or_null = |s: Option<String>| s.map_or(JsValue::NULL, |s| JsValue::from_str(&s));
     call(
         "update",
         &[
             &el,
             &JsValue::from_str(&json.to_string()),
-            &species_json.map_or(JsValue::NULL, |s| JsValue::from_str(&s)),
+            &str_or_null(species_json),
+            &str_or_null(pc_json),
         ],
     );
 }
@@ -808,6 +918,15 @@ mod tests {
         let map = [Some((0.0, 0.0)), Some((0.1, 0.0)), Some((0.9, 0.9))];
         let (x, y) = place(&[0.8, 0.8, 0.8], &map).unwrap();
         assert!((x - 0.05).abs() < 1e-6 && y == 0.0, "{x} {y}");
+    }
+
+    #[test]
+    fn quantile_interpolation() {
+        let q = [0.0, 1.0, 2.0];
+        assert_eq!(interp_quantile(&q, -1.0), 0.0);
+        assert_eq!(interp_quantile(&q, 3.0), 1.0);
+        assert!((interp_quantile(&q, 0.5) - 0.25).abs() < 1e-6);
+        assert!((interp_quantile(&q, 1.5) - 0.75).abs() < 1e-6);
     }
 
     #[test]

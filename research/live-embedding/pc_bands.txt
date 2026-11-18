@@ -1,0 +1,34 @@
+wrote birdnet-pc.bin, 85660 bytes, from 49680 reference readings
+PC1 (1.8%)
+  low:  Plain-winged Antshrike, Mouse-coloured Antshrike, Dusky-throated Antshrike, Amazonian Barred-Woodcreeper, Lawrence's Thrush, Grey Antbird
+  high: Singing Bushlark, Sabota Lark, Bluethroat, Melodious Lark, Turkestan Shrike, Crested Lark
+PC2 (1.3%)
+  low:  Little Cormorant, Brown-headed Gull, Little Egret, Black-crowned Night Heron, Black-headed Ibis, Black-headed Gull
+  high: Ashy-throated Chlorospingus, Sooty-capped Chlorospingus, Citrine Warbler, Superciliaried Hemispingus, Lacrimose Mountain Tanager, Three-striped Warbler
+PC3 (1.1%)
+  low:  Brown Skua, Coscoroba Swan, Puna Miner, Adelie Penguin, Spectacled Tyrant, Black-eared Fairy
+  high: Blue-throated Flycatcher, Bronzed Drongo, Lesser Racket-tailed Drongo, Javan Leafbird, Orange-headed Thrush, Ashy Drongo
+PC4 (0.9%)
+  low:  Sabota Lark, Kalahari Scrub Robin, Somali Short-toed Lark, Karoo Scrub Robin, Pearly-bellied Seedeater, Moustached Grass-Warbler
+  high: Pileated Woodpecker, Yellow-bellied Sapsucker, Blackburnian Warbler, Black-throated Green Warbler, Brown Creeper, Nashville Warbler
+PC5 (0.9%)
+  low:  Common Yellowthroat, Pine Warbler, Indigo Bunting, Northern Parula, Swamp Sparrow, American Goldfinch
+  high: Ethiopian Black-headed Oriole, Pale-winged Starling, Scarlet-faced Liocichla, African Hill Babbler, Bush Blackcap, Chorister Robin-Chat
+PC6 (0.8%)
+  low:  Baltimore Oriole, Bullock's Oriole, Brown Thrasher, Long-billed Thrasher, Grey Catbird, Rose-breasted Grosbeak
+  high: Streak-throated Canastero, Yellow-rumped Flowerpecker, Amethyst Brown-Dove, Brown Accentor, Oriental Bay-Owl, White-crowned Hornbill
+PC7 (0.7%)
+  low:  LeConte's Thrasher, Sage Thrasher, Common Rock Thrush, Western Meadowlark, Crissal Thrasher, Capped Wheatear
+  high: Purple-rumped Sunbird, Purple Sunbird, Greater Coucal, Spotted Dove, Pale-billed Flowerpecker, House Crow
+PC8 (0.6%)
+  low:  Black-naped Tern, Maroon-faced Parakeet, Mountain Fulvetta, Long-tailed Broadbill, White-winged Black Tern, Great Crested Tern
+  high: Tambourine Dove, Blue-headed Coucal, Yellow-billed Turaco, Emerald-spotted Wood-Dove, Great Blue Turaco, Narina Trogon
+check on 23821 readings with a class at 0.5 or more:
+  PC1: mean gap 0.513, shuffled 0.520, correlation 0.43
+  PC2: mean gap 0.326, shuffled 0.352, correlation 0.21
+  PC3: mean gap 0.254, shuffled 0.259, correlation 0.06
+  PC4: mean gap 0.378, shuffled 0.437, correlation 0.58
+  PC5: mean gap 0.378, shuffled 0.388, correlation 0.32
+  PC6: mean gap 0.227, shuffled 0.322, correlation 0.61
+  PC7: mean gap 0.451, shuffled 0.456, correlation 0.06
+  PC8: mean gap 0.447, shuffled 0.456, correlation 0.15
