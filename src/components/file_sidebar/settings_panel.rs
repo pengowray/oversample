@@ -1142,7 +1142,11 @@ fn export_annotations(state: AppState) {
     };
     // Like autosave, the exported file uses the file's own seconds and Hz.
     let set = match state.file_idx_for_id(id) {
-        Some(idx) => crate::te_correction::to_file_units_at(state, idx, set),
+        Some(idx) => {
+            let mut set = crate::te_correction::to_file_units_at(state, idx, set);
+            crate::opfs::sync_source_from_file(state, idx, &mut set);
+            set
+        }
         None => set,
     };
 

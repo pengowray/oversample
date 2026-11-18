@@ -413,6 +413,12 @@ pub struct AnnotationSet {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub lowest_bat_hz: Option<f32>,
 
+    /// The site the recording was loaded from, when it was (Xeno-canto,
+    /// Wikimedia Commons, ...). Written when the set is saved for any other
+    /// reason; loading a site recording does not by itself create a file.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub source: Option<crate::source_site::RecordingSource>,
+
     /// Noise reduction profile (notch bands + spectral floor). Kept near the end
     /// because noise_floor.bin_magnitudes can be very long.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -446,6 +452,7 @@ impl AnnotationSet {
             audio_metadata: None,
             annotations: Vec::new(),
             lowest_bat_hz: None,
+            source: None,
             noise_profile: None,
         }
     }
@@ -675,6 +682,7 @@ mod tests {
             audio_metadata: None,
             annotations: Vec::new(),
             lowest_bat_hz: None,
+            source: None,
             noise_profile: None,
         };
         let yaml = yaml_serde::to_string(&set).unwrap();
@@ -691,6 +699,79 @@ mod tests {
         assert_eq!(back.lowest_bat_hz, Some(11_000.0));
     }
     use super::*;
+
+    #[test]
+    fn the_source_block_round_trips_and_old_files_load_without_it() {
+        use crate::source_site::{RecordingSource, SiteMetadata, SourceSite};
+        let old = "version: 3\nid: old\nfile_identity:\n  filename: bat.wav\n  file_size: 1000\nannotations: []\n";
+        let set: AnnotationSet = yaml_serde::from_str(old).unwrap();
+        assert_eq!(set.source, None);
+        assert!(!yaml_serde::to_string(&set).unwrap().contains("source"));
+
+        let meta = SiteMetadata::new(
+            SourceSite::XenoCanto,
+            vec![
+                ("Species".into(), "Lesser horseshoe bat".into()),
+                ("Recordist".into(), "Ann Bee".into()),
+                (
+                    "License".into(),
+                    "//creativecommons.org/licenses/by-nc-sa/4.0/".into(),
+                ),
+                (
+                    "Attribution".into(),
+                    "Ann Bee, XC928094. Accessible at www.xeno-canto.org/928094".into(),
+                ),
+                ("URL".into(), "https://xeno-canto.org/928094".into()),
+            ],
+        );
+        let mut with = set.clone();
+        with.source = Some(RecordingSource::from_site(
+            &meta,
+            "2026-11-18T10:00:00.000Z".into(),
+        ));
+        let yaml = yaml_serde::to_string(&with).unwrap();
+        assert!(yaml.contains("site: xc"), "{yaml}");
+        assert!(
+            yaml.contains("id: '928094'") || yaml.contains("id: \"928094\""),
+            "{yaml}"
+        );
+        assert!(yaml.contains("- Species: Lesser horseshoe bat"), "{yaml}");
+        let back: AnnotationSet = yaml_serde::from_str(&yaml).unwrap();
+        let source = back.source.unwrap();
+        assert_eq!(source.recordist.as_deref(), Some("Ann Bee"));
+        assert_eq!(source.to_site_metadata(), meta);
+
+        // Wikipedia has no search key but comes back as Wikipedia.
+        let wiki = SiteMetadata::new(SourceSite::Wikipedia, vec![("Author".into(), "Cy".into())]);
+        let saved = RecordingSource::from_site(&wiki, String::new());
+        assert_eq!(saved.to_site_metadata(), wiki);
+    }
+
+    #[test]
+    fn the_saved_source_keeps_its_fetch_time_until_the_site_data_changes() {
+        use crate::source_site::{RecordingSource, SiteMetadata, SourceSite};
+        let meta =
+            |q: &str| SiteMetadata::new(SourceSite::XenoCanto, vec![("Quality".into(), q.into())]);
+        let saved = RecordingSource::from_site(&meta("A"), "T1".into());
+        let now = || "T2".to_string();
+        assert_eq!(RecordingSource::to_save(None, None, now), None);
+        assert_eq!(
+            RecordingSource::to_save(Some(&saved), None, now),
+            Some(saved.clone())
+        );
+        assert_eq!(
+            RecordingSource::to_save(Some(&saved), Some(&meta("A")), now),
+            Some(saved.clone())
+        );
+        let fresh = RecordingSource::to_save(Some(&saved), Some(&meta("B")), now).unwrap();
+        assert_eq!(fresh.fetched_at, "T2");
+        assert_eq!(
+            RecordingSource::to_save(None, Some(&meta("A")), now)
+                .unwrap()
+                .fetched_at,
+            "T2"
+        );
+    }
 
     /// `AnnotationId` must serialize as a BARE string (serde `transparent`), so
     /// `.batm` sidecars written before the newtype existed still load unchanged.

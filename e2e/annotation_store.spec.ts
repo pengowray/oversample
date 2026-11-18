@@ -253,6 +253,33 @@ test.describe("Saved annotations on a Xeno-canto recording with its own annotati
     await expectSavedXc111(page, mine);
   });
 
+  test("keep where the recording came from, shown again when it is opened from disk", async ({ page }) => {
+    await begin(page);
+    await loadFromFind(page, 222);
+    const name = (await snap(page)).currentFile!;
+    const mine = await annotate(page, 0.75, 0.9);
+    await waitSaved(page, mine);
+    const saved = Object.values(await savedFiles(page)).find((t) => t.includes("XC222"))!;
+    expect(saved).toMatch(/^source:\n  site: xc\n  id: '?222'?$/m);
+    expect(saved).toContain("recordist: A Recordist");
+    expect(saved).toContain("license: //creativecommons.org/licenses/by-nc-sa/4.0/");
+
+    // The same audio opened from a local file, with no site data of its own.
+    await page.reload();
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    await open(page, name, 8, 222);
+    await expect.poll(() => starts(page)).toEqual([mine]);
+    const showInfo = page.locator('button[title="Show info panel"]').first();
+    if (await showInfo.count()) await showInfo.click();
+    await page.locator(".sidebar-tab-dropdown").first().click();
+    await page.locator(".sidebar-tab-option", { hasText: /^Info$/ }).first().click();
+    const group = page.locator(".setting-group", {
+      has: page.locator(".setting-group-title-major", { hasText: /^Xeno-canto$/ }),
+    });
+    await expect(group).toContainText("A Recordist");
+    await expect(group).toContainText("Natterer's Bat");
+  });
+
   test("are kept when the saved file is slow to read", async ({ page }) => {
     await begin(page);
     await loadFromFind(page, 111);

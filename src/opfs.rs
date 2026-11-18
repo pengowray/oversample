@@ -309,6 +309,25 @@ fn sidecar_yaml_without_full_path(set: &crate::annotations::AnnotationSet) -> St
     yaml_serde::to_string(&sidecar_set).unwrap_or_default()
 }
 
+/// Put the file's site metadata (where it was downloaded from) in its
+/// annotation set, keeping the saved fetch time when the data is the same.
+pub fn sync_source_from_file(
+    state: crate::state::AppState,
+    file_idx: usize,
+    set: &mut crate::annotations::AnnotationSet,
+) {
+    use leptos::prelude::WithUntracked;
+    let meta = state
+        .library
+        .files()
+        .with_untracked(|files| files.get(file_idx).and_then(|f| f.site_metadata.clone()));
+    set.source = crate::source_site::RecordingSource::to_save(
+        set.source.as_ref(),
+        meta.as_ref(),
+        crate::annotations::now_iso8601,
+    );
+}
+
 /// Save annotations for a specific file index (OPFS on browser, central store on Tauri).
 /// Respects read_only (skips all saves) and had_sidecar (only writes file-adjacent if it existed).
 pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
@@ -351,6 +370,7 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
             }) {
                 set.file_identity = id;
             }
+            sync_source_from_file(state, file_idx, set);
             // Capture current NR state into the sidecar
             set.noise_profile = sync_noise_profile_from_state(state);
         }
@@ -655,6 +675,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
             }) {
                 set.file_identity = id;
             }
+            sync_source_from_file(state, file_idx, set);
             set.noise_profile = sync_noise_profile_from_state(state);
             set.touch();
         }
@@ -766,6 +787,30 @@ fn apply_loaded_sidecar(
     let has_noise_profile = loaded.noise_profile.is_some();
     let peak_30s = loaded.audio_metadata.as_ref().and_then(|m| m.peak_db_30s);
     let peak_full = loaded.audio_metadata.as_ref().and_then(|m| m.peak_db_full);
+
+    // A file opened without its site's data (saved earlier and now opened
+    // from disk) shows the source saved with its annotations.
+    let lacks_site_data = state.library.files().with_untracked(|files| {
+        files
+            .get(file_idx)
+            .is_some_and(|f| f.site_metadata.is_none())
+    });
+    if let Some(source) = loaded.source.as_ref().filter(|_| lacks_site_data) {
+        let meta = source.to_site_metadata();
+        state.library.files().update(|files| {
+            if let Some(f) = files.get_mut(file_idx) {
+                if f.site_metadata.is_none() {
+                    f.heterodyne_hint = crate::heterodyne::file_hint(
+                        &meta.fields,
+                        f.audio.metadata.time_expansion,
+                        f.audio.sample_rate,
+                    );
+                    f.site_metadata = Some(meta);
+                    f.species_range = crate::species_check::file_finding(f);
+                }
+            }
+        });
+    }
 
     if has_noise_profile || peak_30s.is_some() || peak_full.is_some() {
         state.library.files().update(|files| {

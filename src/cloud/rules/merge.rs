@@ -37,6 +37,7 @@
 //! content and stop there. Ties are broken by comparing content.
 
 use crate::annotations::{Annotation, AnnotationSet};
+use crate::source_site::RecordingSource;
 use oversample_core::annotation_tags::{self as tags, AUTO, XC_NS, XC_SET};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -462,7 +463,30 @@ fn set_fields(a: &AnnotationSet, b: &AnnotationSet) -> AnnotationSet {
         (Some(x), Some(y)) => merge_json(x, y),
         (x, y) => x.clone().or_else(|| y.clone()),
     };
+    out.source = later_source(a.source.as_ref(), b.source.as_ref()).cloned();
     out
+}
+
+/// Of two copies' recording sources: the one either has, or when both have
+/// one, the one fetched later. Ties are broken by content, so the choice does
+/// not depend on which copy is which. Never a conflict: the source is the
+/// site's data, not the user's.
+pub fn later_source<'s>(
+    a: Option<&'s RecordingSource>,
+    b: Option<&'s RecordingSource>,
+) -> Option<&'s RecordingSource> {
+    match (a, b) {
+        (Some(x), Some(y)) => {
+            let key = |s: &RecordingSource| {
+                (
+                    norm_time(&s.fetched_at),
+                    serde_json::to_string(s).unwrap_or_default(),
+                )
+            };
+            Some(if key(x) >= key(y) { x } else { y })
+        }
+        (x, y) => x.or(y),
+    }
 }
 
 /// Two JSON objects merged key by key: a value present on one side only is
@@ -659,6 +683,52 @@ mod tests {
         .unwrap();
         s.annotations = annotations;
         s
+    }
+
+    /// A Xeno-canto source fetched at `at`; `n` changes its quality field.
+    fn source(at: &str, n: u64) -> RecordingSource {
+        let meta = crate::source_site::SiteMetadata::new(
+            crate::source_site::SourceSite::XenoCanto,
+            vec![
+                ("Recordist".into(), "Ann Bee".into()),
+                ("Quality".into(), ["A", "B"][n as usize % 2].into()),
+                ("URL".into(), "https://xeno-canto.org/928094".into()),
+            ],
+        );
+        RecordingSource::from_site(&meta, at.into())
+    }
+
+    #[test]
+    fn a_source_on_either_side_is_kept_and_the_later_fetch_wins() {
+        let (b, base) = base_of(vec![region("r", 0.0, "a", T0)]);
+        let mut a = b.clone();
+        a.source = Some(source(T1, 0));
+        let mut c = b.clone();
+        c.lowest_bat_hz = Some(15_000.0);
+        let (m, r) = merge3(&base, &a, &c);
+        assert_eq!(m.source, a.source);
+        assert!(r.conflicts.is_empty());
+        let (m, _) = merge3(&base, &c, &a);
+        assert_eq!(m.source, a.source);
+
+        c.source = Some(source(T2, 1));
+        for (x, y) in [(&a, &c), (&c, &a)] {
+            let (m, r) = merge3(&base, x, y);
+            assert_eq!(m.source, c.source, "fetched later");
+            assert!(r.conflicts.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_set_that_gains_a_source_has_new_content() {
+        let (b, _) = base_of(vec![]);
+        let mut a = b.clone();
+        a.source = Some(source(T1, 0));
+        assert_ne!(fp(&a), fp(&b));
+        // The same site data fetched at another time is the same content.
+        let mut later = b.clone();
+        later.source = Some(source(T2, 0));
+        assert_eq!(fp(&a), fp(&later));
     }
 
     fn ids(s: &AnnotationSet) -> Vec<&str> {
@@ -957,6 +1027,9 @@ mod tests {
         }
         if rng.below(4) == 0 {
             s.lowest_bat_hz = Some(10_000.0 + rng.below(3) as f32 * 1000.0);
+        }
+        if rng.below(3) == 0 {
+            s.source = Some(source(TIMES[rng.below(4) as usize], rng.below(2)));
         }
         s.modified_at = Some(TIMES[rng.below(4) as usize].into());
         s

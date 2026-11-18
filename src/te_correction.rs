@@ -668,6 +668,7 @@ mod tests {
             audio_metadata: None,
             annotations: kinds.into_iter().map(annotation).collect(),
             lowest_bat_hz: None,
+            source: None,
             noise_profile: None,
         }
     }

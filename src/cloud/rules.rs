@@ -179,7 +179,8 @@ pub fn newest<T>(files: &[T], modified_time: impl Fn(&T) -> &str) -> Option<&T> 
 /// not added: the app adds them again when the recording opens, and the
 /// Drive copy may hold them under other ids. The file's own lowest bat
 /// frequency and noise profile come from the Drive copy, or from the local
-/// copy when the Drive copy has none.
+/// copy when the Drive copy has none. The recording's source is the one
+/// fetched later (`merge::later_source`).
 ///
 /// An annotation deleted on one device and still present on the other comes
 /// back. This is the price of not losing any annotation when there is no
@@ -193,6 +194,7 @@ pub fn merge_annotation_sets(drive: AnnotationSet, local: &AnnotationSet) -> Ann
     if merged.noise_profile.is_none() {
         merged.noise_profile = local.noise_profile.clone();
     }
+    merged.source = merge::later_source(merged.source.as_ref(), local.source.as_ref()).cloned();
     merged
 }
 
@@ -200,7 +202,7 @@ pub fn merge_annotation_sets(drive: AnnotationSet, local: &AnnotationSet) -> Ann
 /// the copies match, whether an upload is needed, and whether a copy may be
 /// removed. Everything counts except what changes on every save or differs
 /// between devices for the same file: the set's id, its times, the app
-/// version, when the noise profile was last written, and the recording's
+/// version, when the noise profile was last written or the source fetched, and the recording's
 /// file time and path on this device. So a hash computed later, or other
 /// identity and metadata changes, reach Drive, and a copy is never removed
 /// while anything in it has not reached Drive. 32 hex digits.
@@ -212,6 +214,9 @@ pub fn content_fingerprint(set: &AnnotationSet) -> String {
     s.modified_at = None;
     if let Some(p) = &mut s.noise_profile {
         p.created = String::new();
+    }
+    if let Some(src) = &mut s.source {
+        src.fetched_at = String::new();
     }
     s.file_identity.last_modified = None;
     s.file_identity.file_path = None;

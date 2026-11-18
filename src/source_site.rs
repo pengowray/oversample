@@ -4,6 +4,8 @@
 //! Display names end up in saved file names (`find_recordings::file_name`) and
 //! so in .batm and OPFS identities. Don't change their spelling.
 
+use serde::{Deserialize, Serialize};
+
 /// A site or archive recordings are loaded from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SourceSite {
@@ -142,6 +144,124 @@ impl SiteMetadata {
             .iter()
             .find(|(k, _)| k == "Quality")
             .and_then(|(_, v)| xc_rating_letter(v))
+    }
+}
+
+/// Where a recording came from, as saved in its `.batm` file (the `source`
+/// block), so the Info panel can show it again when the audio is later
+/// opened from disk. `site` and `fields` are the site's own data as it came;
+/// the other fields are copies of a few of them for other programs reading
+/// the file, and are not read back.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RecordingSource {
+    /// The site's search key (`xc`, `inat`, `commons`, ...), or `wikipedia`.
+    pub site: String,
+    /// The recording's id on the site, from its page URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The recordist, or the author for Wikimedia files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recordist: Option<String>,
+    /// The licence as the site gives it: a code or a URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribution: Option<String>,
+    /// When the site's data was fetched (ISO 8601). The later one wins when
+    /// two copies of a set hold different sources.
+    #[serde(default)]
+    pub fetched_at: String,
+    /// The site's label/value rows in order, each as a one-entry map.
+    #[serde(default, with = "field_list")]
+    pub fields: Vec<(String, String)>,
+}
+
+/// The saved key for Wikipedia, which has no search key.
+const WIKIPEDIA_KEY: &str = "wikipedia";
+
+impl RecordingSource {
+    pub fn from_site(meta: &SiteMetadata, fetched_at: String) -> Self {
+        let field = |key: &str| {
+            meta.fields
+                .iter()
+                .find(|(k, v)| k == key && !v.trim().is_empty())
+                .map(|(_, v)| v.clone())
+        };
+        let url = field("URL");
+        RecordingSource {
+            site: meta.site.search_key().unwrap_or(WIKIPEDIA_KEY).to_string(),
+            id: url.as_deref().and_then(id_from_url),
+            url,
+            recordist: meta.credited_person().map(|(_, v)| v),
+            license: field("License"),
+            attribution: field("Attribution"),
+            fetched_at,
+            fields: meta.fields.clone(),
+        }
+    }
+
+    /// The site metadata to show for a file opened without it.
+    pub fn to_site_metadata(&self) -> SiteMetadata {
+        let site = if self.site == WIKIPEDIA_KEY {
+            SourceSite::Wikipedia
+        } else {
+            SourceSite::from_search_key(&self.site)
+        };
+        SiteMetadata::new(site, self.fields.clone())
+    }
+
+    /// Whether this holds the same site data as `meta` (whenever it was
+    /// fetched).
+    fn holds(&self, meta: &SiteMetadata) -> bool {
+        self.to_site_metadata() == *meta
+    }
+
+    /// The source to save with a file's annotation set: the one already in
+    /// the set when it holds the same data as the file's site metadata (so
+    /// its fetch time stays), a new one from the file's site metadata
+    /// otherwise, or the set's own when the file has none.
+    pub fn to_save(
+        saved: Option<&RecordingSource>,
+        meta: Option<&SiteMetadata>,
+        now: impl FnOnce() -> String,
+    ) -> Option<RecordingSource> {
+        match (saved, meta) {
+            (_, None) => saved.cloned(),
+            (Some(s), Some(m)) if s.holds(m) => Some(s.clone()),
+            (_, Some(m)) => Some(RecordingSource::from_site(m, now())),
+        }
+    }
+}
+
+/// The last part of a page URL's path ("928094" from
+/// "https://xeno-canto.org/928094", "File:Bat.wav" from a Commons page).
+fn id_from_url(url: &str) -> Option<String> {
+    let path = url.split(['?', '#']).next()?;
+    let path = path.split_once("://").map_or(path, |(_, rest)| rest);
+    let (_, path) = path.split_once('/')?;
+    path.rsplit('/').find(|s| !s.is_empty()).map(str::to_string)
+}
+
+/// Label/value rows as a YAML list of one-entry maps (`- Species: ...`),
+/// which keeps their order and reads like the Info panel.
+mod field_list {
+    use serde::ser::SerializeSeq;
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::collections::BTreeMap;
+
+    pub fn serialize<S: Serializer>(fields: &[(String, String)], s: S) -> Result<S::Ok, S::Error> {
+        let mut seq = s.serialize_seq(Some(fields.len()))?;
+        for (k, v) in fields {
+            seq.serialize_element(&BTreeMap::from([(k, v)]))?;
+        }
+        seq.end()
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<(String, String)>, D::Error> {
+        let rows: Vec<BTreeMap<String, String>> = Deserialize::deserialize(d)?;
+        Ok(rows.into_iter().flatten().collect())
     }
 }
 
