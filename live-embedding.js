@@ -9,8 +9,8 @@
 //   change: [[secondsAgo, distance]...], history }
 // `speciesJson` is [[x, y, name]...] for the map's grey points, or null when
 // it was sent before. `pcJson` comes with it: { variance: [share...],
-// ranks: [[0..255 per point]...], basis: 'recordings' | 'rows' } for the
-// component maps; `json.pc` then
+// ranks: [[0..255 per point]...], basis: 'recordings' | 'rows',
+// umap: [[x, y]...] or null } for the component maps; `json.pc` then
 // holds the reading's percentile (0 to 1) on each component.
 (function () {
   let loading = null;
@@ -283,23 +283,59 @@
   // Component maps: small copies of the species map, one per principal
   // component of real recordings' embeddings (research/live-embedding/
   // pc_rec.py; with ?pc=rows, of BirdNET's class rows, pc_bands.py). Each
-  // lights the species whose percentile on that component is near the
-  // reading's percentile among real recordings; species with no place on a
-  // component stay dim. Plain canvas: each point group is drawn once into
-  // an offscreen canvas, so a reading costs a few drawImage calls per map.
+  // lights the species whose place on that component is near the reading's
+  // percentile among real recordings; species with no place stay dim. The
+  // points are at their t-SNE places, as on the main map, or with
+  // ?pcmap=umap at their UMAP places (species_umap.py). Plain canvas: each
+  // group of points is drawn once into an offscreen canvas, so a reading
+  // costs a few drawImage calls per map.
   //
-  // Only the ends of an axis say much about a sound, so the default is two
-  // bands, the species below and above the median, with nothing lit while
-  // the reading is near the middle. ?pcbands=3 (or 20) in the address
-  // compares finer bands.
+  // What is lit (?pclight=):
+  //   typical (default) see below.
+  //   two     the third of the species the reading is in, faint,
+  //           and the 5% band at the reading, bright on top. The middle
+  //           third is not lit: only the ends of an axis say much about a
+  //           sound, but the 5% band still shows where the reading is.
+  //   outer   only the outer thirds, never the middle one.
+  //   halves  the half below or above the median; nothing between the 40th
+  //           and 60th percentiles.
+  //   fine    5% bands, fading over 10% from the reading.
+  //   typical like two, but the faint layer lights only the third's species
+  //           that sit among others of the same third (the share of the
+  //           third in the surrounding grid cells, above the 1 in 3 chance),
+  //           so it shows the regions typical of that end of the axis.
   const query = new URLSearchParams(window.location.search);
-  const PC_BANDS = Math.max(2, Math.min(50, Number(query.get('pcbands')) || 2));
-  // A band this far from the reading (in percentile) is not lit; lit bands
-  // fade over this distance.
-  const PC_FALLOFF = 0.1;
-  // Nothing is lit while the reading is this close to the 50th percentile.
-  const PC_MIDDLE = PC_BANDS === 2 ? 0.1 : 0;
+  const PC_LIGHT = ['two', 'outer', 'halves', 'fine', 'typical'].includes(query.get('pclight'))
+    ? query.get('pclight')
+    : 'typical';
+  const PC_UMAP = query.get('pcmap') === 'umap';
+  // Two-level colours: a dark blue for the third and a light yellow for the
+  // 5% band, so they differ in lightness as well as hue.
+  const PC_THIRD = '#3f7fc0';
+  const PC_FINE = '#ffe680';
+  const PC_FINE_BANDS = 20;
   const PC_PER_ROW = 4;
+  // Each mode: band layers to build (count, colour) and the middle zone in
+  // which the coarse layer is not lit, as a distance from the median.
+  const PC_MODES = {
+    two: { coarse: [3, PC_THIRD], coarseAlpha: 0.75, fine: [PC_FINE_BANDS, PC_FINE], fineFall: 0.02, middle: 1 / 6 },
+    outer: { coarse: [3, HIT], coarseAlpha: 1, middle: 1 / 6 },
+    halves: { coarse: [2, HIT], coarseAlpha: 1, middle: 0.1 },
+    fine: { fine: [PC_FINE_BANDS, HIT], fineFall: 0.1, middle: 0 },
+    typical: {
+      coarse: [3, PC_THIRD],
+      coarseAlpha: 1,
+      typical: true,
+      fine: [PC_FINE_BANDS, PC_FINE],
+      fineFall: 0.02,
+      middle: 1 / 6,
+    },
+  };
+  // Grid for the typical regions: cells per side, and how many cells around
+  // a point count as its surroundings (1: a 3 x 3 block).
+  const PC_GRID = 24;
+  const PC_GRID_REACH = 1;
+  const PC_MODE = PC_MODES[PC_LIGHT];
   // What lies at the two ends of each class-row component (pc_bands.txt).
   const PC_ENDS_ROWS = [
     ['Amazonian antshrikes and antbirds', 'larks'],
@@ -320,26 +356,79 @@
     const dpr = window.devicePixelRatio || 1;
     const px = Math.round(size * dpr);
     const at = (v) => ((v + 1.05) / 2.1) * px;
-    const layer = (pts, color, r) => {
+    const pts = PC_UMAP && pc.umap ? pc.umap : species;
+    // `list` holds points [x, y] or, with per-point strength, [x, y, alpha].
+    const layer = (list, color, r) => {
       const c = document.createElement('canvas');
       c.width = c.height = px;
       const g = c.getContext('2d');
       g.fillStyle = color;
-      for (const p of pts) g.fillRect(at(p[0]) - r / 2, at(-p[1]) - r / 2, r, r);
+      for (const p of list) {
+        if (p.length > 2) {
+          if (p[2] <= 0) continue;
+          g.globalAlpha = p[2];
+        }
+        g.fillRect(at(p[0]) - r / 2, at(-p[1]) - r / 2, r, r);
+      }
       return c;
     };
-    const base = layer(species, 'rgba(170,170,170,0.22)', Math.max(1, dpr));
+    const cellOf = (p) => {
+      const c = (v) => Math.min(PC_GRID - 1, Math.max(0, Math.floor(((v + 1.05) / 2.1) * PC_GRID)));
+      return [c(p[0]), c(p[1])];
+    };
+    const dot = Math.max(1, dpr);
+    const base = layer(pts, 'rgba(170,170,170,0.22)', dot);
+    const rows = pc.basis === 'rows';
+    const top = rows ? 256 : 255;
+    // Species per band, for `count` equal bands of the placed species.
+    const bandOf = (r, count) => Math.min(count - 1, Math.floor((r * count) / top));
+    const groups = (k, count) => {
+      const g = Array.from({ length: count }, () => []);
+      pc.ranks[k].forEach((r, i) => {
+        if (!rows && r === 255) return; // no place on this component
+        g[bandOf(r, count)].push(pts[i]);
+      });
+      return g;
+    };
+    // Each band's points with a strength: how far the band's share of the
+    // placed species in the surrounding cells is above chance (1 / count).
+    const typicalGroups = (k, count) => {
+      const counts = Array.from({ length: count + 1 }, () => new Float32Array(PC_GRID * PC_GRID));
+      const cells = pts.map(cellOf);
+      pc.ranks[k].forEach((r, i) => {
+        if (!rows && r === 255) return;
+        const [cx, cy] = cells[i];
+        counts[bandOf(r, count)][cy * PC_GRID + cx] += 1;
+        counts[count][cy * PC_GRID + cx] += 1;
+      });
+      const around = (arr, cx, cy) => {
+        let s = 0;
+        for (let dy = -PC_GRID_REACH; dy <= PC_GRID_REACH; dy++)
+          for (let dx = -PC_GRID_REACH; dx <= PC_GRID_REACH; dx++) {
+            const x = cx + dx;
+            const y = cy + dy;
+            if (x >= 0 && y >= 0 && x < PC_GRID && y < PC_GRID) s += arr[y * PC_GRID + x];
+          }
+        return s;
+      };
+      const g = Array.from({ length: count }, () => []);
+      const chance = 1 / count;
+      pc.ranks[k].forEach((r, i) => {
+        if (!rows && r === 255) return;
+        const b = bandOf(r, count);
+        const [cx, cy] = cells[i];
+        const share = around(counts[b], cx, cy) / Math.max(1, around(counts[count], cx, cy));
+        g[b].push([pts[i][0], pts[i][1], Math.min(1, (2 * (share - chance)) / (1 - chance))]);
+      });
+      return g;
+    };
     div.innerHTML = '';
     const maps = [];
     for (let k = 0; k < n; k++) {
-      const groups = Array.from({ length: PC_BANDS }, () => []);
-      const rows = pc.basis === 'rows';
-      const top = rows ? 256 : 255;
-      pc.ranks[k].forEach((r, i) => {
-        if (!rows && r === 255) return; // no place on this component
-        groups[Math.min(PC_BANDS - 1, Math.floor((r * PC_BANDS) / top))].push(species[i]);
-      });
-      const bands = groups.map((g) => layer(g, HIT, Math.max(1, dpr)));
+      const m = PC_MODE;
+      const coarseGroups = m.coarse && (m.typical ? typicalGroups : groups)(k, m.coarse[0]);
+      const coarse = coarseGroups ? coarseGroups.map((g) => layer(g, m.coarse[1], dot)) : [];
+      const fine = m.fine ? groups(k, m.fine[0]).map((g) => layer(g, m.fine[1], dot)) : [];
       const cell = document.createElement('div');
       cell.className = 'live-emb-pc';
       const [lo, hi] = (rows && PC_ENDS_ROWS[k]) || ['', ''];
@@ -363,9 +452,22 @@
       line.style.height = '7px';
       cell.append(label, canvas, line);
       div.appendChild(cell);
-      maps.push({ ctx: canvas.getContext('2d'), bands, line: line.getContext('2d') });
+      maps.push({ ctx: canvas.getContext('2d'), coarse, fine, line: line.getContext('2d') });
     }
     return { width: div.clientWidth, base, maps, px, dpr };
+  }
+
+  // Draw band layers lit by distance from the reading `p`: 1 inside the
+  // band, fading to 0 at `fall` away (0: only the band holding `p`).
+  function drawBands(ctx, layers, p, fall, alpha) {
+    const count = layers.length;
+    layers.forEach((band, i) => {
+      const dist = Math.max(0, i / count - p, p - (i + 1) / count);
+      const a = fall > 0 ? 1 - dist / fall : dist > 0 ? 0 : 1;
+      if (a <= 0) return;
+      ctx.globalAlpha = a * alpha;
+      ctx.drawImage(band, 0, 0);
+    });
   }
 
   function pcDraw(el, d) {
@@ -375,23 +477,18 @@
     if (!div.__built || div.__built.width !== div.clientWidth) div.__built = pcBuild(div, el.__species, pc);
     const b = div.__built;
     if (!b) return;
+    const mode = PC_MODE;
     b.maps.forEach((m, k) => {
       const p = d.pc[k];
+      const inMiddle = Math.abs(p - 0.5) < mode.middle;
       m.ctx.globalAlpha = 1;
       m.ctx.clearRect(0, 0, b.px, b.px);
       m.ctx.drawImage(b.base, 0, 0);
-      m.bands.forEach((band, i) => {
-        if (Math.abs(p - 0.5) < PC_MIDDLE) return;
-        // Distance from the reading to the band (0 inside it).
-        const dist = Math.max(0, i / PC_BANDS - p, p - (i + 1) / PC_BANDS);
-        const a = 1 - dist / PC_FALLOFF;
-        if (a <= 0) return;
-        m.ctx.globalAlpha = a;
-        m.ctx.drawImage(band, 0, 0);
-      });
+      if (!inMiddle) drawBands(m.ctx, m.coarse, p, 0, mode.coarseAlpha);
+      drawBands(m.ctx, m.fine, p, mode.fineFall || 0, 1);
       // The percentile line: a grey rule, a tick at the median, the middle
-      // zone (where nothing is lit) a little lighter, and the reading as a
-      // white mark.
+      // zone (where the coarse layer is not lit) a little lighter, and the
+      // reading as a mark.
       const g = m.line;
       const w = b.px;
       const h = g.canvas.height;
@@ -400,13 +497,13 @@
       g.clearRect(0, 0, w, h);
       g.fillStyle = '#555';
       g.fillRect(0, y - u / 2, w, u);
-      if (PC_MIDDLE > 0) {
+      if (mode.middle > 0) {
         g.fillStyle = '#777';
-        g.fillRect(w * (0.5 - PC_MIDDLE), y - u, w * 2 * PC_MIDDLE, 2 * u);
+        g.fillRect(w * (0.5 - mode.middle), y - u, w * 2 * mode.middle, 2 * u);
       }
       g.fillStyle = '#888';
       g.fillRect(Math.round(w / 2) - u / 2, 0, u, h);
-      g.fillStyle = Math.abs(p - 0.5) < PC_MIDDLE ? '#bbbbbb' : HIT;
+      g.fillStyle = mode.fine ? mode.fine[1] : inMiddle ? '#bbbbbb' : HIT;
       const x = Math.min(w - 2 * u, Math.max(0, p * w - u));
       g.fillRect(x, 0, 2 * u, h);
     });

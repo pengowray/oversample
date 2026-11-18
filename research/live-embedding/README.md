@@ -81,21 +81,34 @@ In the app, the live view and the classifier agreed on the test recordings:
    all eight maps take about 0.5 ms per reading in Chrome, against about
    5 ms for the main map's ECharts update. The reading's percentile is the
    mean of the last 4 readings (about 1 s), so the light does not flicker.
-   - Bands: two by default, the species below and above the median on that
-     component. The half the reading is in is lit, and nothing is lit while
-     the reading is between the 40th and 60th percentiles (the lighter part
-     of the line). `?pcbands=3` or `?pcbands=20` in the address uses finer
-     bands, lit by distance from the reading with a 10% fade.
-   - How often the heard species (top class, 0.5 or more) is lit, against a
-     random species, on the reference readings (`pc_rec.py` data, not held
-     out): 2 bands with the middle zone 0.44 to 0.76 against 0.33 to 0.43;
-     without the middle zone 0.64 to 0.85 against 0.53 to 0.59; 20 bands
-     0.10 to 0.36 against 0.14 to 0.15. Two bands are right more often but
-     say less: the gain over chance is about 1.3 to 1.8 times for 2 bands
-     with the middle zone, 1.2 to 1.6 without it, and up to 2.6 for 20
-     bands (PC6). On the map, half the species lit covers most of a small
-     map, because the halves interleave on the t-SNE layout; only PC1 and
-     PC3 light a clear region.
+   - What is lit, chosen with `?pclight=` (default `typical`):
+     `typical`: of the third of the species the reading is in, only those
+     sitting among others of the same third (their third's share of the
+     surrounding grid cells, above 1 in 3) light in dark blue, and the 5%
+     band at the reading lights in light yellow on top. The middle third is
+     never lit (only the ends of an axis say much about a sound), but the 5%
+     band still shows. `two`: the same without the "typical" filter.
+     `outer`: only the outer thirds, in green. `halves`: the half below or
+     above the median, nothing between the 40th and 60th percentiles.
+     `fine`: 5% bands with a 10% fade. The two colours differ in lightness as
+     well as hue.
+   - `?pcmap=umap` draws the small maps on a UMAP layout of the class rows
+     (`species_umap.py`, `birdnet-umap.bin`) instead of the main map's
+     t-SNE. UMAP of 6,522 class rows (cosine) takes 12 s with 50 neighbours
+     and 34 to 41 s with 15 (the first run includes compiling), so it has to
+     be precomputed.
+   - Compactness (`species_umap.txt`): the share of each species' 10 nearest
+     neighbours on the layout that are in the same half on a component
+     (0.5 is chance). Class-row PCA: t-SNE 0.77, UMAP 0.71 to 0.74.
+     Recording PCA: t-SNE 0.56, UMAP 0.52 to 0.54. t-SNE is the more compact
+     layout for every basis and setting, so it stays the default.
+   - How often the heard species is lit against a random species, with the
+     earlier two-band default (reference readings, not held out): 2 bands
+     with a middle zone 0.44 to 0.76 against 0.33 to 0.43; 20 bands 0.10 to
+     0.36 against 0.14 to 0.15.
+   - Even the 5% band scatters over the whole small map with the recording
+     PCA: on a map of species, its bands are not regions. Only PC1 and PC3
+     show a clear area.
 
    **Second version (shown by default): PCA of recordings' embeddings**
    (`pc_rec.py`, output and checks in `pc_rec.txt`, data `birdnet-pc.bin`).

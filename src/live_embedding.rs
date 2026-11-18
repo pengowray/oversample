@@ -110,6 +110,8 @@ thread_local! {
     static MAP: RefCell<Option<Arc<Vec<Option<(f32, f32)>>>>> = const { RefCell::new(None) };
     /// Principal components of the class rows, for the component maps.
     static PCS: RefCell<Option<Arc<Components>>> = const { RefCell::new(None) };
+    /// UMAP places of the classes for the component maps (`?pcmap=umap`).
+    static PC_UMAP: RefCell<Option<Arc<Vec<Option<(f32, f32)>>>>> = const { RefCell::new(None) };
     /// The strip's rows, in the order they first appeared.
     static ROWS: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
     /// Interval between the last two readings, smoothed.
@@ -159,6 +161,18 @@ const PC_FILE_ROWS: &str = "birdnet-pc-rows.bin";
 /// Readings averaged for the component maps: 4 at 0.25 s apart, so the light
 /// settles within about a second.
 const PC_SMOOTH: usize = 4;
+
+/// UMAP layout of the classes (`species_umap.py`), same format as the
+/// species map file.
+const PC_UMAP_FILE: &str = "birdnet-umap.bin";
+
+/// True when the address asks for the component maps on the UMAP layout
+/// (`?pcmap=umap`).
+fn pc_umap() -> bool {
+    web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .is_some_and(|s| s.contains("pcmap=umap"))
+}
 
 /// True when the address asks for the class-row components (`?pc=rows`).
 fn pc_rows() -> bool {
@@ -377,6 +391,12 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
         if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes(file).await {
             if let Some(c) = Components::parse(&bytes) {
                 PCS.with(|p| *p.borrow_mut() = Some(Arc::new(c)));
+            }
+        }
+        if pc_umap() {
+            if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes(PC_UMAP_FILE).await {
+                let m = classifier::species_map::parse_map(&bytes);
+                PC_UMAP.with(|u| *u.borrow_mut() = Some(Arc::new(m)));
             }
         }
     }
@@ -893,8 +913,23 @@ fn draw(state: AppState) {
                 .map(|r| kept.iter().map(|&i| r.get(i).copied().unwrap_or(0)).collect())
                 .collect();
             let basis = if pc_rows() { "rows" } else { "recordings" };
-            serde_json::json!({ "variance": p.variance, "ranks": ranks, "basis": basis })
-                .to_string()
+            let umap: Option<Vec<(f32, f32)>> = PC_UMAP.with(|u| {
+                u.borrow().as_ref().map(|u| {
+                    kept.iter()
+                        .map(|&i| {
+                            let (x, y) = u.get(i).copied().flatten().unwrap_or((0.0, 0.0));
+                            (round3(x), round3(y))
+                        })
+                        .collect()
+                })
+            });
+            serde_json::json!({
+                "variance": p.variance,
+                "ranks": ranks,
+                "basis": basis,
+                "umap": umap,
+            })
+            .to_string()
         });
         serde_json::json!(s).to_string()
     });

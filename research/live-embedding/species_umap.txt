@@ -1,0 +1,30 @@
+UMAP n_neighbors=15 min_dist=0.1: 33.6 s
+UMAP n_neighbors=50 min_dist=0.1: 11.8 s
+UMAP n_neighbors=50 min_dist=0.5: 12.0 s
+
+class rows, halves: share of 10 nearest neighbours in the same band, PC1..PC8
+  t-SNE            mean 0.77:  0.85 0.83 0.85 0.75 0.72 0.74 0.71 0.73
+  UMAP 15/0.1      mean 0.74:  0.84 0.82 0.84 0.72 0.68 0.70 0.67 0.70
+  UMAP 50/0.1      mean 0.74:  0.85 0.83 0.83 0.71 0.67 0.69 0.66 0.69
+  UMAP 50/0.5      mean 0.71:  0.86 0.83 0.76 0.66 0.63 0.66 0.64 0.64
+
+class rows, outer thirds: share of 10 nearest neighbours in the same band, PC1..PC8
+  t-SNE            mean 0.69:  0.80 0.77 0.75 0.66 0.62 0.64 0.61 0.64
+  UMAP 15/0.1      mean 0.65:  0.78 0.75 0.73 0.61 0.57 0.59 0.55 0.60
+  UMAP 50/0.1      mean 0.65:  0.80 0.76 0.72 0.60 0.57 0.59 0.54 0.58
+  UMAP 50/0.5      mean 0.60:  0.80 0.77 0.63 0.55 0.52 0.54 0.51 0.52
+
+recordings, halves: share of 10 nearest neighbours in the same band, PC1..PC8
+  t-SNE            mean 0.56:  0.67 0.58 0.72 0.14 0.64 0.60 0.57 0.58
+  UMAP 15/0.1      mean 0.54:  0.65 0.56 0.70 0.10 0.62 0.58 0.56 0.57
+  UMAP 50/0.1      mean 0.53:  0.65 0.56 0.69 0.08 0.62 0.57 0.55 0.56
+  UMAP 50/0.5      mean 0.52:  0.64 0.55 0.68 0.08 0.60 0.56 0.54 0.55
+
+recordings, outer thirds: share of 10 nearest neighbours in the same band, PC1..PC8
+  t-SNE            mean 0.44:  0.54 0.44 0.63 0.08 0.51 0.46 0.42 0.43
+  UMAP 15/0.1      mean 0.42:  0.52 0.42 0.60 0.06 0.48 0.44 0.40 0.41
+  UMAP 50/0.1      mean 0.41:  0.52 0.41 0.59 0.07 0.48 0.43 0.39 0.41
+  UMAP 50/0.5      mean 0.40:  0.51 0.39 0.58 0.05 0.46 0.42 0.38 0.39
+
+chosen: UMAP 15/0.1
+wrote research/live-embedding/birdnet-umap.bin
