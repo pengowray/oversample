@@ -1,0 +1,23 @@
+variance shares (%): 21.4 7.0 4.1 2.7 2.3 2.2 2.0 1.9
+species placed from recordings: 45 of 6522
+class-row projection vs recording-based place, correlation per PC: 0.89 0.58 0.75 0.46 0.87 0.83 0.69 0.76
+species with no place, per PC: 0 0 0 6477 0 0 0 0
+wrote birdnet-pc.bin, 85660 bytes, from 49680 readings
+check, all readings (fit and check on the same data), top class 0.5 or more:
+  PC1: 23821 readings, mean gap 0.300, shuffled 0.475, correlation 0.85
+  PC2: 23821 readings, mean gap 0.315, shuffled 0.387, correlation 0.41
+  PC3: 23821 readings, mean gap 0.354, shuffled 0.487, correlation 0.63
+  PC4: 23730 readings, mean gap 0.210, shuffled 0.262, correlation 0.39
+  PC5: 23821 readings, mean gap 0.241, shuffled 0.392, correlation 0.64
+  PC6: 23821 readings, mean gap 0.217, shuffled 0.464, correlation 0.76
+  PC7: 23821 readings, mean gap 0.264, shuffled 0.442, correlation 0.62
+  PC8: 23821 readings, mean gap 0.227, shuffled 0.359, correlation 0.57
+check, held out (fit on half the recordings, check on the other half):
+  PC1: 11580 readings, mean gap 0.318, shuffled 0.479, correlation 0.83
+  PC2: 11580 readings, mean gap 0.271, shuffled 0.294, correlation 0.23
+  PC3: 11580 readings, mean gap 0.356, shuffled 0.498, correlation 0.63
+  PC4: 11580 readings, mean gap 0.277, shuffled 0.366, correlation 0.44
+  PC5: 11580 readings, mean gap 0.246, shuffled 0.445, correlation 0.71
+  PC6: 11580 readings, mean gap 0.237, shuffled 0.414, correlation 0.65
+  PC7: 11580 readings, mean gap 0.234, shuffled 0.328, correlation 0.48
+  PC8: 11419 readings, mean gap 0.192, shuffled 0.294, correlation 0.55

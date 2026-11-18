@@ -150,8 +150,22 @@ pub struct SessionPoint {
     pub scores: Option<Vec<f32>>,
 }
 
-/// The component maps' data, made by `research/live-embedding/pc_bands.py`.
+/// The component maps' data: PCA of recordings' embeddings, made by
+/// `research/live-embedding/pc_rec.py`.
 const PC_FILE: &str = "birdnet-pc.bin";
+/// The first version, PCA of the class rows (`pc_bands.py`), shown with
+/// `?pc=rows` in the address.
+const PC_FILE_ROWS: &str = "birdnet-pc-rows.bin";
+/// Readings averaged for the component maps: 4 at 0.25 s apart, so the light
+/// settles within about a second.
+const PC_SMOOTH: usize = 4;
+
+/// True when the address asks for the class-row components (`?pc=rows`).
+fn pc_rows() -> bool {
+    web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .is_some_and(|s| s.contains("pc=rows"))
+}
 
 /// The first principal components of BirdNET's class rows (see
 /// `pc_bands.py`): each axis, where real recordings fall on it, and each
@@ -162,7 +176,9 @@ pub struct Components {
     axes: Vec<Vec<f32>>,
     /// Reference recordings' projections at 0, 5, ..., 100 %.
     quantiles: Vec<Vec<f32>>,
-    /// Per component, each class's rank, 0 (lowest score) to 255.
+    /// Per component, each class's rank, 0 (lowest score) up. In the
+    /// recordings file ranks run to 254 and 255 means no place; in the
+    /// class-row file they run to 255.
     pub ranks: Vec<Vec<u8>>,
 }
 
@@ -357,7 +373,8 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
     }
     if PCS.with(|m| m.borrow().is_none()) {
         // Optional too: without it the component maps are not shown.
-        if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes(PC_FILE).await {
+        let file = if pc_rows() { PC_FILE_ROWS } else { PC_FILE };
+        if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes(file).await {
             if let Some(c) = Components::parse(&bytes) {
                 PCS.with(|p| *p.borrow_mut() = Some(Arc::new(c)));
             }
@@ -822,12 +839,23 @@ fn draw(state: AppState) {
             .filter_map(|r| Some((ago(r), round3(r.change?))))
             .collect();
         let row_names: Vec<_> = rows.iter().map(|&c| name(c as usize)).collect();
+        // Mean percentile of the last few readings, so the light does not
+        // flicker from one reading to the next.
         let pc: Vec<f32> = PCS
-            .with(|p| p.borrow().as_ref().map(|p| p.percentiles(&latest.embedding)))
-            .unwrap_or_default()
-            .into_iter()
-            .map(round3)
-            .collect();
+            .with(|p| {
+                let p = p.borrow();
+                let p = p.as_ref()?;
+                let mut sum = vec![0.0f32; p.variance.len()];
+                let mut n = 0.0f32;
+                for r in h.iter().rev().take(PC_SMOOTH) {
+                    for (s, v) in sum.iter_mut().zip(p.percentiles(&r.embedding)) {
+                        *s += v;
+                    }
+                    n += 1.0;
+                }
+                Some(sum.into_iter().map(|s| round3(s / n)).collect())
+            })
+            .unwrap_or_default();
         Some(serde_json::json!({
             "pc": pc,
             "min": min,
@@ -864,7 +892,9 @@ fn draw(state: AppState) {
                 .iter()
                 .map(|r| kept.iter().map(|&i| r.get(i).copied().unwrap_or(0)).collect())
                 .collect();
-            serde_json::json!({ "variance": p.variance, "ranks": ranks }).to_string()
+            let basis = if pc_rows() { "rows" } else { "recordings" };
+            serde_json::json!({ "variance": p.variance, "ranks": ranks, "basis": basis })
+                .to_string()
         });
         serde_json::json!(s).to_string()
     });

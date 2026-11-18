@@ -9,7 +9,8 @@
 //   change: [[secondsAgo, distance]...], history }
 // `speciesJson` is [[x, y, name]...] for the map's grey points, or null when
 // it was sent before. `pcJson` comes with it: { variance: [share...],
-// ranks: [[0..255 per point]...] } for the component maps; `json.pc` then
+// ranks: [[0..255 per point]...], basis: 'recordings' | 'rows' } for the
+// component maps; `json.pc` then
 // holds the reading's percentile (0 to 1) on each component.
 (function () {
   let loading = null;
@@ -280,16 +281,27 @@
   }
 
   // Component maps: small copies of the species map, one per principal
-  // component of BirdNET's class rows (research/live-embedding/pc_bands.py).
-  // Each lights the species whose percentile on that component is near the
-  // reading's percentile among real recordings. Plain canvas: each point
-  // group is drawn once into an offscreen canvas, so a reading costs a few
-  // drawImage calls per map.
-  const PC_BANDS = 20; // 5 % of the species each
-  const PC_FALLOFF = 0.1; // a band this far from the reading is not lit
+  // component of real recordings' embeddings (research/live-embedding/
+  // pc_rec.py; with ?pc=rows, of BirdNET's class rows, pc_bands.py). Each
+  // lights the species whose percentile on that component is near the
+  // reading's percentile among real recordings; species with no place on a
+  // component stay dim. Plain canvas: each point group is drawn once into
+  // an offscreen canvas, so a reading costs a few drawImage calls per map.
+  //
+  // Only the ends of an axis say much about a sound, so the default is two
+  // bands, the species below and above the median, with nothing lit while
+  // the reading is near the middle. ?pcbands=3 (or 20) in the address
+  // compares finer bands.
+  const query = new URLSearchParams(window.location.search);
+  const PC_BANDS = Math.max(2, Math.min(50, Number(query.get('pcbands')) || 2));
+  // A band this far from the reading (in percentile) is not lit; lit bands
+  // fade over this distance.
+  const PC_FALLOFF = 0.1;
+  // Nothing is lit while the reading is this close to the 50th percentile.
+  const PC_MIDDLE = PC_BANDS === 2 ? 0.1 : 0;
   const PC_PER_ROW = 4;
-  // What lies at the two ends of each component (pc_bands.txt).
-  const PC_ENDS = [
+  // What lies at the two ends of each class-row component (pc_bands.txt).
+  const PC_ENDS_ROWS = [
     ['Amazonian antshrikes and antbirds', 'larks'],
     ['waterbirds: cormorants, gulls, herons', 'Andean tanagers and warblers'],
     ['southern seabirds and waterfowl', 'Asian flycatchers and drongos'],
@@ -321,25 +333,39 @@
     const maps = [];
     for (let k = 0; k < n; k++) {
       const groups = Array.from({ length: PC_BANDS }, () => []);
-      pc.ranks[k].forEach((r, i) => groups[Math.min(PC_BANDS - 1, Math.floor((r * PC_BANDS) / 256))].push(species[i]));
+      const rows = pc.basis === 'rows';
+      const top = rows ? 256 : 255;
+      pc.ranks[k].forEach((r, i) => {
+        if (!rows && r === 255) return; // no place on this component
+        groups[Math.min(PC_BANDS - 1, Math.floor((r * PC_BANDS) / top))].push(species[i]);
+      });
       const bands = groups.map((g) => layer(g, HIT, Math.max(1, dpr)));
       const cell = document.createElement('div');
       cell.className = 'live-emb-pc';
-      const [lo, hi] = PC_ENDS[k] || ['', ''];
+      const [lo, hi] = (rows && PC_ENDS_ROWS[k]) || ['', ''];
+      const between = rows ? "BirdNET's classes" : 'recordings';
       cell.title =
-        `PC${k + 1}: ${(pc.variance[k] * 100).toFixed(1)}% of the variation between BirdNET's classes.` +
+        `PC${k + 1}: ${(pc.variance[k] * 100).toFixed(1)}% of the variation between ${between}.` +
         (lo ? `\nLow end: ${lo}.\nHigh end: ${hi}.` : '');
       const label = document.createElement('div');
       label.className = 'live-emb-pc-label';
-      label.textContent = `PC${k + 1} ${(pc.variance[k] * 100).toFixed(1)}%`;
+      // Whole percent, so the label fits a quarter of the sidebar.
+      label.textContent = `PC${k + 1} ${Math.round(pc.variance[k] * 100)}%`;
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = px;
       canvas.style.width = canvas.style.height = `${size}px`;
-      cell.append(label, canvas);
+      // The reading's percentile on this component, 0 at the left.
+      const line = document.createElement('canvas');
+      line.className = 'live-emb-pc-line';
+      line.width = px;
+      line.height = Math.round(7 * dpr);
+      line.style.width = `${size}px`;
+      line.style.height = '7px';
+      cell.append(label, canvas, line);
       div.appendChild(cell);
-      maps.push({ ctx: canvas.getContext('2d'), bands });
+      maps.push({ ctx: canvas.getContext('2d'), bands, line: line.getContext('2d') });
     }
-    return { width: div.clientWidth, base, maps, px };
+    return { width: div.clientWidth, base, maps, px, dpr };
   }
 
   function pcDraw(el, d) {
@@ -355,11 +381,34 @@
       m.ctx.clearRect(0, 0, b.px, b.px);
       m.ctx.drawImage(b.base, 0, 0);
       m.bands.forEach((band, i) => {
-        const a = 1 - Math.abs((i + 0.5) / PC_BANDS - p) / PC_FALLOFF;
+        if (Math.abs(p - 0.5) < PC_MIDDLE) return;
+        // Distance from the reading to the band (0 inside it).
+        const dist = Math.max(0, i / PC_BANDS - p, p - (i + 1) / PC_BANDS);
+        const a = 1 - dist / PC_FALLOFF;
         if (a <= 0) return;
         m.ctx.globalAlpha = a;
         m.ctx.drawImage(band, 0, 0);
       });
+      // The percentile line: a grey rule, a tick at the median, the middle
+      // zone (where nothing is lit) a little lighter, and the reading as a
+      // white mark.
+      const g = m.line;
+      const w = b.px;
+      const h = g.canvas.height;
+      const y = Math.round(h / 2);
+      const u = b.dpr;
+      g.clearRect(0, 0, w, h);
+      g.fillStyle = '#555';
+      g.fillRect(0, y - u / 2, w, u);
+      if (PC_MIDDLE > 0) {
+        g.fillStyle = '#777';
+        g.fillRect(w * (0.5 - PC_MIDDLE), y - u, w * 2 * PC_MIDDLE, 2 * u);
+      }
+      g.fillStyle = '#888';
+      g.fillRect(Math.round(w / 2) - u / 2, 0, u, h);
+      g.fillStyle = Math.abs(p - 0.5) < PC_MIDDLE ? '#bbbbbb' : HIT;
+      const x = Math.min(w - 2 * u, Math.max(0, p * w - u));
+      g.fillRect(x, 0, 2 * u, h);
     });
   }
 

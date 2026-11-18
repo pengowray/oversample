@@ -75,36 +75,73 @@ In the app, the live view and the classifier agreed on the test recordings:
    moving; the name comes from the text above it.
 
 5. **Component maps (prototype)**: eight small copies of the species map, four
-   to a row, one per principal component of the class rows (the same PCA as
-   `pca_axes.py`, a fixed basis). Each lights the species at the reading's
-   place on that component. Data: `birdnet-pc.bin` from `pc_bands.py` (86 KB:
-   the 8 axes, 21 reference quantiles each, and one rank byte per class per
-   component); `pc_bands.txt` has its output and check.
-   - The class rows and the embedding share the 1,024 dimensions, but not
-     their spread: the embedding is non-negative and sits to one side of the
-     rows. Compared directly, a reading falls in the top or bottom tenth of
-     species on most components nearly always (PC4: 72% of BirdSet readings
-     in the top tenth). So each reading's projection is turned into a
-     percentile among real recordings (BirdSet HSN and POW, about 50,000
-     readings, both North American), and the species at the same percentile
-     are lit.
-   - Bands are 5% of the species each; the band at the reading's percentile
-     is drawn at full strength, fading to nothing 10% away, so the light
-     moves smoothly. Each band is pre-drawn to an offscreen canvas; all eight maps take
-     about 0.5 ms per reading in Chrome, against about 5 ms for the main
-     map's ECharts update.
-   - In use (a Powdermill recording, Wood Thrush steady at the top), the
-     percentiles jump by 0.3 to 0.5 between readings 0.25 s apart while the
-     top class stays the same, and mid-axis bands light points all over the
-     map. Only the ends of an axis light a compact region.
-   - Check (`pc_bands.txt`, readings with a class at 0.5 or more): the
-     reading's percentile and its top class's percentile correlate 0.4 to 0.6
-     on PC1, PC4 and PC6 and under 0.2 on PC3, PC7 and PC8, but the light is
-     on the top class's own band little more often than chance (mean gap
-     0.23 to 0.51 against 0.26 to 0.52 shuffled; PC6 is the best). The
-     direction tracks, the place mostly does not. Mid-axis bands are the
-     weakest part: in a linear readout only the ends of an axis are tied to
-     the embedding.
+   to a row, one per principal component, under the main map. Under each, a
+   thin line shows the reading's percentile on that component (the tick is
+   the median). Each band of species is pre-drawn to an offscreen canvas:
+   all eight maps take about 0.5 ms per reading in Chrome, against about
+   5 ms for the main map's ECharts update. The reading's percentile is the
+   mean of the last 4 readings (about 1 s), so the light does not flicker.
+   - Bands: two by default, the species below and above the median on that
+     component. The half the reading is in is lit, and nothing is lit while
+     the reading is between the 40th and 60th percentiles (the lighter part
+     of the line). `?pcbands=3` or `?pcbands=20` in the address uses finer
+     bands, lit by distance from the reading with a 10% fade.
+   - How often the heard species (top class, 0.5 or more) is lit, against a
+     random species, on the reference readings (`pc_rec.py` data, not held
+     out): 2 bands with the middle zone 0.44 to 0.76 against 0.33 to 0.43;
+     without the middle zone 0.64 to 0.85 against 0.53 to 0.59; 20 bands
+     0.10 to 0.36 against 0.14 to 0.15. Two bands are right more often but
+     say less: the gain over chance is about 1.3 to 1.8 times for 2 bands
+     with the middle zone, 1.2 to 1.6 without it, and up to 2.6 for 20
+     bands (PC6). On the map, half the species lit covers most of a small
+     map, because the halves interleave on the t-SNE layout; only PC1 and
+     PC3 light a clear region.
+
+   **Second version (shown by default): PCA of recordings' embeddings**
+   (`pc_rec.py`, output and checks in `pc_rec.txt`, data `birdnet-pc.bin`).
+   - Fitted, centred, on about 50,000 BirdNET embeddings of BirdSet's HSN and
+     POW test sets (both North American; no other set is on this machine).
+     Shares: 21.4, 7.0, 4.1, 2.7, 2.3, 2.2, 2.0 and 1.9%, against 1 to 2% for
+     the class rows.
+   - A reading is a plain projection on the same axes, turned into a
+     percentile among the same recordings.
+   - Species are not recordings, so each needs a place on each component.
+     45 species are the top class (score 0.5 or more) of at least 5
+     reference readings; their place is the median score of those readings.
+     Their class rows projected onto the same axes agree with that
+     (correlation 0.89, 0.58, 0.75, 0.87, 0.83, 0.69 and 0.76 on PC1 to PC3
+     and PC5 to PC8), so on those components every species is ranked by its
+     class row alone. On PC4 they agree only 0.46, so PC4 lights only the 45
+     species and the other 6,477 stay dim.
+   - Mixing the two sources in one ranking was tried first: the 45
+     recording-placed species then took the ends of every axis (all 45 in
+     PC1's outer tenth) and lit the wrong species.
+   - Check, fitted on half the recordings and checked on the other half: see
+     the table below. It is much better than the first version, but it tests
+     the same 45 North American species the places came from.
+
+   **First version (`?pc=rows` in the address): PCA of the class rows**
+   (`pc_bands.py`, `pc_bands.txt`, `birdnet-pc-rows.bin`), the same fit as
+   `pca_axes.py`. The rows and the embedding share the 1,024 dimensions but
+   not their spread (the embedding is non-negative and sits to one side), so
+   the reading's percentile among the BirdSet recordings is matched to the
+   species percentile. The light was on the top class's own band little
+   more often than chance, and without smoothing it jumped by 0.3 to 0.5
+   between readings.
+
+   Reading percentile against its top class's percentile, readings with a
+   class at 0.5 or more (mean gap, shuffled gap, correlation):
+
+   | PC | Class rows | Recordings, held out |
+   |---|---|---|
+   | 1 | 0.51, 0.52, 0.43 | 0.32, 0.48, 0.83 |
+   | 2 | 0.33, 0.35, 0.21 | 0.27, 0.29, 0.23 |
+   | 3 | 0.25, 0.26, 0.06 | 0.36, 0.50, 0.63 |
+   | 4 | 0.38, 0.44, 0.58 | 0.28, 0.37, 0.44 |
+   | 5 | 0.38, 0.39, 0.32 | 0.25, 0.45, 0.71 |
+   | 6 | 0.23, 0.32, 0.61 | 0.24, 0.41, 0.65 |
+   | 7 | 0.45, 0.46, 0.06 | 0.23, 0.33, 0.48 |
+   | 8 | 0.45, 0.46, 0.15 | 0.19, 0.29, 0.55 |
 
 ## Tried and dropped
 
