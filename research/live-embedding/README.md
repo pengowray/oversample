@@ -81,7 +81,20 @@ In the app, the live view and the classifier agreed on the test recordings:
    all eight maps take about 0.5 ms per reading in Chrome, against about
    5 ms for the main map's ECharts update. The reading's percentile is the
    mean of the last 4 readings (about 1 s), so the light does not flicker.
-   - What is lit, chosen with `?pclight=` (default `typical`):
+   - Default look (`regions`): every species is always coloured by its
+     fifth of the component (equal counts; blue `#4a8ee0`, `#2f66b8`, grey
+     `#6a6963`, orange `#b25e18`, `#e8843c` from the low end to the high
+     end), dimmed to 30%. The fifth the reading is in is drawn at full
+     strength; nothing is while the reading is in the middle fifth. The line
+     under each map has the same five colours and a white mark at the
+     reading, so it is the key. Blue against orange survives red-green
+     colour blindness; the two steps within each arm are only 10 to 11 apart
+     on the dataviz check (15 is its target), which the ordered line covers.
+     `?pclight=regions5` adds the 5% band at the reading in white; at this
+     size it scatters over the whole map, so it is off. On the class-row
+     PCA (`?pc=rows`) the fifths form clear regions on PC1 to PC3; on the
+     recording PCA they mostly interleave.
+   - Other looks, chosen with `?pclight=`:
      `typical`: of the third of the species the reading is in, only those
      sitting among others of the same third (their third's share of the
      surrounding grid cells, above 1 in 3) light in dark blue, and the 5%

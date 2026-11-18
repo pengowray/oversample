@@ -291,7 +291,15 @@
   // costs a few drawImage calls per map.
   //
   // What is lit (?pclight=):
-  //   typical (default) see below.
+  //   regions (default) every species is always coloured by its fifth of
+  //           the component (equal counts, blue at the low end, grey in the
+  //           middle, orange at the high end), dimmed. The fifth the reading
+  //           is in lights up at full strength, none while the reading is in
+  //           the middle fifth. The line under each map uses the same
+  //           colours.
+  //   regions5 the same, with the 5% band at the reading in white on top.
+  //   typical the outer third's species that sit among others of the same
+  //           third, faint blue, plus the 5% band in yellow (see below).
   //   two     the third of the species the reading is in, faint,
   //           and the 5% band at the reading, bright on top. The middle
   //           third is not lit: only the ends of an axis say much about a
@@ -305,9 +313,9 @@
   //           third in the surrounding grid cells, above the 1 in 3 chance),
   //           so it shows the regions typical of that end of the axis.
   const query = new URLSearchParams(window.location.search);
-  const PC_LIGHT = ['two', 'outer', 'halves', 'fine', 'typical'].includes(query.get('pclight'))
+  const PC_LIGHT = ['regions', 'regions5', 'two', 'outer', 'halves', 'fine', 'typical'].includes(query.get('pclight'))
     ? query.get('pclight')
-    : 'typical';
+    : 'regions';
   const PC_UMAP = query.get('pcmap') === 'umap';
   // Two-level colours: a dark blue for the third and a light yellow for the
   // 5% band, so they differ in lightness as well as hue.
@@ -317,7 +325,28 @@
   const PC_PER_ROW = 4;
   // Each mode: band layers to build (count, colour) and the middle zone in
   // which the coarse layer is not lit, as a distance from the median.
+  // Five colours from the low end of a component to the high end: blue,
+  // grey in the middle, orange. Blue against orange survives red-green
+  // colour blindness, and the outer fifths are lighter than the inner ones,
+  // so each arm also steps in lightness. The two steps within an arm are
+  // close (checked with the dataviz validator: 10 to 11 apart where 15 is
+  // the target), so the line under each map, in the same order, is the key.
+  const PC_REGION_COLOURS = ['#4a8ee0', '#2f66b8', '#6a6963', '#b25e18', '#e8843c'];
   const PC_MODES = {
+    regions: {
+      regions: PC_REGION_COLOURS,
+      dimAlpha: 0.3,
+      middle: 0.1,
+    },
+    // The same with the 5% band at the reading in white on top. Off by
+    // default: at this size its points scatter over the whole map.
+    regions5: {
+      regions: PC_REGION_COLOURS,
+      dimAlpha: 0.3,
+      fine: [PC_FINE_BANDS, '#ffffff'],
+      fineFall: 0,
+      middle: 0.1,
+    },
     two: { coarse: [3, PC_THIRD], coarseAlpha: 0.75, fine: [PC_FINE_BANDS, PC_FINE], fineFall: 0.02, middle: 1 / 6 },
     outer: { coarse: [3, HIT], coarseAlpha: 1, middle: 1 / 6 },
     halves: { coarse: [2, HIT], coarseAlpha: 1, middle: 0.1 },
@@ -427,7 +456,20 @@
     for (let k = 0; k < n; k++) {
       const m = PC_MODE;
       const coarseGroups = m.coarse && (m.typical ? typicalGroups : groups)(k, m.coarse[0]);
-      const coarse = coarseGroups ? coarseGroups.map((g) => layer(g, m.coarse[1], dot)) : [];
+      let coarse = coarseGroups ? coarseGroups.map((g) => layer(g, m.coarse[1], dot)) : [];
+      // Regions: one dim image of all five fifths, one bright image each.
+      let dim = null;
+      if (m.regions) {
+        const fifths = groups(k, m.regions.length);
+        coarse = fifths.map((g, i) => layer(g, m.regions[i], dot));
+        dim = document.createElement('canvas');
+        dim.width = dim.height = px;
+        const dg = dim.getContext('2d');
+        dg.globalAlpha = m.dimAlpha;
+        // Middle fifth first and the outer fifths last, so where points
+        // overlap the ends of the component show.
+        [2, 1, 3, 0, 4].forEach((i) => coarse[i] && dg.drawImage(coarse[i], 0, 0));
+      }
       const fine = m.fine ? groups(k, m.fine[0]).map((g) => layer(g, m.fine[1], dot)) : [];
       const cell = document.createElement('div');
       cell.className = 'live-emb-pc';
@@ -452,7 +494,7 @@
       line.style.height = '7px';
       cell.append(label, canvas, line);
       div.appendChild(cell);
-      maps.push({ ctx: canvas.getContext('2d'), coarse, fine, line: line.getContext('2d') });
+      maps.push({ ctx: canvas.getContext('2d'), coarse, dim, fine, line: line.getContext('2d') });
     }
     return { width: div.clientWidth, base, maps, px, dpr };
   }
@@ -484,7 +526,12 @@
       m.ctx.globalAlpha = 1;
       m.ctx.clearRect(0, 0, b.px, b.px);
       m.ctx.drawImage(b.base, 0, 0);
-      if (!inMiddle) drawBands(m.ctx, m.coarse, p, 0, mode.coarseAlpha);
+      if (mode.regions) {
+        m.ctx.drawImage(m.dim, 0, 0);
+        const fifth = Math.min(mode.regions.length - 1, Math.floor(p * mode.regions.length));
+        // No fifth lights while the reading is in the middle one.
+        if (fifth !== (mode.regions.length - 1) / 2) m.ctx.drawImage(m.coarse[fifth], 0, 0);
+      } else if (!inMiddle) drawBands(m.ctx, m.coarse, p, 0, mode.coarseAlpha);
       drawBands(m.ctx, m.fine, p, mode.fineFall || 0, 1);
       // The percentile line: a grey rule, a tick at the median, the middle
       // zone (where the coarse layer is not lit) a little lighter, and the
@@ -497,13 +544,22 @@
       g.clearRect(0, 0, w, h);
       g.fillStyle = '#555';
       g.fillRect(0, y - u / 2, w, u);
-      if (mode.middle > 0) {
+      if (mode.regions) {
+        // The line is the key: one segment per fifth, in its colour.
+        const n = mode.regions.length;
+        mode.regions.forEach((c, i) => {
+          g.fillStyle = c;
+          g.fillRect((i * w) / n, y - u, w / n - u, 2 * u);
+        });
+      } else if (mode.middle > 0) {
         g.fillStyle = '#777';
         g.fillRect(w * (0.5 - mode.middle), y - u, w * 2 * mode.middle, 2 * u);
       }
-      g.fillStyle = '#888';
-      g.fillRect(Math.round(w / 2) - u / 2, 0, u, h);
-      g.fillStyle = mode.fine ? mode.fine[1] : inMiddle ? '#bbbbbb' : HIT;
+      if (!mode.regions) {
+        g.fillStyle = '#888';
+        g.fillRect(Math.round(w / 2) - u / 2, 0, u, h);
+      }
+      g.fillStyle = mode.regions ? '#ffffff' : mode.fine ? mode.fine[1] : inMiddle ? '#bbbbbb' : HIT;
       const x = Math.min(w - 2 * u, Math.max(0, p * w - u));
       g.fillRect(x, 0, 2 * u, h);
     });
