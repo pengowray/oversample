@@ -81,7 +81,17 @@ In the app, the live view and the classifier agreed on the test recordings:
    all eight maps take about 0.5 ms per reading in Chrome, against about
    5 ms for the main map's ECharts update. The reading's percentile is the
    mean of the last 4 readings (about 1 s), so the light does not flicker.
-   - Default look (`regions`): every species is always coloured by its
+   - Default look (`areas`): the same five colours, but each point takes
+     the colour of the fifth that is concentrated around it on the map (its
+     share of the surrounding 3 x 3 grid cells, 24 cells a side, furthest
+     above 1 in 5), stronger the further above; points where no fifth stands
+     out (strength under 0.15) are a faint grey. Each map then shows a few
+     coloured areas instead of speckle, and the reading's fifth brightens its
+     areas. On the recording PCA and t-SNE, 36 to 80% of each map stays grey
+     (PC1 47%, PC2 70%, PC3 36%, PC5 56%, PC6 70%, PC7 80%, PC8 72%; PC4
+     places only 45 species): most of each component has no clear area.
+     `?pclight=regions` colours each species by its own fifth instead.
+   - `regions` look: every species is always coloured by its
      fifth of the component (equal counts; blue `#4a8ee0`, `#2f66b8`, grey
      `#6a6963`, orange `#b25e18`, `#e8843c` from the low end to the high
      end), dimmed to 30%. The fifth the reading is in is drawn at full

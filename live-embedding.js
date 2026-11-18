@@ -291,7 +291,10 @@
   // costs a few drawImage calls per map.
   //
   // What is lit (?pclight=):
-  //   regions (default) every species is always coloured by its fifth of
+  //   areas   (default) like regions, but each point takes the colour of the
+  //           fifth concentrated around it on the map, so each map shows a
+  //           few coloured areas; mixed areas stay grey. See PC_MODES.
+  //   regions every species is always coloured by its fifth of
   //           the component (equal counts, blue at the low end, grey in the
   //           middle, orange at the high end), dimmed. The fifth the reading
   //           is in lights up at full strength, none while the reading is in
@@ -313,9 +316,9 @@
   //           third in the surrounding grid cells, above the 1 in 3 chance),
   //           so it shows the regions typical of that end of the axis.
   const query = new URLSearchParams(window.location.search);
-  const PC_LIGHT = ['regions', 'regions5', 'two', 'outer', 'halves', 'fine', 'typical'].includes(query.get('pclight'))
+  const PC_LIGHT = ['regions', 'areas', 'regions5', 'two', 'outer', 'halves', 'fine', 'typical'].includes(query.get('pclight'))
     ? query.get('pclight')
-    : 'regions';
+    : 'areas';
   const PC_UMAP = query.get('pcmap') === 'umap';
   // Two-level colours: a dark blue for the third and a light yellow for the
   // 5% band, so they differ in lightness as well as hue.
@@ -340,6 +343,16 @@
     },
     // The same with the 5% band at the reading in white on top. Off by
     // default: at this size its points scatter over the whole map.
+    // Colour by area: each point takes the colour of the fifth that is
+    // concentrated around it on the map (its share of the surrounding grid
+    // cells furthest above 1 in 5), stronger the further above; points in
+    // mixed areas stay grey.
+    areas: {
+      regions: PC_REGION_COLOURS,
+      areas: true,
+      dimAlpha: 0.3,
+      middle: 0.1,
+    },
     regions5: {
       regions: PC_REGION_COLOURS,
       dimAlpha: 0.3,
@@ -363,6 +376,9 @@
   // Grid for the typical regions: cells per side, and how many cells around
   // a point count as its surroundings (1: a 3 x 3 block).
   const PC_GRID = 24;
+  // Areas look: below this strength (0 at chance, 1 when the surrounding
+  // cells are all one fifth) a point stays grey.
+  const PC_AREA_MIN = 0.15;
   const PC_GRID_REACH = 1;
   const PC_MODE = PC_MODES[PC_LIGHT];
   // What lies at the two ends of each class-row component (pc_bands.txt).
@@ -453,13 +469,71 @@
     };
     div.innerHTML = '';
     const maps = [];
+    // Share of species in mixed areas per component (areas look only).
+    const neutral = [];
     for (let k = 0; k < n; k++) {
       const m = PC_MODE;
       const coarseGroups = m.coarse && (m.typical ? typicalGroups : groups)(k, m.coarse[0]);
       let coarse = coarseGroups ? coarseGroups.map((g) => layer(g, m.coarse[1], dot)) : [];
       // Regions: one dim image of all five fifths, one bright image each.
       let dim = null;
-      if (m.regions) {
+      if (m.areas) {
+        // Dominant fifth around each point, and how far above chance.
+        const n = m.regions.length;
+        const counts = Array.from({ length: n + 1 }, () => new Float32Array(PC_GRID * PC_GRID));
+        const cells = pts.map(cellOf);
+        const bands = pc.ranks[k].map((r) => (!rows && r === 255 ? -1 : bandOf(r, n)));
+        bands.forEach((b, i) => {
+          if (b < 0) return;
+          const [cx, cy] = cells[i];
+          counts[b][cy * PC_GRID + cx] += 1;
+          counts[n][cy * PC_GRID + cx] += 1;
+        });
+        const around = (arr, cx, cy) => {
+          let t = 0;
+          for (let dy = -PC_GRID_REACH; dy <= PC_GRID_REACH; dy++)
+            for (let dx = -PC_GRID_REACH; dx <= PC_GRID_REACH; dx++) {
+              const x = cx + dx;
+              const y = cy + dy;
+              if (x >= 0 && y >= 0 && x < PC_GRID && y < PC_GRID) t += arr[y * PC_GRID + x];
+            }
+          return t;
+        };
+        const chance = 1 / n;
+        const byBand = Array.from({ length: n }, () => []);
+        const grey = [];
+        let placed = 0;
+        bands.forEach((b, i) => {
+          if (b < 0) return;
+          placed++;
+          const [cx, cy] = cells[i];
+          const all = Math.max(1, around(counts[n], cx, cy));
+          let best = 0;
+          let bestShare = -1;
+          for (let j = 0; j < n; j++) {
+            const sh = around(counts[j], cx, cy) / all;
+            if (sh > bestShare) {
+              bestShare = sh;
+              best = j;
+            }
+          }
+          // 0 at chance, 1 when the area is all one fifth.
+          const strength = Math.min(1, (bestShare - chance) / (1 - chance));
+          if (strength < PC_AREA_MIN) grey.push(pts[i]);
+          else byBand[best].push([pts[i][0], pts[i][1], Math.min(1, 0.35 + strength)]);
+        });
+        coarse = byBand.map((g, i) => layer(g, m.regions[i], dot));
+        dim = document.createElement('canvas');
+        dim.width = dim.height = px;
+        const dg = dim.getContext('2d');
+        // Mixed areas: a fainter grey than the middle fifth's colour, so the
+        // two do not read as the same thing.
+        dg.globalAlpha = 0.45;
+        dg.drawImage(layer(grey, '#555555', dot), 0, 0);
+        dg.globalAlpha = m.dimAlpha * 1.5;
+        [2, 1, 3, 0, 4].forEach((i) => dg.drawImage(coarse[i], 0, 0));
+        neutral.push(placed ? grey.length / placed : 1);
+      } else if (m.regions) {
         const fifths = groups(k, m.regions.length);
         coarse = fifths.map((g, i) => layer(g, m.regions[i], dot));
         dim = document.createElement('canvas');
@@ -496,7 +570,7 @@
       div.appendChild(cell);
       maps.push({ ctx: canvas.getContext('2d'), coarse, dim, fine, line: line.getContext('2d') });
     }
-    return { width: div.clientWidth, base, maps, px, dpr };
+    return { width: div.clientWidth, base, maps, px, dpr, neutral };
   }
 
   // Draw band layers lit by distance from the reading `p`: 1 inside the
