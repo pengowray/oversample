@@ -7,7 +7,7 @@
 // `json` is { min, top: [[name, score]...], trail: [[x, y, secondsAgo, score]...],
 //   rows: [name...], strip: [[secondsAgo, row, score]...],
 //   change: [[secondsAgo, distance]...], history }
-// `speciesJson` is [[x, y, name]...] for the map's grey points, or null when
+// `speciesJson` is [[x, y, name, scientific]...] for the map's grey points, or null when
 // it was sent before. `pcJson` comes with it: { variance: [share...],
 // ranks: [[0..255 per point]...], basis: 'recordings' | 'rows',
 // umap: [[x, y]...] or null } for the component maps; `json.pc` then
@@ -209,6 +209,7 @@
         id: 'trail',
         zlevel: 1,
         type: 'scatter',
+        silent: true,
         data: trail.slice(0, -1).map((p) => ({
           value: p,
           itemStyle: {
@@ -223,6 +224,7 @@
         id: 'now',
         zlevel: 1,
         type: 'scatter',
+        silent: true,
         data: last
           ? [
               {
@@ -252,32 +254,229 @@
         { type: 'inside', xAxisIndex: 0, filterMode: 'none' },
         { type: 'inside', yAxisIndex: 0, filterMode: 'none' },
       ],
-      tooltip: {
-        ...TOOLTIP,
-        trigger: 'item',
-        formatter: (p) => {
-          if (p.seriesId === 'species') return esc(p.value[2]);
-          const v = p.value;
-          return `Reading ${ago(v[2])}<br>Highest score ${v[3].toFixed(2)}`;
-        },
-      },
+      // No ECharts tooltip: pointing anywhere lists the nearest species
+      // (mapExplore below), and the trail's points no longer take the hover.
+      tooltip: { show: false },
       series: [
         {
           id: 'species',
           type: 'scatter',
-          data: species,
+          data: species.map((s) => [s[0], s[1]]),
           // Its own canvas layer (zlevel 0), drawn once: the moving marker
           // and trail are on zlevel 1, so an update redraws only them.
           zlevel: 0,
           large: true,
+          silent: true,
           symbolSize: 3,
           itemStyle: { color: 'rgba(170,170,170,0.3)' },
-          emphasis: { scale: 2, itemStyle: { color: INK } },
           z: 1,
         },
         ...mapSeries(d),
       ],
     };
+  }
+
+  // Pointing at the species map. Hovering (mouse) or tapping (touch)
+  // anywhere lists the species nearest that point, nearest first, with the
+  // nearest ringed on the map; a click's or tap's list stays until the next
+  // click, tap or pan.
+  // Names are also written on the map: the few species nearest the current
+  // reading, and every species in view once zoomed in far enough. Lookups use
+  // a grid of the species, built once; the overlay is plain DOM and canvas
+  // over the ECharts map, so the map's own layers are not redrawn for it.
+  const NEAR_PX = 48; // how far from the pointer a species can be listed
+  const NEAR_MAX = 5; // species in the list
+  const NEAR_READING = 3; // species named beside the current reading
+  // Name species in view once zoomed in this far (the share of the whole
+  // map's width in view), nearest the middle of the view first, up to
+  // LABEL_MAX that fit without overlapping.
+  const LABEL_ZOOM = 0.5;
+  const LABEL_MAX = 12; // most names on the map at once
+  const GRID_N = 40;
+
+  function speciesGrid(species) {
+    const cells = Array.from({ length: GRID_N * GRID_N }, () => []);
+    const cell = (v) => Math.min(GRID_N - 1, Math.max(0, Math.floor(((v + 1.05) / 2.1) * GRID_N)));
+    species.forEach((s, i) => cells[cell(s[1]) * GRID_N + cell(s[0])].push(i));
+    return { cells, cell };
+  }
+
+  // Species within `r` (map units) of (x, y), nearest first, at most `max`.
+  function nearestSpecies(el, x, y, r, max) {
+    const sp = el.__species;
+    const g = el.__grid || (el.__grid = speciesGrid(sp));
+    const span = Math.ceil((r / 2.1) * GRID_N);
+    const cx = g.cell(x);
+    const cy = g.cell(y);
+    const found = [];
+    for (let j = Math.max(0, cy - span); j <= Math.min(GRID_N - 1, cy + span); j++)
+      for (let i = Math.max(0, cx - span); i <= Math.min(GRID_N - 1, cx + span); i++)
+        for (const k of g.cells[j * GRID_N + i]) {
+          const d = Math.hypot(sp[k][0] - x, sp[k][1] - y);
+          if (d <= r) found.push([d, k]);
+        }
+    found.sort((a, b) => a[0] - b[0]);
+    return found.slice(0, max).map((f) => f[1]);
+  }
+
+  // Map units per screen pixel at the current zoom.
+  function unitsPerPx(map) {
+    const a = map.convertFromPixel({ gridIndex: 0 }, [0, 0]);
+    const b = map.convertFromPixel({ gridIndex: 0 }, [100, 0]);
+    return Math.abs(b[0] - a[0]) / 100;
+  }
+
+  // Common name, then the scientific name when it differs.
+  function speciesRow(s) {
+    const sci = s[3] && s[3] !== s[2] ? `<span class="live-emb-near-sci">${esc(s[3])}</span>` : '';
+    return `<div class="live-emb-near-row"><span class="live-emb-near-name">${esc(s[2])}</span>${sci}</div>`;
+  }
+
+  function mapExplore(el, map, div) {
+    if (div.__explore) return div.__explore;
+    const mk = (tag, cls) => {
+      const e = document.createElement(tag);
+      e.className = cls;
+      div.appendChild(e);
+      return e;
+    };
+    const labels = mk('canvas', 'live-emb-labels');
+    const ring = mk('div', 'live-emb-near-ring');
+    const box = mk('div', 'live-emb-near');
+    let touch = false;
+    let pinned = false;
+    const hide = () => {
+      box.style.display = ring.style.display = 'none';
+      pinned = false;
+    };
+    const show = (px, py) => {
+      if (!el.__species) return;
+      const [x, y] = map.convertFromPixel({ gridIndex: 0 }, [px, py]);
+      const near = nearestSpecies(el, x, y, NEAR_PX * unitsPerPx(map), NEAR_MAX);
+      if (!near.length) return hide();
+      const sp = el.__species;
+      box.innerHTML = near.map((k) => speciesRow(sp[k])).join('');
+      box.style.display = 'block';
+      // Beside the pointer, kept inside the map; above a finger on touch.
+      const w = div.clientWidth;
+      const h = div.clientHeight;
+      const bw = box.offsetWidth;
+      const bh = box.offsetHeight;
+      let bx = px + 14;
+      if (bx + bw > w) bx = px - 14 - bw;
+      let by = touch ? py - bh - 24 : py + 14;
+      if (by + bh > h) by = py - bh - 14;
+      box.style.left = `${Math.max(0, Math.min(w - bw, bx))}px`;
+      box.style.top = `${Math.max(0, Math.min(h - bh, by))}px`;
+      const [rx, ry] = map.convertToPixel({ gridIndex: 0 }, [sp[near[0]][0], sp[near[0]][1]]);
+      ring.style.display = 'block';
+      ring.style.transform = `translate(${rx}px, ${ry}px)`;
+    };
+    div.addEventListener('pointerdown', (e) => (touch = e.pointerType !== 'mouse'), true);
+    const zr = map.getZr();
+    // A mouse shows the list while it moves over the map. A click or tap
+    // keeps the list for that spot until the next click, tap or pan.
+    zr.on('mousemove', (e) => {
+      if (!touch && !pinned) show(e.offsetX, e.offsetY);
+    });
+    zr.on('globalout', () => {
+      if (!pinned) hide();
+    });
+    // zrender sends click only for a tap or click that did not move, so a
+    // pan or pinch does not open the list.
+    zr.on('click', (e) => {
+      if (pinned) {
+        hide();
+        if (!touch) show(e.offsetX, e.offsetY);
+        return;
+      }
+      show(e.offsetX, e.offsetY);
+      pinned = box.style.display === 'block';
+    });
+    map.on('datazoom', () => {
+      hide();
+      drawLabels(el, map, div);
+    });
+    div.__explore = { labels, hide };
+    return div.__explore;
+  }
+
+  // Names on the map, without overlapping each other or the reading's
+  // marker: first the species nearest the current reading, then, when
+  // zoomed in so few species are in view, the rest of them.
+  function drawLabels(el, map, div) {
+    const ex = div.__explore;
+    if (!ex || !el.__species || !el.__last) return;
+    const c = ex.labels;
+    const dpr = window.devicePixelRatio || 1;
+    const w = div.clientWidth;
+    const h = div.clientHeight;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr);
+      c.height = Math.round(h * dpr);
+      c.style.width = `${w}px`;
+      c.style.height = `${h}px`;
+    }
+    const g = c.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const sp = el.__species;
+    const toPx = (s) => map.convertToPixel({ gridIndex: 0 }, [s[0], s[1]]);
+    const taken = [];
+    const free = (r) =>
+      r.x >= 0 && r.y >= 0 && r.x + r.w <= w && r.y + r.h <= h &&
+      !taken.some((t) => r.x < t.x + t.w && t.x < r.x + r.w && r.y < t.y + t.h && t.y < r.y + r.h);
+    const want = [];
+    const last = el.__last.trail[el.__last.trail.length - 1];
+    if (last) {
+      const [mx, my] = map.convertToPixel({ gridIndex: 0 }, [last[0], last[1]]);
+      taken.push({ x: mx - 12, y: my - 12, w: 24, h: 24 });
+      want.push(...nearestSpecies(el, last[0], last[1], 0.15, NEAR_READING));
+    }
+    const [x0, y1] = map.convertFromPixel({ gridIndex: 0 }, [0, 0]);
+    const [x1, y0] = map.convertFromPixel({ gridIndex: 0 }, [w, h]);
+    if ((x1 - x0) / 2.1 <= LABEL_ZOOM) {
+      const inView = [];
+      for (let i = 0; i < sp.length; i++) {
+        const s = sp[i];
+        if (s[0] >= x0 && s[0] <= x1 && s[1] >= y0 && s[1] <= y1) inView.push(i);
+      }
+      const mx = (x0 + x1) / 2;
+      const my = (y0 + y1) / 2;
+      const d = (i) => Math.hypot(sp[i][0] - mx, sp[i][1] - my);
+      // Only the nearest few are tried, so a dense view costs little.
+      want.push(...inView.sort((a, b) => d(a) - d(b)).slice(0, LABEL_MAX * 4));
+    }
+    g.font = '10px system-ui, sans-serif';
+    g.textBaseline = 'middle';
+    g.lineJoin = 'round';
+    let drawn = 0;
+    const seen = new Set();
+    for (const k of want) {
+      if (drawn >= LABEL_MAX || seen.has(k)) continue;
+      seen.add(k);
+      const [px, py] = toPx(sp[k]);
+      const text = sp[k][2];
+      const tw = g.measureText(text).width;
+      const th = 12;
+      // Beside the point, or further out when the reading's marker covers it
+      // (the species nearest the reading are usually under the marker).
+      const tries = [5, 14].flatMap((o) => [
+        { x: px + o, y: py - th / 2 },
+        { x: px - o - tw, y: py - th / 2 },
+        { x: px - tw / 2, y: py - o - th },
+        { x: px - tw / 2, y: py + o },
+      ]);
+      const spot = tries.map((t) => ({ ...t, w: tw, h: th })).find(free);
+      if (!spot) continue;
+      taken.push(spot);
+      g.strokeStyle = 'rgba(0,0,0,0.85)';
+      g.lineWidth = 3;
+      g.strokeText(text, spot.x, spot.y + th / 2);
+      g.fillStyle = INK;
+      g.fillText(text, spot.x, spot.y + th / 2);
+      drawn++;
+    }
   }
 
   // Component maps: small copies of the species map, one per principal
@@ -708,10 +907,14 @@
       if (!map.__ready && el.__species) {
         map.setOption(mapOptions(el.__species, d));
         map.__ready = true;
+        mapExplore(el, map, p.map);
       } else if (map.__ready) {
         map.setOption({ series: mapSeries(d) });
       }
       el.__ms = performance.now() - t0;
+      const tl = performance.now();
+      if (map.__ready) drawLabels(el, map, p.map);
+      el.__labelMs = performance.now() - tl;
       const t1 = performance.now();
       pcDraw(el, d);
       el.__pcMs = performance.now() - t1;

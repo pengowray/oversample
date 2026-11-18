@@ -902,7 +902,11 @@ fn draw(state: AppState) {
             .iter()
             .map(|&i| {
                 let (x, y) = m[i].expect("kept");
-                (round3(x), round3(y), name(i))
+                let sci = labels
+                    .as_ref()
+                    .and_then(|l| l.get(i))
+                    .map_or_else(String::new, |l| l.scientific.clone());
+                (round3(x), round3(y), name(i), sci)
             })
             .collect();
         // Each component's ranks, in the same order as the points.

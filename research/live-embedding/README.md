@@ -73,6 +73,15 @@ In the app, the live view and the classifier agreed on the test recordings:
    draws across the gap between unrelated groups. At sidebar size the map
    shows which part of the bird world the sound is in and whether it is
    moving; the name comes from the text above it.
+   Pointing anywhere on the map (hover with a mouse, or tap) lists the 5
+   species nearest that point, nearest first, with the nearest ringed; a
+   click or tap keeps the list until the next click, tap or pan. The 3
+   species nearest the reading are named beside the marker, and once
+   zoomed in to half the map's width or less, up to 12 species nearest the
+   middle of the view are named too, without overlapping. The trail's
+   "Reading N s ago" tooltip was dropped: the readout above already names
+   the reading's species. Names and lookups are a canvas and DOM layer over
+   the chart, about 0.5 to 1 ms per reading.
 
 5. **Component maps (prototype)**: eight small copies of the species map, four
    to a row, one per principal component, under the main map. Under each, a
