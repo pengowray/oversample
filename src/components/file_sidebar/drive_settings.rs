@@ -73,7 +73,14 @@ fn problem_text(p: DriveProblem) -> String {
     }
 }
 
-/// The one-line state of the Drive copy while signed in.
+/// What the Drive copies are of. It labels the state, so the state alone
+/// ("Saved") is not read as recordings being saved to Drive.
+const COPIES_LABEL: &str = "Annotations and projects";
+/// Recordings are not saved to Drive yet: the row is shown disabled.
+const RECORDINGS_LABEL: &str = "Recordings";
+const NOT_YET: &str = "Not available yet";
+
+/// The state of the Drive copies while signed in, shown beside COPIES_LABEL.
 fn status_text(uploading: bool, waiting: usize) -> String {
     if uploading {
         "Saving\u{2026}".to_string()
@@ -82,7 +89,7 @@ fn status_text(uploading: bool, waiting: usize) -> String {
     } else if waiting > 1 {
         format!("{waiting} files waiting to upload")
     } else {
-        "Saved to Google Drive".to_string()
+        "Saved".to_string()
     }
 }
 
@@ -156,12 +163,27 @@ pub(super) fn DriveSettings() -> impl IntoView {
                 }.into_any(),
                 None => view! {
                     <div class="setting-row">
-                        <span class="drive-status">
+                        <span class="setting-label">{COPIES_LABEL}</span>
+                        <span class="drive-status drive-copies-status">
                             {move || status_text(
                                 state.drive.uploading().get(),
                                 state.drive.waiting().get(),
                             )}
                         </span>
+                    </div>
+                    <div class="setting-row">
+                        <span class="setting-label">{RECORDINGS_LABEL}</span>
+                        // One line: the narrow sidebar would break the note into three.
+                        <span class="drive-status" style="white-space: nowrap; margin-left: auto;">{NOT_YET}</span>
+                        <input
+                            type="checkbox"
+                            class="setting-checkbox"
+                            disabled=true
+                            aria-label="Save recordings to Google Drive"
+                        />
+                    </div>
+                    <div class="setting-row">
+                        <span></span>
                         <button
                             class="setting-button drive-button"
                             on:click=move |_| sync::sign_out(state)
@@ -173,7 +195,7 @@ pub(super) fn DriveSettings() -> impl IntoView {
     };
 
     // The account gets a line of its own so a full address fits the narrow
-    // sidebar; the state line sits beside Sign out.
+    // sidebar. Under it, one row per kind of file with its state, then Sign out.
     let signed_in = move || {
         view! {
             <div class="setting-row">

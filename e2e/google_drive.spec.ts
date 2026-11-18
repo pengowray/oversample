@@ -176,7 +176,7 @@ test.describe("Google Drive copies", () => {
     await page.goto("/");
     await openSettings(page);
     await expect(page.locator(".drive-account")).toHaveText(EMAIL);
-    await expect(page.locator(".drive-status")).toHaveText("Saved to Google Drive");
+    await expect(page.locator(".drive-copies-status")).toHaveText("Saved");
 
     const name = "drive-upload.wav";
     await open(page, name, noiseWav(96_000, 8, 1111));
@@ -203,7 +203,7 @@ test.describe("Google Drive copies", () => {
     await page.waitForTimeout(7_000);
     expect(drive.uploads.length).toBe(1);
     await openSettings(page);
-    await expect(page.locator(".drive-status")).toHaveText("Saved to Google Drive");
+    await expect(page.locator(".drive-copies-status")).toHaveText("Saved");
   });
 
   test("a Drive copy of a file with no local copy is used, and no set without its regions is uploaded", async ({ page }) => {
@@ -544,7 +544,7 @@ test.describe("Google Drive copies", () => {
     drive.failUploads = false;
     await page.getByRole("button", { name: "Retry" }).click();
     await expect.poll(() => drive.uploads.length, { timeout: 20_000 }).toBe(1);
-    await expect(page.locator(".drive-status")).toHaveText("Saved to Google Drive");
+    await expect(page.locator(".drive-copies-status")).toHaveText("Saved");
   });
 
   // ── Where the open file's annotations are saved ──────────────────────────

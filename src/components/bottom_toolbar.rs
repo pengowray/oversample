@@ -1040,6 +1040,13 @@ pub fn BottomToolbar() -> impl IntoView {
                         state.playback.record_mode().set(RecordMode::ToMemory);
                     }
                 >"To memory"</button>
+                // Recordings are not saved to Google Drive yet (same option as
+                // "Save recordings" in the Google Drive settings group).
+                {move || state.drive.available().get().then(|| view! {
+                    <button class="layer-panel-opt disabled" disabled=true>
+                        "To Google Drive (not available yet)"
+                    </button>
+                })}
                 <button class=move || layer_opt_class(state.playback.record_mode().get() == RecordMode::ListenOnly)
                     on:click=move |_| {
                         // If currently recording, finish and switch to listening
