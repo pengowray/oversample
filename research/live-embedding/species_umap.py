@@ -108,6 +108,10 @@ def main():
                     best, best_score = lname, mean
     print(f"\nchosen: {best}")
     xy = layouts[best]
+    # Centre the layout and scale it so its longer side runs from -1 to 1:
+    # the map then fills the view, as the t-SNE layout does.
+    lo, hi = xy.min(0), xy.max(0)
+    xy = (xy - (lo + hi) / 2) / ((hi - lo).max() / 2)
     np.round(xy * 32767).astype("<i2").tofile(out_path)
     print(f"wrote {out_path}")
 

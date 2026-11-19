@@ -52,6 +52,18 @@ pub(super) fn LiveView() -> impl IntoView {
         }
     });
 
+    // "Find recordings" beside a species in the map's list: live-embedding.js
+    // sends the species' scientific name in an `oversample-find-species` event.
+    let on_find = window_event_listener(
+        leptos::ev::Custom::<web_sys::CustomEvent>::new("oversample-find-species"),
+        move |ev| {
+            if let Some(name) = ev.detail().as_string() {
+                crate::components::find_recordings::open_with_search(state, &name);
+            }
+        },
+    );
+    on_cleanup(move || on_find.remove());
+
     let sound_on = move || {
         state.playback.is_playing().get()
             || state.mic.listening().get()

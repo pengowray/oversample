@@ -196,6 +196,19 @@ thread_local! {
     static MEMORY: RefCell<Option<Memory>> = const { RefCell::new(None) };
 }
 
+thread_local! {
+    /// Search text for the next time the dialog opens, set by [`open_with_search`].
+    static NEXT_QUERY: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Open the dialog with `text` in the search box, keeping the other choices.
+pub fn open_with_search(state: AppState, text: &str) {
+    NEXT_QUERY.with(|q| *q.borrow_mut() = Some(text.to_string()));
+    // Closed first, so a dialog that is already open is built again with the text.
+    state.dialogs.find_recordings_open().set(false);
+    state.dialogs.find_recordings_open().set(true);
+}
+
 /// A pasted link that loads one recording directly.
 #[derive(Clone, Debug, PartialEq)]
 enum Link {
@@ -602,7 +615,10 @@ pub fn FindRecordings() -> impl IntoView {
     let state = expect_context::<AppState>();
     let memory = MEMORY.with(|m| m.borrow().clone());
 
-    let query = RwSignal::new(memory.as_ref().map(|m| m.query.clone()).unwrap_or_default());
+    let next_query = NEXT_QUERY.with(|q| q.borrow_mut().take());
+    let query = RwSignal::new(
+        next_query.unwrap_or_else(|| memory.as_ref().map(|m| m.query.clone()).unwrap_or_default()),
+    );
     let group = RwSignal::new(memory.as_ref().and_then(|m| m.group.clone()));
     let country = RwSignal::new(memory.as_ref().and_then(|m| m.country.clone()));
     let near_mode = RwSignal::new(

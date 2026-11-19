@@ -84,65 +84,77 @@ In the app, the live view and the classifier agreed on the test recordings:
    the chart, about 0.5 to 1 ms per reading.
 
 5. **Component maps (prototype)**: eight small copies of the species map, four
-   to a row, one per principal component, under the main map. Under each, a
-   thin line shows the reading's percentile on that component (the tick is
-   the median). Each band of species is pre-drawn to an offscreen canvas:
-   all eight maps take about 0.5 ms per reading in Chrome, against about
-   5 ms for the main map's ECharts update. The reading's percentile is the
-   mean of the last 4 readings (about 1 s), so the light does not flicker.
-   - Default look (`areas`): the same five colours, but each point takes
-     the colour of the fifth that is concentrated around it on the map (its
-     share of the surrounding 3 x 3 grid cells, 24 cells a side, furthest
-     above 1 in 5), stronger the further above; points where no fifth stands
-     out (strength under 0.15) are a faint grey. Each map then shows a few
-     coloured areas instead of speckle, and the reading's fifth brightens its
-     areas. On the recording PCA and t-SNE, 36 to 80% of each map stays grey
-     (PC1 47%, PC2 70%, PC3 36%, PC5 56%, PC6 70%, PC7 80%, PC8 72%; PC4
-     places only 45 species): most of each component has no clear area.
-     `?pclight=regions` colours each species by its own fifth instead.
-   - `regions` look: every species is always coloured by its
-     fifth of the component (equal counts; blue `#4a8ee0`, `#2f66b8`, grey
-     `#6a6963`, orange `#b25e18`, `#e8843c` from the low end to the high
-     end), dimmed to 30%. The fifth the reading is in is drawn at full
-     strength; nothing is while the reading is in the middle fifth. The line
-     under each map has the same five colours and a white mark at the
-     reading, so it is the key. Blue against orange survives red-green
-     colour blindness; the two steps within each arm are only 10 to 11 apart
-     on the dataviz check (15 is its target), which the ordered line covers.
-     `?pclight=regions5` adds the 5% band at the reading in white; at this
-     size it scatters over the whole map, so it is off. On the class-row
-     PCA (`?pc=rows`) the fifths form clear regions on PC1 to PC3; on the
-     recording PCA they mostly interleave.
-   - Other looks, chosen with `?pclight=`:
-     `typical`: of the third of the species the reading is in, only those
-     sitting among others of the same third (their third's share of the
-     surrounding grid cells, above 1 in 3) light in dark blue, and the 5%
-     band at the reading lights in light yellow on top. The middle third is
-     never lit (only the ends of an axis say much about a sound), but the 5%
-     band still shows. `two`: the same without the "typical" filter.
-     `outer`: only the outer thirds, in green. `halves`: the half below or
-     above the median, nothing between the 40th and 60th percentiles.
-     `fine`: 5% bands with a 10% fade. The two colours differ in lightness as
-     well as hue.
-   - `?pcmap=umap` draws the small maps on a UMAP layout of the class rows
-     (`species_umap.py`, `birdnet-umap.bin`) instead of the main map's
-     t-SNE. UMAP of 6,522 class rows (cosine) takes 12 s with 50 neighbours
-     and 34 to 41 s with 15 (the first run includes compiling), so it has to
-     be precomputed.
+   to a row, one per principal component, under the main map.
+   - Layout: the main map and the small maps share one layout, UMAP of the
+     class rows (`species_umap.py`, `birdnet-umap.bin`) by default or the
+     t-SNE of `research/species-map`, chosen with the Layout buttons above
+     the map and saved on the device (`?pcmap=tsne` or `?pcmap=umap` sets it
+     for one visit). UMAP of 6,522 class rows (cosine) takes 12 s with 50
+     neighbours and 34 to 41 s with 15, so it is precomputed. The marker is
+     placed on each layout by the same rule; on UMAP the radius is 0.11 map
+     units instead of 0.15, because species sit closer there (10th nearest
+     neighbour at 0.023 against 0.031). The UMAP file is centred and scaled
+     so its longer side fills the map.
    - Compactness (`species_umap.txt`): the share of each species' 10 nearest
      neighbours on the layout that are in the same half on a component
      (0.5 is chance). Class-row PCA: t-SNE 0.77, UMAP 0.71 to 0.74.
-     Recording PCA: t-SNE 0.56, UMAP 0.52 to 0.54. t-SNE is the more compact
-     layout for every basis and setting, so it stays the default.
-   - How often the heard species is lit against a random species, with the
-     earlier two-band default (reference readings, not held out): 2 bands
-     with a middle zone 0.44 to 0.76 against 0.33 to 0.43; 20 bands 0.10 to
-     0.36 against 0.14 to 0.15.
-   - Even the 5% band scatters over the whole small map with the recording
-     PCA: on a map of species, its bands are not regions. Only PC1 and PC3
-     show a clear area.
+     Recording PCA: t-SNE 0.56, UMAP 0.52 to 0.54. The two layouts are about
+     as compact as each other; the class-row components are far more compact
+     than the recording ones on both.
+   - Components: PCA of BirdNET's class rows (the species' own vectors) by
+     default, since the maps show where a reading is among the species, and
+     those components form compact areas. `?pc=rec` uses the PCA of
+     recordings' embeddings instead, which follows a recording's sound
+     better (table below) but scatters over the map.
+   - Colours: the species are split into five equal fifths per component
+     (blue `#4a8ee0`, `#2f66b8`, grey `#6a6963`, orange `#b25e18`, `#e8843c`
+     from the low end to the high end). Zoomed out, each species takes the
+     colour of the fifth that is concentrated around it on the map (its
+     share of the species in the surrounding 3 x 3 grid cells, 24 cells a
+     side, furthest above 1 in 5), stronger the further above; species where
+     no fifth stands out (strength under 0.15) are a faint grey. Zoomed in
+     (from 60% of the map's width in view down to 30%), the colours fade to
+     each species' own fifth, which is speckled. Blue against orange
+     survives red-green colour blindness; the two steps within each arm are
+     only 10 to 11 apart on the dataviz check (15 is its target), which the
+     ordered key beside each graph covers.
+   - The small maps show the same part of the map as the main one, so they
+     zoom and pan with it. Pressing one colours the main map by that
+     component (a key appears in the map's corner); pressing it again
+     removes the colours. For this the main map's species are drawn on a
+     canvas under the ECharts layers, which now hold only the marker and
+     trail.
+   - The reading on a small map is a dot at the marker's place, in the colour
+     of the nearest species' own fifth, which can differ from the colour of
+     the area around it.
+   - Under each small map, a graph of the reading's percentile on that
+     component over the last 20 s, newest on the right like the strip, each
+     stretch in the colour of the fifth it is in, with the five colours as a
+     key at the right edge and a white mark at the newest value. The
+     percentile is the mean of the last 4 readings (about 1 s). This replaced
+     lighting up the reading's fifth on the map, which could not be told
+     from the rest without watching for the change.
+   - Beside each name, a small pie shows the component's share of the
+     variation (1.8% for PC1 of the class rows, so a thin slice; 21% for PC1
+     of the recordings).
+   - Pointing at a small map says what the colour there stands for: the
+     share of the species around the pointer that are in the area's fifth.
+     Pointing at a graph gives the percentile and time of that reading.
+   - Cost: a reading redraws eight map copies and graphs in about 0.1 ms; a
+     zoom or pan redraws all species once per frame.
+   - Removed: the `?pclight=` looks (regions, regions5, two, outer, halves,
+     fine, typical). Zooming in now gives the `regions` look.
 
-   **Second version (shown by default): PCA of recordings' embeddings**
+6. **Full screen**: the button above the map fills the window with the view
+   (the map as large as the window's height allows), and the screen where
+   the browser allows it. Escape or the same button leaves it.
+
+7. **Species list**: a click or tap on the map keeps the list of nearest
+   species. A kept list has a Close button and, beside each species, a
+   button that opens Find recordings with that species' scientific name. It
+   also closes on Escape, on a press outside it, and on a pan.
+
+   **Second version (`?pc=rec` in the address): PCA of recordings' embeddings**
    (`pc_rec.py`, output and checks in `pc_rec.txt`, data `birdnet-pc.bin`).
    - Fitted, centred, on about 50,000 BirdNET embeddings of BirdSet's HSN and
      POW test sets (both North American; no other set is on this machine).
@@ -165,7 +177,7 @@ In the app, the live view and the classifier agreed on the test recordings:
      the table below. It is much better than the first version, but it tests
      the same 45 North American species the places came from.
 
-   **First version (`?pc=rows` in the address): PCA of the class rows**
+   **First version (shown by default): PCA of the class rows**
    (`pc_bands.py`, `pc_bands.txt`, `birdnet-pc-rows.bin`), the same fit as
    `pca_axes.py`. The rows and the embedding share the 1,024 dimensions but
    not their spread (the embedding is non-negative and sits to one side), so

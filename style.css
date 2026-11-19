@@ -9858,6 +9858,40 @@ button.canvas-overflow-action-btn.disabled {
     /* 12px from each edge on a phone: the anchor is 12px from the left. */
     width: min(400px, calc(100vw - 24px));
     white-space: normal;
+    /* The card opens while sound is playing and was easy to miss (owner,
+       2026-11-19): a blue border, and two pulses of a blue ring as it opens,
+       then it stays still. Only box-shadow moves: PopupPanel measures the
+       panel's box to place it. */
+    border-color: #4a5fa0;
+    animation: hfr-nudge-ring 0.9s ease-out 0.15s 2;
+}
+.hfr-nudge-body {
+    animation: hfr-nudge-fade 0.2s ease-out;
+}
+@keyframes hfr-nudge-ring {
+    0% { box-shadow: 0 4px 24px rgba(0, 0, 0, 0.7), 0 0 0 0 rgba(127, 156, 245, 0.85); }
+    100% { box-shadow: 0 4px 24px rgba(0, 0, 0, 0.7), 0 0 0 16px rgba(127, 156, 245, 0); }
+}
+@keyframes hfr-nudge-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+/* While the card says "press the HFR button", that button pulses twice.
+   Inset, because the Hear bar scrolls sideways on phones and would clip an
+   outer ring. */
+body.hfr-nudge-on .band-cell-hfr {
+    animation: hfr-nudge-cell 0.9s ease-out 2;
+}
+@keyframes hfr-nudge-cell {
+    0% { box-shadow: inset 0 0 0 3px rgba(127, 156, 245, 0.95); }
+    100% { box-shadow: inset 0 0 0 3px rgba(127, 156, 245, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .layer-panel.hfr-nudge,
+    .hfr-nudge-body,
+    body.hfr-nudge-on .band-cell-hfr {
+        animation: none;
+    }
 }
 .hfr-nudge-text {
     margin: 0 28px 10px 0;
@@ -10046,6 +10080,35 @@ button.canvas-overflow-action-btn.disabled {
 .live-emb-strip {
     width: 100%;
 }
+/* Above the map: the layout choice (the app's segmented buttons,
+   .peak-src-btn) and Full screen. */
+.live-emb-tools {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin: 4px 0;
+}
+.live-emb-seg {
+    display: flex;
+    align-items: center;
+}
+.live-emb-tools button {
+    white-space: nowrap;
+}
+.live-emb-full-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    border: 1px solid #444;
+    border-radius: 3px;
+    background: #1a1a1a;
+    color: #999;
+    cursor: pointer;
+}
+.live-emb-full-btn:hover {
+    background: #252525;
+    color: #ddd;
+}
 /* Square, so the map is not stretched. */
 .live-emb-map {
     width: 100%;
@@ -10054,15 +10117,26 @@ button.canvas-overflow-action-btn.disabled {
     border: 1px solid #2c2c2c;
     border-radius: 3px;
 }
-/* Overlays on the species map: names, the ring on the nearest species and
-   the list of species near the pointer. None of them take the pointer, so
-   panning and zooming the map still work through them. */
+/* Overlays on the species map: names, the ring on the nearest species, the
+   list of species near the pointer and the colour key. They do not take the
+   pointer, so panning and zooming the map still work through them. A kept
+   list (.kept) does take it, for its Close and find-recordings buttons. */
 .live-emb-map {
     position: relative;
 }
+/* The species, on a canvas under the chart's own layers. */
+.live-emb-species {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
 .live-emb-labels,
 .live-emb-near-ring,
-.live-emb-near {
+.live-emb-near,
+.live-emb-key {
     position: absolute;
     left: 0;
     top: 0;
@@ -10089,6 +10163,24 @@ button.canvas-overflow-action-btn.disabled {
     line-height: 1.3;
     color: #ddd;
 }
+.live-emb-near.kept {
+    pointer-events: auto;
+}
+.live-emb-near-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 2px;
+    font-size: 11px;
+    color: #9a9a9a;
+}
+.live-emb-near-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
 .live-emb-near-row + .live-emb-near-row {
     margin-top: 3px;
 }
@@ -10101,27 +10193,163 @@ button.canvas-overflow-action-btn.disabled {
     font-style: italic;
     color: #9a9a9a;
 }
+/* 28 px square: large enough to press with a finger. */
+.live-emb-near-close,
+.live-emb-near-find {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: #bbb;
+    cursor: pointer;
+}
+.live-emb-near-close {
+    margin-right: -5px;
+    font-size: 16px;
+    line-height: 1;
+}
+.live-emb-near-close:hover,
+.live-emb-near-find:hover {
+    background: #3a3a3a;
+    color: #fff;
+}
+/* Colour key on the large map while a component colours it. */
+.live-emb-key {
+    display: none;
+    left: 4px;
+    top: auto;
+    bottom: 4px;
+    align-items: center;
+    gap: 3px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(26, 26, 26, 0.85);
+    font-size: 10px;
+    color: #bbb;
+}
+.live-emb-key span:first-child {
+    margin-right: 3px;
+    color: #ddd;
+}
+.live-emb-key i {
+    width: 9px;
+    height: 9px;
+}
 
-/* Component maps under the species map: four to a row. */
+/* Component maps under the species map: four to a row. Each is a button
+   that colours the large map; the selected one has a light border. */
 .live-emb-pcs {
+    position: relative;
     width: 100%;
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 4px;
+    margin-top: 4px;
+}
+.live-emb-pc {
+    display: block;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
 }
 .live-emb-pc canvas {
     display: block;
 }
-.live-emb-pc canvas:not(.live-emb-pc-line) {
+.live-emb-pc-map {
     border: 1px solid #2c2c2c;
     border-radius: 3px;
 }
+.live-emb-pc:hover .live-emb-pc-map {
+    border-color: #555;
+}
+.live-emb-pc.selected .live-emb-pc-map {
+    border-color: #ddd;
+}
+.live-emb-pc.selected .live-emb-pc-label {
+    color: #ddd;
+}
+.live-emb-pc-graph {
+    margin-top: 2px;
+}
 .live-emb-pc-label {
+    display: flex;
+    align-items: center;
+    gap: 3px;
     font-size: 9px;
     overflow: hidden;
     color: #9a9a9a;
-    font-variant-numeric: tabular-nums;
     white-space: nowrap;
+}
+.live-emb-pie {
+    flex: none;
+}
+.live-emb-pc-tip {
+    max-width: 100%;
+    font-size: 11px;
+}
+.live-emb-tip-line {
+    margin-top: 2px;
+}
+.live-emb-swatch {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 4px;
+}
+
+/* Full screen: the view fills the window, the map on the right as large as
+   the window's height allows, the text, strip and component maps in a
+   column on the left. z-index 900: above the sidebars (200), below the
+   dialogs (1000). */
+.live-emb-chart.live-emb-full {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    box-sizing: border-box;
+    padding: 12px 16px;
+    overflow: auto;
+    background: #1a1a1a;
+    display: grid;
+    grid-template-columns: minmax(240px, 440px) 1fr;
+    grid-template-rows: auto auto 1fr;
+    grid-template-areas:
+        "readout tools"
+        "strip map"
+        "pcs map";
+    gap: 6px 16px;
+    align-content: start;
+}
+.live-emb-full .live-emb-readout { grid-area: readout; }
+.live-emb-full .live-emb-strip { grid-area: strip; }
+.live-emb-full .live-emb-tools { grid-area: tools; align-self: end; }
+.live-emb-full .live-emb-pcs { grid-area: pcs; align-self: start; }
+.live-emb-full .live-emb-map {
+    grid-area: map;
+    justify-self: center;
+    width: min(100%, calc(100vh - 90px));
+    max-height: none;
+}
+/* Narrow windows (phones): one column, the map first. */
+@media (max-width: 700px) {
+    .live-emb-chart.live-emb-full {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: none;
+        grid-template-areas: "tools" "map" "readout" "strip" "pcs";
+    }
+    .live-emb-full .live-emb-map {
+        width: 100%;
+    }
 }
 
 /* Live explorer tab (experimental). */

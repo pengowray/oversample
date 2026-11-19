@@ -4,14 +4,15 @@
 // Called from src/live_embedding.rs:
 //   oversampleLiveEmbedding.update(el, json, speciesJson)
 //   oversampleLiveEmbedding.dispose(el)
-// `json` is { min, top: [[name, score]...], trail: [[x, y, secondsAgo, score]...],
+// `json` is { min, top: [[name, score]...],
+//   trail: [[x, y, secondsAgo, score, umapX, umapY]...] (x, y on the t-SNE layout),
 //   rows: [name...], strip: [[secondsAgo, row, score]...],
-//   change: [[secondsAgo, distance]...], history }
-// `speciesJson` is [[x, y, name, scientific]...] for the map's grey points, or null when
-// it was sent before. `pcJson` comes with it: { variance: [share...],
-// ranks: [[0..255 per point]...], basis: 'recordings' | 'rows',
-// umap: [[x, y]...] or null } for the component maps; `json.pc` then
-// holds the reading's percentile (0 to 1) on each component.
+//   change: [[secondsAgo, distance]...], history,
+//   pcHist: [[secondsAgo, percentile on PC1, on PC2, ...]...] (0 to 1) }
+// `speciesJson` is [[x, y, name, scientific]...] for the map's species (t-SNE
+// places), or null when it was sent before. `pcJson` comes with it:
+// { variance: [share...], ranks: [[0..255 per species]...],
+// basis: 'rows' | 'recordings', umap: [[x, y]...] or null (UMAP places) }.
 (function () {
   let loading = null;
   function loadEcharts() {
@@ -39,9 +40,6 @@
   const MUTED = '#9a9a9a';
   const GRID = '#333333';
   const HIT = '#50dc96';
-  // Jumps longer than this on the map are not joined by the trail line, so it
-  // never crosses the gap between unrelated groups (same radius as placement).
-  const JUMP = 0.15;
   const TOOLTIP = {
     confine: true,
     backgroundColor: '#262626',
@@ -182,21 +180,59 @@
     };
   }
 
-  function mapSeries(d) {
-    const trail = d.trail;
+
+  // ── Layout ────────────────────────────────────────────────────────────
+  // The species are drawn at their UMAP places (species_umap.py) or their
+  // t-SNE places (research/species-map). The choice is saved on this device.
+  // `?pcmap=tsne` or `?pcmap=umap` in the address sets it for one visit.
+  const query = new URLSearchParams(window.location.search);
+  const LAYOUT_KEY = 'oversample.liveMap.layout';
+  const LAYOUTS = [
+    ['umap', 'UMAP'],
+    ['tsne', 't-SNE'],
+  ];
+  let layout = 'umap';
+  try {
+    const saved = query.get('pcmap') || window.localStorage.getItem(LAYOUT_KEY);
+    if (saved === 'tsne' || saved === 'umap') layout = saved;
+  } catch (_) {
+    // Storage is blocked: the default layout is used.
+  }
+  const isUmap = (el) => layout === 'umap' && !!(el.__pc && el.__pc.umap);
+  // Jumps longer than this on the map are not joined by the trail line, so
+  // it never crosses the gap between unrelated groups (the same radius as
+  // placement: species sit closer together on the UMAP layout).
+  const jump = (el) => (isUmap(el) ? 0.11 : 0.15);
+
+  // The species' places on the active layout: [[x, y]...].
+  function points(el) {
+    const name = isUmap(el) ? 'umap' : 'tsne';
+    if (!el.__pts || el.__pts.name !== name) {
+      el.__pts = { name, pts: name === 'umap' ? el.__pc.umap : el.__species };
+      el.__grid = null;
+      el.__colours = null;
+    }
+    return el.__pts.pts;
+  }
+
+  // The trail on the active layout: [[x, y, secondsAgo, score]...].
+  const trailOf = (el, d) => (isUmap(el) ? d.trail.map((p) => [p[4], p[5], p[2], p[3]]) : d.trail);
+
+  function mapSeries(el, d) {
+    const trail = trailOf(el, d);
     const last = trail[trail.length - 1];
     const hit = last && last[3] >= d.min;
+    const far = jump(el);
     // The line joins readings that are close on the map; a null breaks it.
     const line = [];
     trail.forEach((p, i) => {
       const q = trail[i - 1];
-      if (q && Math.hypot(p[0] - q[0], p[1] - q[1]) > JUMP) line.push(null);
+      if (q && Math.hypot(p[0] - q[0], p[1] - q[1]) > far) line.push(null);
       line.push(p);
     });
     return [
       {
         id: 'trailLine',
-        zlevel: 1,
         type: 'line',
         data: line.map((p) => (p ? [p[0], p[1]] : [null, null])),
         connectNulls: false,
@@ -207,7 +243,6 @@
       },
       {
         id: 'trail',
-        zlevel: 1,
         type: 'scatter',
         silent: true,
         data: trail.slice(0, -1).map((p) => ({
@@ -222,7 +257,6 @@
       },
       {
         id: 'now',
-        zlevel: 1,
         type: 'scatter',
         silent: true,
         data: last
@@ -243,47 +277,37 @@
     ];
   }
 
-  function mapOptions(species, d) {
+  // ECharts draws only the moving marker and trail, and handles zoom and
+  // pan. The species are drawn on a canvas under it (drawSpecies), so they
+  // can be coloured by a component and are redrawn only when the view moves.
+  function mapOptions(el, d) {
     return {
       animation: false,
       backgroundColor: 'transparent',
       grid: { left: 2, right: 2, top: 2, bottom: 2 },
-      xAxis: { type: 'value', show: false, min: -1.05, max: 1.05 },
-      yAxis: { type: 'value', show: false, min: -1.05, max: 1.05 },
+      xAxis: { type: 'value', show: false, min: -FULL, max: FULL },
+      yAxis: { type: 'value', show: false, min: -FULL, max: FULL },
       dataZoom: [
         { type: 'inside', xAxisIndex: 0, filterMode: 'none' },
         { type: 'inside', yAxisIndex: 0, filterMode: 'none' },
       ],
       // No ECharts tooltip: pointing anywhere lists the nearest species
-      // (mapExplore below), and the trail's points no longer take the hover.
+      // (mapExplore below).
       tooltip: { show: false },
-      series: [
-        {
-          id: 'species',
-          type: 'scatter',
-          data: species.map((s) => [s[0], s[1]]),
-          // Its own canvas layer (zlevel 0), drawn once: the moving marker
-          // and trail are on zlevel 1, so an update redraws only them.
-          zlevel: 0,
-          large: true,
-          silent: true,
-          symbolSize: 3,
-          itemStyle: { color: 'rgba(170,170,170,0.3)' },
-          z: 1,
-        },
-        ...mapSeries(d),
-      ],
+      series: mapSeries(el, d),
     };
   }
 
   // Pointing at the species map. Hovering (mouse) or tapping (touch)
   // anywhere lists the species nearest that point, nearest first, with the
-  // nearest ringed on the map; a click's or tap's list stays until the next
-  // click, tap or pan.
+  // nearest ringed on the map. A click or tap keeps the list. A kept list
+  // has a Close button and a "find recordings" button beside each species,
+  // and closes on Escape, on a press anywhere outside it, and on a pan.
   // Names are also written on the map: the few species nearest the current
   // reading, and every species in view once zoomed in far enough. Lookups use
-  // a grid of the species, built once; the overlay is plain DOM and canvas
-  // over the ECharts map, so the map's own layers are not redrawn for it.
+  // a grid of the species, built once per layout; the overlay is plain DOM
+  // and canvas over the ECharts map.
+  const FULL = 1.05; // the map runs from -FULL to FULL on both axes
   const NEAR_PX = 48; // how far from the pointer a species can be listed
   const NEAR_MAX = 5; // species in the list
   const NEAR_READING = 3; // species named beside the current reading
@@ -293,26 +317,26 @@
   const LABEL_ZOOM = 0.5;
   const LABEL_MAX = 12; // most names on the map at once
   const GRID_N = 40;
+  const gridCell = (v, n) => Math.min(n - 1, Math.max(0, Math.floor(((v + FULL) / (2 * FULL)) * n)));
 
-  function speciesGrid(species) {
+  function speciesGrid(pts) {
     const cells = Array.from({ length: GRID_N * GRID_N }, () => []);
-    const cell = (v) => Math.min(GRID_N - 1, Math.max(0, Math.floor(((v + 1.05) / 2.1) * GRID_N)));
-    species.forEach((s, i) => cells[cell(s[1]) * GRID_N + cell(s[0])].push(i));
-    return { cells, cell };
+    pts.forEach((s, i) => cells[gridCell(s[1], GRID_N) * GRID_N + gridCell(s[0], GRID_N)].push(i));
+    return cells;
   }
 
   // Species within `r` (map units) of (x, y), nearest first, at most `max`.
   function nearestSpecies(el, x, y, r, max) {
-    const sp = el.__species;
-    const g = el.__grid || (el.__grid = speciesGrid(sp));
-    const span = Math.ceil((r / 2.1) * GRID_N);
-    const cx = g.cell(x);
-    const cy = g.cell(y);
+    const pts = points(el);
+    const cells = el.__grid || (el.__grid = speciesGrid(pts));
+    const span = Math.ceil((r / (2 * FULL)) * GRID_N);
+    const cx = gridCell(x, GRID_N);
+    const cy = gridCell(y, GRID_N);
     const found = [];
     for (let j = Math.max(0, cy - span); j <= Math.min(GRID_N - 1, cy + span); j++)
       for (let i = Math.max(0, cx - span); i <= Math.min(GRID_N - 1, cx + span); i++)
-        for (const k of g.cells[j * GRID_N + i]) {
-          const d = Math.hypot(sp[k][0] - x, sp[k][1] - y);
+        for (const k of cells[j * GRID_N + i]) {
+          const d = Math.hypot(pts[k][0] - x, pts[k][1] - y);
           if (d <= r) found.push([d, k]);
         }
     found.sort((a, b) => a[0] - b[0]);
@@ -326,10 +350,27 @@
     return Math.abs(b[0] - a[0]) / 100;
   }
 
-  // Common name, then the scientific name when it differs.
-  function speciesRow(s) {
+  // The part of the map in view: { x0, x1, y0, y1 } in map units.
+  function viewOf(map, div) {
+    const [x0, y1] = map.convertFromPixel({ gridIndex: 0 }, [0, 0]);
+    const [x1, y0] = map.convertFromPixel({ gridIndex: 0 }, [div.clientWidth, div.clientHeight]);
+    return { x0, x1, y0, y1 };
+  }
+  const WHOLE = { x0: -FULL, x1: FULL, y0: -FULL, y1: FULL };
+  // Share of the whole map's width in view: 1 zoomed out.
+  const viewShare = (v) => Math.min(1, Math.abs(v.x1 - v.x0) / (2 * FULL));
+
+  const SEARCH_ICON =
+    '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10.5 10.5 14 14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+
+  // Common name, then the scientific name when it differs. In a kept list
+  // each row also has a button that opens Find recordings for the species.
+  function speciesRow(s, k, kept) {
     const sci = s[3] && s[3] !== s[2] ? `<span class="live-emb-near-sci">${esc(s[3])}</span>` : '';
-    return `<div class="live-emb-near-row"><span class="live-emb-near-name">${esc(s[2])}</span>${sci}</div>`;
+    const find = kept
+      ? `<button class="live-emb-near-find" data-find="${k}" title="Find recordings of ${esc(s[2])}" aria-label="Find recordings of ${esc(s[2])}">${SEARCH_ICON}</button>`
+      : '';
+    return `<div class="live-emb-near-row"><span class="live-emb-near-text"><span class="live-emb-near-name">${esc(s[2])}</span>${sci}</span>${find}</div>`;
   }
 
   function mapExplore(el, map, div) {
@@ -343,19 +384,28 @@
     const labels = mk('canvas', 'live-emb-labels');
     const ring = mk('div', 'live-emb-near-ring');
     const box = mk('div', 'live-emb-near');
+    const key = mk('div', 'live-emb-key');
     let touch = false;
     let pinned = false;
+    let shown = null; // the pixel the list was last shown for
     const hide = () => {
       box.style.display = ring.style.display = 'none';
+      box.classList.remove('kept');
       pinned = false;
+      shown = null;
     };
-    const show = (px, py) => {
+    const show = (px, py, keep) => {
       if (!el.__species) return;
       const [x, y] = map.convertFromPixel({ gridIndex: 0 }, [px, py]);
       const near = nearestSpecies(el, x, y, NEAR_PX * unitsPerPx(map), NEAR_MAX);
       if (!near.length) return hide();
       const sp = el.__species;
-      box.innerHTML = near.map((k) => speciesRow(sp[k])).join('');
+      const pts = points(el);
+      box.classList.toggle('kept', !!keep);
+      box.innerHTML =
+        (keep
+          ? '<div class="live-emb-near-head"><span>Nearest species</span><button class="live-emb-near-close" title="Close" aria-label="Close">×</button></div>'
+          : '') + near.map((k) => speciesRow(sp[k], k, keep)).join('');
       box.style.display = 'block';
       // Beside the pointer, kept inside the map; above a finger on touch.
       const w = div.clientWidth;
@@ -368,16 +418,48 @@
       if (by + bh > h) by = py - bh - 14;
       box.style.left = `${Math.max(0, Math.min(w - bw, bx))}px`;
       box.style.top = `${Math.max(0, Math.min(h - bh, by))}px`;
-      const [rx, ry] = map.convertToPixel({ gridIndex: 0 }, [sp[near[0]][0], sp[near[0]][1]]);
+      const [rx, ry] = map.convertToPixel({ gridIndex: 0 }, [pts[near[0]][0], pts[near[0]][1]]);
       ring.style.display = 'block';
       ring.style.transform = `translate(${rx}px, ${ry}px)`;
+      shown = [px, py];
+      pinned = !!keep;
     };
     div.addEventListener('pointerdown', (e) => (touch = e.pointerType !== 'mouse'), true);
+    box.addEventListener('click', (e) => {
+      const find = e.target.closest('[data-find]');
+      if (find) {
+        const s = el.__species[Number(find.dataset.find)];
+        // The dialog opens over the app, so leave full screen first.
+        setFull(el, false);
+        window.dispatchEvent(new CustomEvent('oversample-find-species', { detail: s[3] || s[2] }));
+        hide();
+      } else if (e.target.closest('.live-emb-near-close')) hide();
+    });
+    // A press outside a kept list closes it. Presses on the map are left to
+    // the map's own click below, so a pan does not count.
+    const outside = (e) => {
+      if (pinned && !div.contains(e.target)) hide();
+    };
+    const escape = (e) => {
+      if (e.key !== 'Escape') return;
+      if (pinned) hide();
+      else setFull(el, false);
+    };
+    document.addEventListener('pointerdown', outside, true);
+    document.addEventListener('keydown', escape);
     const zr = map.getZr();
     // A mouse shows the list while it moves over the map. A click or tap
-    // keeps the list for that spot until the next click, tap or pan.
+    // keeps the list for that spot.
+    // The pointer's place is measured from the map's box at the time of the
+    // event: the map moves down the sidebar when the strip above it gains a
+    // row, and zrender's own offsets can then be a row out.
+    const at = (e) => {
+      const r = div.getBoundingClientRect();
+      const n = e.event;
+      return n && n.clientX != null ? [n.clientX - r.left, n.clientY - r.top] : [e.offsetX, e.offsetY];
+    };
     zr.on('mousemove', (e) => {
-      if (!touch && !pinned) show(e.offsetX, e.offsetY);
+      if (!touch && !pinned) show(...at(e), false);
     });
     zr.on('globalout', () => {
       if (!pinned) hide();
@@ -387,17 +469,24 @@
     zr.on('click', (e) => {
       if (pinned) {
         hide();
-        if (!touch) show(e.offsetX, e.offsetY);
+        if (!touch) show(...at(e), false);
         return;
       }
-      show(e.offsetX, e.offsetY);
-      pinned = box.style.display === 'block';
+      show(...at(e), true);
     });
     map.on('datazoom', () => {
       hide();
-      drawLabels(el, map, div);
+      viewChanged(el);
     });
-    div.__explore = { labels, hide };
+    div.__explore = {
+      labels,
+      key,
+      hide,
+      remove() {
+        document.removeEventListener('pointerdown', outside, true);
+        document.removeEventListener('keydown', escape);
+      },
+    };
     return div.__explore;
   }
 
@@ -421,29 +510,34 @@
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
     const sp = el.__species;
-    const toPx = (s) => map.convertToPixel({ gridIndex: 0 }, [s[0], s[1]]);
+    const pts = points(el);
+    const toPx = (i) => map.convertToPixel({ gridIndex: 0 }, [pts[i][0], pts[i][1]]);
     const taken = [];
     const free = (r) =>
       r.x >= 0 && r.y >= 0 && r.x + r.w <= w && r.y + r.h <= h &&
       !taken.some((t) => r.x < t.x + t.w && t.x < r.x + r.w && r.y < t.y + t.h && t.y < r.y + r.h);
+    // Names keep clear of the colour key in the corner.
+    if (ex.key.style.display === 'flex') {
+      taken.push({ x: ex.key.offsetLeft, y: ex.key.offsetTop, w: ex.key.offsetWidth, h: ex.key.offsetHeight });
+    }
     const want = [];
-    const last = el.__last.trail[el.__last.trail.length - 1];
+    const trail = trailOf(el, el.__last);
+    const last = trail[trail.length - 1];
     if (last) {
       const [mx, my] = map.convertToPixel({ gridIndex: 0 }, [last[0], last[1]]);
       taken.push({ x: mx - 12, y: my - 12, w: 24, h: 24 });
-      want.push(...nearestSpecies(el, last[0], last[1], 0.15, NEAR_READING));
+      want.push(...nearestSpecies(el, last[0], last[1], jump(el), NEAR_READING));
     }
-    const [x0, y1] = map.convertFromPixel({ gridIndex: 0 }, [0, 0]);
-    const [x1, y0] = map.convertFromPixel({ gridIndex: 0 }, [w, h]);
-    if ((x1 - x0) / 2.1 <= LABEL_ZOOM) {
+    const v = viewOf(map, div);
+    if (viewShare(v) <= LABEL_ZOOM) {
       const inView = [];
-      for (let i = 0; i < sp.length; i++) {
-        const s = sp[i];
-        if (s[0] >= x0 && s[0] <= x1 && s[1] >= y0 && s[1] <= y1) inView.push(i);
+      for (let i = 0; i < pts.length; i++) {
+        const s = pts[i];
+        if (s[0] >= v.x0 && s[0] <= v.x1 && s[1] >= v.y0 && s[1] <= v.y1) inView.push(i);
       }
-      const mx = (x0 + x1) / 2;
-      const my = (y0 + y1) / 2;
-      const d = (i) => Math.hypot(sp[i][0] - mx, sp[i][1] - my);
+      const mx = (v.x0 + v.x1) / 2;
+      const my = (v.y0 + v.y1) / 2;
+      const d = (i) => Math.hypot(pts[i][0] - mx, pts[i][1] - my);
       // Only the nearest few are tried, so a dense view costs little.
       want.push(...inView.sort((a, b) => d(a) - d(b)).slice(0, LABEL_MAX * 4));
     }
@@ -455,7 +549,7 @@
     for (const k of want) {
       if (drawn >= LABEL_MAX || seen.has(k)) continue;
       seen.add(k);
-      const [px, py] = toPx(sp[k]);
+      const [px, py] = toPx(k);
       const text = sp[k][2];
       const tw = g.measureText(text).width;
       const th = 12;
@@ -479,107 +573,42 @@
     }
   }
 
-  // Component maps: small copies of the species map, one per principal
-  // component of real recordings' embeddings (research/live-embedding/
-  // pc_rec.py; with ?pc=rows, of BirdNET's class rows, pc_bands.py). Each
-  // lights the species whose place on that component is near the reading's
-  // percentile among real recordings; species with no place stay dim. The
-  // points are at their t-SNE places, as on the main map, or with
-  // ?pcmap=umap at their UMAP places (species_umap.py). Plain canvas: each
-  // group of points is drawn once into an offscreen canvas, so a reading
-  // costs a few drawImage calls per map.
+  // ── Component colours ─────────────────────────────────────────────────
+  // Each principal component (of BirdNET's class rows, pc_bands.py; or with
+  // ?pc=rec of real recordings' embeddings, pc_rec.py) ranks the species.
+  // The species are split into five equal fifths per component, coloured
+  // from the low end to the high end: blue, grey in the middle, orange.
+  // Blue against orange survives red-green colour blindness, and the outer
+  // fifths are lighter than the inner ones, so each arm also steps in
+  // lightness. The two steps within an arm are close (dataviz validator: 10
+  // to 11 apart where 15 is the target), so the key beside each graph, in
+  // the same order, says which is which.
   //
-  // What is lit (?pclight=):
-  //   areas   (default) like regions, but each point takes the colour of the
-  //           fifth concentrated around it on the map, so each map shows a
-  //           few coloured areas; mixed areas stay grey. See PC_MODES.
-  //   regions every species is always coloured by its fifth of
-  //           the component (equal counts, blue at the low end, grey in the
-  //           middle, orange at the high end), dimmed. The fifth the reading
-  //           is in lights up at full strength, none while the reading is in
-  //           the middle fifth. The line under each map uses the same
-  //           colours.
-  //   regions5 the same, with the 5% band at the reading in white on top.
-  //   typical the outer third's species that sit among others of the same
-  //           third, faint blue, plus the 5% band in yellow (see below).
-  //   two     the third of the species the reading is in, faint,
-  //           and the 5% band at the reading, bright on top. The middle
-  //           third is not lit: only the ends of an axis say much about a
-  //           sound, but the 5% band still shows where the reading is.
-  //   outer   only the outer thirds, never the middle one.
-  //   halves  the half below or above the median; nothing between the 40th
-  //           and 60th percentiles.
-  //   fine    5% bands, fading over 10% from the reading.
-  //   typical like two, but the faint layer lights only the third's species
-  //           that sit among others of the same third (the share of the
-  //           third in the surrounding grid cells, above the 1 in 3 chance),
-  //           so it shows the regions typical of that end of the axis.
-  const query = new URLSearchParams(window.location.search);
-  const PC_LIGHT = ['regions', 'areas', 'regions5', 'two', 'outer', 'halves', 'fine', 'typical'].includes(query.get('pclight'))
-    ? query.get('pclight')
-    : 'areas';
-  const PC_UMAP = query.get('pcmap') === 'umap';
-  // Two-level colours: a dark blue for the third and a light yellow for the
-  // 5% band, so they differ in lightness as well as hue.
-  const PC_THIRD = '#3f7fc0';
-  const PC_FINE = '#ffe680';
-  const PC_FINE_BANDS = 20;
+  // A map coloured by a component has two looks, blended by zoom:
+  //   areas   (zoomed out) each species takes the colour of the fifth that
+  //           is concentrated around it on the map (its share of the species
+  //           in the surrounding 3 x 3 grid cells furthest above 1 in 5),
+  //           stronger the further above; species in mixed areas are a
+  //           faint grey. The map shows a few coloured areas, not speckle.
+  //   species (zoomed in) each species has the colour of its own fifth.
+  // The blend runs from all areas with 60% of the map's width in view to
+  // all species at 30%.
+  const PC_COLOURS = ['#4a8ee0', '#2f66b8', '#6a6963', '#b25e18', '#e8843c'];
+  const PC_FIFTHS = ['lowest', 'low', 'middle', 'high', 'highest'];
+  const PC_MIXED = '#555555';
+  const PC_PLAIN = 'rgba(170,170,170,0.3)';
   const PC_PER_ROW = 4;
-  // Each mode: band layers to build (count, colour) and the middle zone in
-  // which the coarse layer is not lit, as a distance from the median.
-  // Five colours from the low end of a component to the high end: blue,
-  // grey in the middle, orange. Blue against orange survives red-green
-  // colour blindness, and the outer fifths are lighter than the inner ones,
-  // so each arm also steps in lightness. The two steps within an arm are
-  // close (checked with the dataviz validator: 10 to 11 apart where 15 is
-  // the target), so the line under each map, in the same order, is the key.
-  const PC_REGION_COLOURS = ['#4a8ee0', '#2f66b8', '#6a6963', '#b25e18', '#e8843c'];
-  const PC_MODES = {
-    regions: {
-      regions: PC_REGION_COLOURS,
-      dimAlpha: 0.3,
-      middle: 0.1,
-    },
-    // The same with the 5% band at the reading in white on top. Off by
-    // default: at this size its points scatter over the whole map.
-    // Colour by area: each point takes the colour of the fifth that is
-    // concentrated around it on the map (its share of the surrounding grid
-    // cells furthest above 1 in 5), stronger the further above; points in
-    // mixed areas stay grey.
-    areas: {
-      regions: PC_REGION_COLOURS,
-      areas: true,
-      dimAlpha: 0.3,
-      middle: 0.1,
-    },
-    regions5: {
-      regions: PC_REGION_COLOURS,
-      dimAlpha: 0.3,
-      fine: [PC_FINE_BANDS, '#ffffff'],
-      fineFall: 0,
-      middle: 0.1,
-    },
-    two: { coarse: [3, PC_THIRD], coarseAlpha: 0.75, fine: [PC_FINE_BANDS, PC_FINE], fineFall: 0.02, middle: 1 / 6 },
-    outer: { coarse: [3, HIT], coarseAlpha: 1, middle: 1 / 6 },
-    halves: { coarse: [2, HIT], coarseAlpha: 1, middle: 0.1 },
-    fine: { fine: [PC_FINE_BANDS, HIT], fineFall: 0.1, middle: 0 },
-    typical: {
-      coarse: [3, PC_THIRD],
-      coarseAlpha: 1,
-      typical: true,
-      fine: [PC_FINE_BANDS, PC_FINE],
-      fineFall: 0.02,
-      middle: 1 / 6,
-    },
-  };
-  // Grid for the typical regions: cells per side, and how many cells around
-  // a point count as its surroundings (1: a 3 x 3 block).
+  // Cells per side of the grid that areas are worked out on.
   const PC_GRID = 24;
-  // Areas look: below this strength (0 at chance, 1 when the surrounding
-  // cells are all one fifth) a point stays grey.
+  const PC_GRID_REACH = 1; // cells around a cell that count as its surroundings
+  // Below this strength (0 at chance, 1 when the surrounding cells are all
+  // one fifth) an area is mixed.
   const PC_AREA_MIN = 0.15;
-  const PC_GRID_REACH = 1;
-  const PC_MODE = PC_MODES[PC_LIGHT];
+  const AREAS_FROM = 0.6;
+  const SPECIES_AT = 0.3;
+  // Middle fifth first and the outer fifths last, so where points overlap
+  // the ends of the component show.
+  const PC_ORDER = [2, 1, 3, 0, 4];
   // What lies at the two ends of each class-row component (pc_bands.txt).
   const PC_ENDS_ROWS = [
     ['Amazonian antshrikes and antbirds', 'larks'],
@@ -592,249 +621,403 @@
     ['terns and Asian forest birds', 'African doves, turacos, coucals'],
   ];
 
-  function pcBuild(div, species, pc) {
-    const n = pc.variance.length;
-    const gap = 4;
-    const size = Math.floor((div.clientWidth - gap * (PC_PER_ROW - 1)) / PC_PER_ROW);
-    if (size < 20) return null;
-    const dpr = window.devicePixelRatio || 1;
-    const px = Math.round(size * dpr);
-    const at = (v) => ((v + 1.05) / 2.1) * px;
-    const pts = PC_UMAP && pc.umap ? pc.umap : species;
-    // `list` holds points [x, y] or, with per-point strength, [x, y, alpha].
-    const layer = (list, color, r) => {
-      const c = document.createElement('canvas');
-      c.width = c.height = px;
-      const g = c.getContext('2d');
-      g.fillStyle = color;
-      for (const p of list) {
-        if (p.length > 2) {
-          if (p[2] <= 0) continue;
-          g.globalAlpha = p[2];
-        }
-        g.fillRect(at(p[0]) - r / 2, at(-p[1]) - r / 2, r, r);
-      }
-      return c;
-    };
-    const cellOf = (p) => {
-      const c = (v) => Math.min(PC_GRID - 1, Math.max(0, Math.floor(((v + 1.05) / 2.1) * PC_GRID)));
-      return [c(p[0]), c(p[1])];
-    };
-    const dot = Math.max(1, dpr);
-    const base = layer(pts, 'rgba(170,170,170,0.22)', dot);
+  // Per component: each species' own fifth, and the fifth and strength of
+  // the area around it. Worked out once per layout.
+  function colours(el) {
+    const pts = points(el);
+    if (el.__colours) return el.__colours;
+    const pc = el.__pc;
     const rows = pc.basis === 'rows';
     const top = rows ? 256 : 255;
-    // Species per band, for `count` equal bands of the placed species.
-    const bandOf = (r, count) => Math.min(count - 1, Math.floor((r * count) / top));
-    const groups = (k, count) => {
-      const g = Array.from({ length: count }, () => []);
-      pc.ranks[k].forEach((r, i) => {
-        if (!rows && r === 255) return; // no place on this component
-        g[bandOf(r, count)].push(pts[i]);
+    const n = PC_COLOURS.length;
+    const cellOf = pts.map((p) => gridCell(p[1], PC_GRID) * PC_GRID + gridCell(p[0], PC_GRID));
+    el.__colours = pc.ranks.map((ranks) => {
+      // -1: no place on this component (recordings basis only).
+      const band = ranks.map((r) => (!rows && r === 255 ? -1 : Math.min(n - 1, Math.floor((r * n) / top))));
+      const counts = Array.from({ length: n + 1 }, () => new Float32Array(PC_GRID * PC_GRID));
+      band.forEach((b, i) => {
+        if (b < 0) return;
+        counts[b][cellOf[i]] += 1;
+        counts[n][cellOf[i]] += 1;
       });
-      return g;
-    };
-    // Each band's points with a strength: how far the band's share of the
-    // placed species in the surrounding cells is above chance (1 / count).
-    const typicalGroups = (k, count) => {
-      const counts = Array.from({ length: count + 1 }, () => new Float32Array(PC_GRID * PC_GRID));
-      const cells = pts.map(cellOf);
-      pc.ranks[k].forEach((r, i) => {
-        if (!rows && r === 255) return;
-        const [cx, cy] = cells[i];
-        counts[bandOf(r, count)][cy * PC_GRID + cx] += 1;
-        counts[count][cy * PC_GRID + cx] += 1;
-      });
-      const around = (arr, cx, cy) => {
-        let s = 0;
+      const around = (arr, c) => {
+        const cx = c % PC_GRID;
+        const cy = Math.floor(c / PC_GRID);
+        let t = 0;
         for (let dy = -PC_GRID_REACH; dy <= PC_GRID_REACH; dy++)
           for (let dx = -PC_GRID_REACH; dx <= PC_GRID_REACH; dx++) {
             const x = cx + dx;
             const y = cy + dy;
-            if (x >= 0 && y >= 0 && x < PC_GRID && y < PC_GRID) s += arr[y * PC_GRID + x];
+            if (x >= 0 && y >= 0 && x < PC_GRID && y < PC_GRID) t += arr[y * PC_GRID + x];
           }
-        return s;
+        return t;
       };
-      const g = Array.from({ length: count }, () => []);
-      const chance = 1 / count;
-      pc.ranks[k].forEach((r, i) => {
-        if (!rows && r === 255) return;
-        const b = bandOf(r, count);
-        const [cx, cy] = cells[i];
-        const share = around(counts[b], cx, cy) / Math.max(1, around(counts[count], cx, cy));
-        g[b].push([pts[i][0], pts[i][1], Math.min(1, (2 * (share - chance)) / (1 - chance))]);
-      });
-      return g;
-    };
-    div.innerHTML = '';
-    const maps = [];
-    // Share of species in mixed areas per component (areas look only).
-    const neutral = [];
-    for (let k = 0; k < n; k++) {
-      const m = PC_MODE;
-      const coarseGroups = m.coarse && (m.typical ? typicalGroups : groups)(k, m.coarse[0]);
-      let coarse = coarseGroups ? coarseGroups.map((g) => layer(g, m.coarse[1], dot)) : [];
-      // Regions: one dim image of all five fifths, one bright image each.
-      let dim = null;
-      if (m.areas) {
-        // Dominant fifth around each point, and how far above chance.
-        const n = m.regions.length;
-        const counts = Array.from({ length: n + 1 }, () => new Float32Array(PC_GRID * PC_GRID));
-        const cells = pts.map(cellOf);
-        const bands = pc.ranks[k].map((r) => (!rows && r === 255 ? -1 : bandOf(r, n)));
-        bands.forEach((b, i) => {
-          if (b < 0) return;
-          const [cx, cy] = cells[i];
-          counts[b][cy * PC_GRID + cx] += 1;
-          counts[n][cy * PC_GRID + cx] += 1;
-        });
-        const around = (arr, cx, cy) => {
-          let t = 0;
-          for (let dy = -PC_GRID_REACH; dy <= PC_GRID_REACH; dy++)
-            for (let dx = -PC_GRID_REACH; dx <= PC_GRID_REACH; dx++) {
-              const x = cx + dx;
-              const y = cy + dy;
-              if (x >= 0 && y >= 0 && x < PC_GRID && y < PC_GRID) t += arr[y * PC_GRID + x];
-            }
-          return t;
-        };
-        const chance = 1 / n;
-        const byBand = Array.from({ length: n }, () => []);
-        const grey = [];
-        let placed = 0;
-        bands.forEach((b, i) => {
-          if (b < 0) return;
-          placed++;
-          const [cx, cy] = cells[i];
-          const all = Math.max(1, around(counts[n], cx, cy));
-          let best = 0;
-          let bestShare = -1;
-          for (let j = 0; j < n; j++) {
-            const sh = around(counts[j], cx, cy) / all;
-            if (sh > bestShare) {
-              bestShare = sh;
-              best = j;
-            }
+      // Per grid cell: the fifth with the largest share of the species in
+      // and around the cell, that share, and how many species that is of.
+      const cells = Array.from({ length: PC_GRID * PC_GRID }, (_, c) => {
+        const all = around(counts[n], c);
+        let best = 0;
+        let share = 0;
+        for (let j = 0; j < n; j++) {
+          const sh = all ? around(counts[j], c) / all : 0;
+          if (sh > share) {
+            share = sh;
+            best = j;
           }
-          // 0 at chance, 1 when the area is all one fifth.
-          const strength = Math.min(1, (bestShare - chance) / (1 - chance));
-          if (strength < PC_AREA_MIN) grey.push(pts[i]);
-          else byBand[best].push([pts[i][0], pts[i][1], Math.min(1, 0.35 + strength)]);
-        });
-        coarse = byBand.map((g, i) => layer(g, m.regions[i], dot));
-        dim = document.createElement('canvas');
-        dim.width = dim.height = px;
-        const dg = dim.getContext('2d');
-        // Mixed areas: a fainter grey than the middle fifth's colour, so the
-        // two do not read as the same thing.
-        dg.globalAlpha = 0.45;
-        dg.drawImage(layer(grey, '#555555', dot), 0, 0);
-        dg.globalAlpha = m.dimAlpha * 1.5;
-        [2, 1, 3, 0, 4].forEach((i) => dg.drawImage(coarse[i], 0, 0));
-        neutral.push(placed ? grey.length / placed : 1);
-      } else if (m.regions) {
-        const fifths = groups(k, m.regions.length);
-        coarse = fifths.map((g, i) => layer(g, m.regions[i], dot));
-        dim = document.createElement('canvas');
-        dim.width = dim.height = px;
-        const dg = dim.getContext('2d');
-        dg.globalAlpha = m.dimAlpha;
-        // Middle fifth first and the outer fifths last, so where points
-        // overlap the ends of the component show.
-        [2, 1, 3, 0, 4].forEach((i) => coarse[i] && dg.drawImage(coarse[i], 0, 0));
-      }
-      const fine = m.fine ? groups(k, m.fine[0]).map((g) => layer(g, m.fine[1], dot)) : [];
-      const cell = document.createElement('div');
-      cell.className = 'live-emb-pc';
-      const [lo, hi] = (rows && PC_ENDS_ROWS[k]) || ['', ''];
-      const between = rows ? "BirdNET's classes" : 'recordings';
-      cell.title =
-        `PC${k + 1}: ${(pc.variance[k] * 100).toFixed(1)}% of the variation between ${between}.` +
-        (lo ? `\nLow end: ${lo}.\nHigh end: ${hi}.` : '');
-      const label = document.createElement('div');
-      label.className = 'live-emb-pc-label';
-      // Whole percent, so the label fits a quarter of the sidebar.
-      label.textContent = `PC${k + 1} ${Math.round(pc.variance[k] * 100)}%`;
-      const canvas = document.createElement('canvas');
-      canvas.width = canvas.height = px;
-      canvas.style.width = canvas.style.height = `${size}px`;
-      // The reading's percentile on this component, 0 at the left.
-      const line = document.createElement('canvas');
-      line.className = 'live-emb-pc-line';
-      line.width = px;
-      line.height = Math.round(7 * dpr);
-      line.style.width = `${size}px`;
-      line.style.height = '7px';
-      cell.append(label, canvas, line);
-      div.appendChild(cell);
-      maps.push({ ctx: canvas.getContext('2d'), coarse, dim, fine, line: line.getContext('2d') });
-    }
-    return { width: div.clientWidth, base, maps, px, dpr, neutral };
+        }
+        const chance = 1 / n;
+        // 0 at chance, 1 when the area is all one fifth.
+        const strength = Math.min(1, Math.max(0, (share - chance) / (1 - chance)));
+        return { all, best, share, strength };
+      });
+      // Species indices by look: own[j] by their own fifth; area[j] by the
+      // area's fifth, with a strength each; mixed and unplaced apart.
+      const own = Array.from({ length: n }, () => []);
+      const area = Array.from({ length: n }, () => []);
+      const mixed = [];
+      const unplaced = [];
+      band.forEach((b, i) => {
+        if (b < 0) return unplaced.push(i);
+        own[b].push(i);
+        const c = cells[cellOf[i]];
+        if (c.strength < PC_AREA_MIN) mixed.push(i);
+        else area[c.best].push([i, Math.min(1, 0.45 + c.strength)]);
+      });
+      const placed = band.length - unplaced.length;
+      return { band, cells, own, area, mixed, unplaced, mixedShare: placed ? mixed.length / placed : 1 };
+    });
+    return el.__colours;
   }
 
-  // Draw band layers lit by distance from the reading `p`: 1 inside the
-  // band, fading to 0 at `fall` away (0: only the band holding `p`).
-  function drawBands(ctx, layers, p, fall, alpha) {
-    const count = layers.length;
-    layers.forEach((band, i) => {
-      const dist = Math.max(0, i / count - p, p - (i + 1) / count);
-      const a = fall > 0 ? 1 - dist / fall : dist > 0 ? 0 : 1;
-      if (a <= 0) return;
-      ctx.globalAlpha = a * alpha;
-      ctx.drawImage(band, 0, 0);
+  // 0: the areas look; 1: every species in its own fifth's colour.
+  const speciesBlend = (v) =>
+    Math.min(1, Math.max(0, (AREAS_FROM - viewShare(v)) / (AREAS_FROM - SPECIES_AT)));
+  // Points grow a little as the view zooms in.
+  const pointScale = (v) => Math.min(1.5, 1 / Math.sqrt(viewShare(v)));
+
+  // Draw the species into a `w` x `h` pixel canvas showing the part `v` of
+  // the map, plain grey or (with `comp`, one of colours(el)) coloured.
+  function paintSpecies(g, w, h, v, pts, comp, size) {
+    const ax = w / (v.x1 - v.x0);
+    const ay = h / (v.y1 - v.y0);
+    const half = size / 2;
+    const put = (i) => {
+      const x = (pts[i][0] - v.x0) * ax;
+      const y = (v.y1 - pts[i][1]) * ay;
+      if (x < -size || y < -size || x > w + size || y > h + size) return;
+      g.fillRect(x - half, y - half, size, size);
+    };
+    g.clearRect(0, 0, w, h);
+    if (!comp) {
+      g.globalAlpha = 1;
+      g.fillStyle = PC_PLAIN;
+      for (let i = 0; i < pts.length; i++) put(i);
+      return;
+    }
+    const t = speciesBlend(v);
+    g.fillStyle = PC_MIXED;
+    g.globalAlpha = 0.3;
+    comp.unplaced.forEach(put);
+    if (t < 1) {
+      g.globalAlpha = 0.45 * (1 - t);
+      comp.mixed.forEach(put);
+      for (const j of PC_ORDER) {
+        g.fillStyle = PC_COLOURS[j];
+        for (const [i, a] of comp.area[j]) {
+          g.globalAlpha = a * (1 - t);
+          put(i);
+        }
+      }
+    }
+    if (t > 0) {
+      g.globalAlpha = 0.9 * t;
+      for (const j of PC_ORDER) {
+        g.fillStyle = PC_COLOURS[j];
+        comp.own[j].forEach(put);
+      }
+    }
+    g.globalAlpha = 1;
+  }
+
+  // The species on the large map: a canvas under the ECharts layers,
+  // coloured by the component map that is selected (el.__sel), if any.
+  function drawSpecies(el) {
+    const p = el.__parts;
+    const map = p && window.echarts.getInstanceByDom(p.map);
+    if (!map || !map.__ready || !el.__species) return;
+    const div = p.map;
+    let c = div.__species;
+    if (!c) {
+      c = div.__species = document.createElement('canvas');
+      c.className = 'live-emb-species';
+      div.insertBefore(c, div.firstChild);
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.round(div.clientWidth * dpr);
+    const h = Math.round(div.clientHeight * dpr);
+    if (c.width !== w || c.height !== h) {
+      c.width = w;
+      c.height = h;
+    }
+    const v = viewOf(map, div);
+    const comp = el.__sel != null && el.__pc ? colours(el)[el.__sel] : null;
+    // 3 px points on a sidebar map, larger on a full-screen one.
+    const size = Math.max(3, div.clientWidth / 160);
+    paintSpecies(c.getContext('2d'), w, h, v, points(el), comp, size * dpr * pointScale(v));
+    // The key for the colours, in a corner of the map.
+    const key = div.__explore && div.__explore.key;
+    if (key) {
+      key.style.display = comp ? 'flex' : 'none';
+      if (comp && key.__for !== el.__sel) {
+        key.__for = el.__sel;
+        key.innerHTML =
+          `<span>PC${el.__sel + 1}</span><span>low</span>` +
+          PC_COLOURS.map((col) => `<i style="background:${col}"></i>`).join('') +
+          '<span>high</span>';
+      }
+    }
+  }
+
+  // The view moved (zoom, pan, resize) or the layout or colours changed:
+  // redraw what does not move with each reading, once per animation frame.
+  function viewChanged(el) {
+    if (el.__frame) return;
+    el.__frame = requestAnimationFrame(() => {
+      el.__frame = 0;
+      const p = el.__parts;
+      if (!p || !window.echarts) return;
+      const map = window.echarts.getInstanceByDom(p.map);
+      if (!map || !map.__ready) return;
+      drawSpecies(el);
+      drawLabels(el, map, p.map);
+      pcStatic(el, viewOf(map, p.map));
+      if (el.__last) pcDraw(el, el.__last);
+    });
+  }
+
+  // ── Component maps ────────────────────────────────────────────────────
+  // Small copies of the species map, one per component, each coloured by
+  // that component and showing the same part of the map as the large one.
+  // Pressing one colours the large map the same way; pressing it again
+  // removes the colours. On each, a dot marks the current reading, in the
+  // colour of the nearest species' own fifth. Under each, a graph of the
+  // reading's percentile on that component over the last 20 s (newest on
+  // the right, like the strip above), with the five colours as a key at its
+  // right edge. Plain canvas: a map's species are drawn once per view into
+  // an offscreen canvas, so a reading costs one drawImage per map.
+  const GRAPH_H = 22; // px
+  const KEY_W = 3; // px, the colour key at the right edge of a graph
+
+  // A pie with `share` (0 to 1) filled, starting at 12 o'clock.
+  function pie(share) {
+    const a = Math.min(0.9999, Math.max(0, share)) * 2 * Math.PI;
+    const x = 5 + 5 * Math.sin(a);
+    const y = 5 - 5 * Math.cos(a);
+    return (
+      '<svg class="live-emb-pie" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">' +
+      '<circle cx="5" cy="5" r="5" fill="#444"/>' +
+      `<path d="M5 5 L5 0 A5 5 0 ${a > Math.PI ? 1 : 0} 1 ${x.toFixed(2)} ${y.toFixed(2)} Z" fill="#ddd"/></svg>`
+    );
+  }
+
+  const ordinal = (n) => {
+    const t = n % 100;
+    const s = t >= 11 && t <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th';
+    return `${n}${s}`;
+  };
+  const swatch = (j) => `<i class="live-emb-swatch" style="background:${PC_COLOURS[j]}"></i>`;
+
+  function pcBuild(el) {
+    const div = el.__parts.pcs;
+    const pc = el.__pc;
+    const n = pc.variance.length;
+    const gap = 4;
+    const size = Math.floor((div.clientWidth - gap * (PC_PER_ROW - 1)) / PC_PER_ROW) - 2;
+    if (size < 20) return null;
+    const dpr = window.devicePixelRatio || 1;
+    const px = Math.round(size * dpr);
+    const rows = pc.basis === 'rows';
+    const between = rows ? "BirdNET's classes" : 'recordings';
+    div.innerHTML = '';
+    const tip = document.createElement('div');
+    tip.className = 'live-emb-near live-emb-pc-tip';
+    const showTip = (cell, html) => {
+      tip.innerHTML = html;
+      tip.style.display = 'block';
+      const w = div.clientWidth;
+      const left = Math.max(0, Math.min(w - tip.offsetWidth, cell.offsetLeft));
+      tip.style.left = `${left}px`;
+      // Under the cell, or above it when that would leave the window.
+      const below = cell.offsetTop + cell.offsetHeight + 4;
+      const room = div.getBoundingClientRect().top + below + tip.offsetHeight < window.innerHeight;
+      tip.style.top = `${room ? below : cell.offsetTop - tip.offsetHeight - 4}px`;
+    };
+    const maps = [];
+    for (let k = 0; k < n; k++) {
+      const name = `PC${k + 1}`;
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = 'live-emb-pc';
+      const label = document.createElement('div');
+      label.className = 'live-emb-pc-label';
+      label.innerHTML = `${pie(pc.variance[k])}<span>${name}</span>`;
+      const canvas = document.createElement('canvas');
+      canvas.className = 'live-emb-pc-map';
+      canvas.width = canvas.height = px;
+      canvas.style.width = canvas.style.height = `${size}px`;
+      const graph = document.createElement('canvas');
+      graph.className = 'live-emb-pc-graph';
+      graph.width = px;
+      graph.height = Math.round(GRAPH_H * dpr);
+      graph.style.width = `${size}px`;
+      graph.style.height = `${GRAPH_H}px`;
+      cell.append(label, canvas, graph);
+      div.appendChild(cell);
+      const img = document.createElement('canvas');
+      img.width = img.height = px;
+      const m = { cell, img, ctx: canvas.getContext('2d'), graph: graph.getContext('2d') };
+      maps.push(m);
+
+      const share = `${(pc.variance[k] * 100).toFixed(1)}% of the variation between ${between}`;
+      const [lo, hi] = (rows && PC_ENDS_ROWS[k]) || ['', ''];
+      const ends = lo
+        ? `<div class="live-emb-tip-line">${swatch(0)}Low end: ${esc(lo)}</div><div class="live-emb-tip-line">${swatch(4)}High end: ${esc(hi)}</div>`
+        : '';
+      cell.setAttribute('aria-label', `${name}: ${share}`);
+      // Over the map: what the colour under the pointer stands for.
+      canvas.addEventListener('pointermove', (e) => {
+        if (e.pointerType !== 'mouse') return;
+        const v = el.__view || WHOLE;
+        const r = canvas.getBoundingClientRect();
+        const x = v.x0 + ((e.clientX - r.left) / r.width) * (v.x1 - v.x0);
+        const y = v.y1 - ((e.clientY - r.top) / r.height) * (v.y1 - v.y0);
+        const c = colours(el)[k].cells[gridCell(y, PC_GRID) * PC_GRID + gridCell(x, PC_GRID)];
+        let here = '';
+        if (c.all >= 1 && speciesBlend(v) < 1) {
+          here =
+            c.strength < PC_AREA_MIN
+              ? `<div class="live-emb-tip-line"><i class="live-emb-swatch" style="background:${PC_MIXED}"></i>Around the pointer: no fifth of ${name} stands out</div>`
+              : `<div class="live-emb-tip-line">${swatch(c.best)}Around the pointer: ${Math.round(c.share * 100)}% of ${Math.round(c.all)} species are in the ${PC_FIFTHS[c.best]} fifth of ${name}</div>`;
+        } else if (speciesBlend(v) >= 1) {
+          here = `<div class="live-emb-tip-line">Each species has the colour of its own fifth of ${name}</div>`;
+        }
+        showTip(cell, `<div>${name}: ${share}</div>${ends}${here}`);
+      });
+      // Over the graph: the reading under the pointer.
+      graph.addEventListener('pointermove', (e) => {
+        const d = el.__last;
+        if (e.pointerType !== 'mouse' || !d || !d.pcHist.length) return;
+        const r = graph.getBoundingClientRect();
+        const t = (((e.clientX - r.left) / (r.width - KEY_W)) - 1) * d.history;
+        let best = d.pcHist[0];
+        for (const row of d.pcHist) if (Math.abs(row[0] - t) < Math.abs(best[0] - t)) best = row;
+        const p = best[k + 1];
+        const fifth = Math.min(4, Math.floor(p * 5));
+        showTip(
+          cell,
+          `<div class="live-emb-tip-line">${swatch(fifth)}${name}: ${ordinal(Math.round(p * 100))} percentile, ${ago(best[0])}</div>`,
+        );
+      });
+      cell.addEventListener('pointerleave', () => (tip.style.display = 'none'));
+      cell.addEventListener('click', () => {
+        el.__sel = el.__sel === k ? null : k;
+        maps.forEach((o, j) => o.cell.classList.toggle('selected', el.__sel === j));
+        maps.forEach((o, j) => o.cell.setAttribute('aria-pressed', String(el.__sel === j)));
+        viewChanged(el);
+      });
+      cell.classList.toggle('selected', el.__sel === k);
+      cell.setAttribute('aria-pressed', String(el.__sel === k));
+    }
+    div.appendChild(tip);
+    return { width: div.clientWidth, maps, px, dpr, layout: points(el) };
+  }
+
+  // Draw every component map's species for the part `v` of the map.
+  function pcStatic(el, v) {
+    const pc = el.__pc;
+    const p = el.__parts;
+    if (!pc || !el.__species || !p) return;
+    el.__view = v;
+    const div = p.pcs;
+    let b = div.__built;
+    if (!b || b.width !== div.clientWidth) b = div.__built = pcBuild(el);
+    if (!b) return;
+    const comps = colours(el);
+    const pts = points(el);
+    b.layout = pts;
+    b.maps.forEach((m, k) => {
+      paintSpecies(m.img.getContext('2d'), b.px, b.px, v, pts, comps[k], Math.max(1, b.dpr) * pointScale(v));
     });
   }
 
   function pcDraw(el, d) {
-    const div = el.__parts.pcs;
+    const p = el.__parts;
     const pc = el.__pc;
-    if (!pc || !el.__species || !d.pc || !d.pc.length) return;
-    if (!div.__built || div.__built.width !== div.clientWidth) div.__built = pcBuild(div, el.__species, pc);
+    if (!pc || !el.__species || !p) return;
+    const div = p.pcs;
+    if (!div.__built || div.__built.width !== div.clientWidth || div.__built.layout !== points(el)) {
+      pcStatic(el, el.__view || WHOLE);
+    }
     const b = div.__built;
     if (!b) return;
-    const mode = PC_MODE;
+    const v = el.__view || WHOLE;
+    const comps = colours(el);
+    const trail = trailOf(el, d);
+    const last = trail[trail.length - 1];
+    // The species nearest the reading: the dot takes its colour.
+    const near = last ? nearestSpecies(el, last[0], last[1], jump(el), 1)[0] : undefined;
+    const u = b.dpr;
     b.maps.forEach((m, k) => {
-      const p = d.pc[k];
-      const inMiddle = Math.abs(p - 0.5) < mode.middle;
-      m.ctx.globalAlpha = 1;
       m.ctx.clearRect(0, 0, b.px, b.px);
-      m.ctx.drawImage(b.base, 0, 0);
-      if (mode.regions) {
-        m.ctx.drawImage(m.dim, 0, 0);
-        const fifth = Math.min(mode.regions.length - 1, Math.floor(p * mode.regions.length));
-        // No fifth lights while the reading is in the middle one.
-        if (fifth !== (mode.regions.length - 1) / 2) m.ctx.drawImage(m.coarse[fifth], 0, 0);
-      } else if (!inMiddle) drawBands(m.ctx, m.coarse, p, 0, mode.coarseAlpha);
-      drawBands(m.ctx, m.fine, p, mode.fineFall || 0, 1);
-      // The percentile line: a grey rule, a tick at the median, the middle
-      // zone (where the coarse layer is not lit) a little lighter, and the
-      // reading as a mark.
-      const g = m.line;
+      m.ctx.drawImage(m.img, 0, 0);
+      if (last) {
+        const x = ((last[0] - v.x0) / (v.x1 - v.x0)) * b.px;
+        const y = ((v.y1 - last[1]) / (v.y1 - v.y0)) * b.px;
+        const band = near === undefined ? -1 : comps[k].band[near];
+        m.ctx.beginPath();
+        m.ctx.arc(x, y, 3 * u, 0, 2 * Math.PI);
+        m.ctx.fillStyle = band < 0 ? PC_MIXED : PC_COLOURS[band];
+        m.ctx.fill();
+        m.ctx.lineWidth = u;
+        m.ctx.strokeStyle = '#ffffff';
+        m.ctx.stroke();
+      }
+      // The graph: percentile (low at the bottom) over the last d.history
+      // seconds, each stretch in the colour of the fifth it is in.
+      const g = m.graph;
       const w = b.px;
       const h = g.canvas.height;
-      const y = Math.round(h / 2);
-      const u = b.dpr;
+      const keyW = KEY_W * u;
+      const plotW = w - keyW - u;
       g.clearRect(0, 0, w, h);
-      g.fillStyle = '#555';
-      g.fillRect(0, y - u / 2, w, u);
-      if (mode.regions) {
-        // The line is the key: one segment per fifth, in its colour.
-        const n = mode.regions.length;
-        mode.regions.forEach((c, i) => {
-          g.fillStyle = c;
-          g.fillRect((i * w) / n, y - u, w / n - u, 2 * u);
-        });
-      } else if (mode.middle > 0) {
-        g.fillStyle = '#777';
-        g.fillRect(w * (0.5 - mode.middle), y - u, w * 2 * mode.middle, 2 * u);
+      g.fillStyle = '#2c2c2c';
+      g.fillRect(0, Math.round(h / 2), plotW, 1);
+      PC_COLOURS.forEach((c, j) => {
+        g.fillStyle = c;
+        g.fillRect(w - keyW, h - ((j + 1) * h) / 5, keyW, h / 5 - (j ? u / 2 : 0));
+      });
+      const at = (row) => [(1 + row[0] / d.history) * plotW, (1 - row[k + 1]) * (h - 2 * u) + u];
+      g.lineWidth = 1.5 * u;
+      g.lineJoin = 'round';
+      for (let i = 1; i < d.pcHist.length; i++) {
+        const a = d.pcHist[i - 1];
+        const c = d.pcHist[i];
+        // A gap in the readings (playback paused) is not joined.
+        if (c[0] - a[0] > 1.5) continue;
+        const [x0, y0] = at(a);
+        const [x1, y1] = at(c);
+        g.strokeStyle = PC_COLOURS[Math.min(4, Math.floor(c[k + 1] * 5))];
+        g.beginPath();
+        g.moveTo(x0, y0);
+        g.lineTo(x1, y1);
+        g.stroke();
       }
-      if (!mode.regions) {
-        g.fillStyle = '#888';
-        g.fillRect(Math.round(w / 2) - u / 2, 0, u, h);
+      const now = d.pcHist[d.pcHist.length - 1];
+      if (now) {
+        // The newest value, as a white mark across the key.
+        g.fillStyle = '#ffffff';
+        g.fillRect(w - keyW - 2 * u, at(now)[1] - u, keyW + 2 * u, 2 * u);
       }
-      g.fillStyle = mode.regions ? '#ffffff' : mode.fine ? mode.fine[1] : inMiddle ? '#bbbbbb' : HIT;
-      const x = Math.min(w - 2 * u, Math.max(0, p * w - u));
-      g.fillRect(x, 0, 2 * u, h);
     });
   }
 
@@ -858,6 +1041,79 @@
     if (n) n.title = n.textContent;
   }
 
+  // ── Full screen ───────────────────────────────────────────────────────
+  // The view fills the window (CSS, .live-emb-full), and where the browser
+  // allows it the screen. Android's web view has no full-screen support for
+  // page elements, so there the view only fills the app's window.
+  function setFull(el, on) {
+    if (el.classList.contains('live-emb-full') === on) return;
+    el.classList.toggle('live-emb-full', on);
+    const b = el.__parts && el.__parts.fullBtn;
+    if (b) b.textContent = on ? 'Exit full screen' : 'Full screen';
+    try {
+      if (on && el.requestFullscreen) {
+        const r = el.requestFullscreen();
+        if (r && r.catch) r.catch(() => {});
+      } else if (!on && document.fullscreenElement === el) document.exitFullscreen();
+    } catch (_) {
+      // The window-filling view is shown either way.
+    }
+    viewChanged(el);
+  }
+
+  function tools(el, div) {
+    const group = document.createElement('div');
+    group.className = 'live-emb-seg';
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', 'Map layout');
+    const buttons = LAYOUTS.map(([id, text]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'peak-src-btn';
+      b.textContent = text;
+      b.addEventListener('click', () => {
+        layout = id;
+        try {
+          window.localStorage.setItem(LAYOUT_KEY, id);
+        } catch (_) {
+          // Not saved; the choice lasts for this visit.
+        }
+        mark();
+        const p = el.__parts;
+        const map = window.echarts && window.echarts.getInstanceByDom(p.map);
+        if (map && map.__ready && el.__last) {
+          if (p.map.__explore) p.map.__explore.hide();
+          map.setOption({ series: mapSeries(el, el.__last) });
+        }
+        viewChanged(el);
+      });
+      group.appendChild(b);
+      return [id, b];
+    });
+    const mark = () =>
+      buttons.forEach(([id, b]) => {
+        const on = (isUmap(el) ? 'umap' : 'tsne') === id;
+        b.classList.toggle('sel', on);
+        b.setAttribute('aria-pressed', String(on));
+      });
+    const full = document.createElement('button');
+    full.type = 'button';
+    full.className = 'live-emb-full-btn';
+    full.textContent = 'Full screen';
+    full.addEventListener('click', () => setFull(el, !el.classList.contains('live-emb-full')));
+    // Leaving the browser's full screen (Escape, a system gesture) also
+    // leaves the window-filling view.
+    const onChange = () => {
+      if (!document.fullscreenElement && el.__wasFull) setFull(el, false);
+      el.__wasFull = document.fullscreenElement === el;
+    };
+    document.addEventListener('fullscreenchange', onChange);
+    div.append(group, full);
+    div.__mark = mark;
+    div.__remove = () => document.removeEventListener('fullscreenchange', onChange);
+    return full;
+  }
+
   function parts(el) {
     if (!el.__parts) {
       el.innerHTML = '';
@@ -867,21 +1123,27 @@
         el.appendChild(div);
         return div;
       };
-      el.__parts = {
+      const p = {
         readout: mk('live-emb-readout'),
         strip: mk('live-emb-strip'),
+        tools: mk('live-emb-tools'),
         map: mk('live-emb-map'),
         pcs: mk('live-emb-pcs'),
       };
+      p.fullBtn = tools(el, p.tools);
+      el.__parts = p;
     }
     return el.__parts;
   }
 
-  function chartFor(div) {
+  function chartFor(div, onResize) {
     let chart = window.echarts.getInstanceByDom(div);
     if (!chart) {
       chart = window.echarts.init(div, null, { renderer: 'canvas' });
-      div.__resize = new ResizeObserver(() => chart.resize());
+      div.__resize = new ResizeObserver(() => {
+        chart.resize();
+        if (onResize) onResize();
+      });
       div.__resize.observe(div);
     }
     return chart;
@@ -894,22 +1156,32 @@
       if (speciesJson) {
         el.__species = JSON.parse(speciesJson);
         el.__liveSpecies = true;
+        el.__pts = null;
       }
-      if (pcJson) el.__pc = JSON.parse(pcJson);
+      if (pcJson) {
+        el.__pc = JSON.parse(pcJson);
+        el.__pts = null;
+      }
       await loadEcharts();
+      if (el.__last !== d) return; // a newer reading arrived while loading
       const p = parts(el);
+      p.tools.__mark();
       readout(p.readout, d);
-      p.strip.style.height = `${Math.max(d.rows.length, 1) * ROW_H + CHANGE_H + 36}px`;
+      // The strip keeps the most rows it has had, so the map under it does
+      // not move up and down as classes come and go.
+      el.__rows = Math.max(el.__rows || 1, d.rows.length);
+      p.strip.style.height = `${el.__rows * ROW_H + CHANGE_H + 36}px`;
       const strip = chartFor(p.strip);
       strip.setOption(stripOptions(d), { replaceMerge: ['series', 'yAxis', 'grid', 'xAxis', 'graphic'] });
-      const map = chartFor(p.map);
+      const map = chartFor(p.map, () => viewChanged(el));
       const t0 = performance.now();
       if (!map.__ready && el.__species) {
-        map.setOption(mapOptions(el.__species, d));
+        map.setOption(mapOptions(el, d));
         map.__ready = true;
         mapExplore(el, map, p.map);
+        viewChanged(el);
       } else if (map.__ready) {
-        map.setOption({ series: mapSeries(d) });
+        map.setOption({ series: mapSeries(el, d) });
       }
       el.__ms = performance.now() - t0;
       const tl = performance.now();
@@ -921,12 +1193,18 @@
     },
     dispose(el) {
       if (!el.__parts) return;
+      setFull(el, false);
+      if (el.__frame) cancelAnimationFrame(el.__frame);
+      el.__frame = 0;
+      if (el.__parts.map.__explore) el.__parts.map.__explore.remove();
+      el.__parts.tools.__remove();
       for (const div of [el.__parts.strip, el.__parts.map]) {
         if (div.__resize) div.__resize.disconnect();
         const chart = window.echarts && window.echarts.getInstanceByDom(div);
         if (chart) chart.dispose();
       }
       el.__parts = null;
+      el.__rows = 0;
       el.__liveSpecies = false;
       el.innerHTML = '';
     },

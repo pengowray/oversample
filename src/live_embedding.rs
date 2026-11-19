@@ -75,8 +75,12 @@ struct Reading {
     t: f64,
     scores: Vec<f32>,
     embedding: Vec<f32>,
-    /// Map position of the marker, if a map is loaded.
+    /// Map position of the marker on the t-SNE layout, if a map is loaded.
     at: Option<(f32, f32)>,
+    /// The same on the UMAP layout.
+    at_umap: Option<(f32, f32)>,
+    /// Percentile (0 to 1) on each component.
+    pc: Vec<f32>,
     /// Cosine distance from the previous reading's embedding, 0 to 2.
     change: Option<f32>,
 }
@@ -110,7 +114,7 @@ thread_local! {
     static MAP: RefCell<Option<Arc<Vec<Option<(f32, f32)>>>>> = const { RefCell::new(None) };
     /// Principal components of the class rows, for the component maps.
     static PCS: RefCell<Option<Arc<Components>>> = const { RefCell::new(None) };
-    /// UMAP places of the classes for the component maps (`?pcmap=umap`).
+    /// UMAP places of the classes: the layout the maps start on.
     static PC_UMAP: RefCell<Option<Arc<Vec<Option<(f32, f32)>>>>> = const { RefCell::new(None) };
     /// The strip's rows, in the order they first appeared.
     static ROWS: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
@@ -158,7 +162,7 @@ const PC_FILE: &str = "birdnet-pc.bin";
 /// The first version, PCA of the class rows (`pc_bands.py`), shown with
 /// `?pc=rows` in the address.
 const PC_FILE_ROWS: &str = "birdnet-pc-rows.bin";
-/// Readings averaged for the component maps: 4 at 0.25 s apart, so the light
+/// Readings averaged for the component graphs: 4 at 0.25 s apart, so a line
 /// settles within about a second.
 const PC_SMOOTH: usize = 4;
 
@@ -166,19 +170,18 @@ const PC_SMOOTH: usize = 4;
 /// species map file.
 const PC_UMAP_FILE: &str = "birdnet-umap.bin";
 
-/// True when the address asks for the component maps on the UMAP layout
-/// (`?pcmap=umap`).
-fn pc_umap() -> bool {
-    web_sys::window()
-        .and_then(|w| w.location().search().ok())
-        .is_some_and(|s| s.contains("pcmap=umap"))
-}
+/// Classes sit closer together on the UMAP layout (the 10th nearest
+/// neighbour is at 0.023 map units, against 0.031 on t-SNE), so the radius
+/// within which the top classes pull the marker is smaller by the same share.
+const PLACE_RADIUS_UMAP: f32 = PLACE_RADIUS * 0.73;
 
-/// True when the address asks for the class-row components (`?pc=rows`).
+/// True for the components of BirdNET's class rows, the default. False when
+/// the address asks for the components of recordings' embeddings
+/// (`?pc=rec`).
 fn pc_rows() -> bool {
-    web_sys::window()
+    !web_sys::window()
         .and_then(|w| w.location().search().ok())
-        .is_some_and(|s| s.contains("pc=rows"))
+        .is_some_and(|s| s.contains("pc=rec"))
 }
 
 /// The first principal components of BirdNET's class rows (see
@@ -393,11 +396,9 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
                 PCS.with(|p| *p.borrow_mut() = Some(Arc::new(c)));
             }
         }
-        if pc_umap() {
-            if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes(PC_UMAP_FILE).await {
-                let m = classifier::species_map::parse_map(&bytes);
-                PC_UMAP.with(|u| *u.borrow_mut() = Some(Arc::new(m)));
-            }
+        if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes(PC_UMAP_FILE).await {
+            let m = classifier::species_map::parse_map(&bytes);
+            PC_UMAP.with(|u| *u.borrow_mut() = Some(Arc::new(m)));
         }
     }
     let bytes = classifier::store::read_js(&catalog::BACKBONE)
@@ -657,7 +658,21 @@ fn add_reading(state: AppState, payload: Vec<f32>, model_ms: f64) {
     let (embedding, scores) = payload.split_at(EMBEDDING_LEN);
     let scores = scores.to_vec();
     let embedding = embedding.to_vec();
-    let at = MAP.with(|m| m.borrow().as_ref().and_then(|m| place(&scores, m)));
+    let at = MAP.with(|m| {
+        m.borrow()
+            .as_ref()
+            .and_then(|m| place(&scores, m, PLACE_RADIUS))
+    });
+    let at_umap = PC_UMAP.with(|m| {
+        m.borrow()
+            .as_ref()
+            .and_then(|m| place(&scores, m, PLACE_RADIUS_UMAP))
+    });
+    let pc = PCS.with(|p| {
+        p.borrow()
+            .as_ref()
+            .map_or_else(Vec::new, |p| p.percentiles(&embedding))
+    });
     let change = HISTORY.with(|h| {
         h.borrow()
             .back()
@@ -698,6 +713,8 @@ fn add_reading(state: AppState, payload: Vec<f32>, model_ms: f64) {
             scores,
             embedding,
             at,
+            at_umap,
+            pc,
             change,
         });
         while h.front().is_some_and(|r| t - r.t > HISTORY_S * 1000.0) {
@@ -736,7 +753,7 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
 
 /// The marker's map position: the score-weighted mean of the top classes near
 /// the top class, as the species map places a window.
-pub fn place(scores: &[f32], map: &[Option<(f32, f32)>]) -> Option<(f32, f32)> {
+pub fn place(scores: &[f32], map: &[Option<(f32, f32)>], radius: f32) -> Option<(f32, f32)> {
     let top = top_classes(scores, PLACE_TOP);
     let &(c1, _) = top.first()?;
     let (x1, y1) = (*map.get(c1)?)?;
@@ -745,7 +762,7 @@ pub fn place(scores: &[f32], map: &[Option<(f32, f32)>]) -> Option<(f32, f32)> {
         let Some(&Some((x, y))) = map.get(c) else {
             continue;
         };
-        if ((x - x1).powi(2) + (y - y1).powi(2)).sqrt() > PLACE_RADIUS {
+        if ((x - x1).powi(2) + (y - y1).powi(2)).sqrt() > radius {
             continue;
         }
         sx += x * s;
@@ -839,7 +856,10 @@ fn draw(state: AppState) {
             .filter_map(|r| {
                 let (x, y) = r.at?;
                 let s = top_classes(&r.scores, 1).first().map_or(0.0, |t| t.1);
-                Some((round3(x), round3(y), ago(r), round3(s)))
+                // The UMAP place follows; the t-SNE place stands in for it
+                // when the UMAP file did not load.
+                let (ux, uy) = r.at_umap.unwrap_or((x, y));
+                Some((round3(x), round3(y), ago(r), round3(s), round3(ux), round3(uy)))
             })
             .collect();
         let strip: Vec<_> = h
@@ -859,25 +879,31 @@ fn draw(state: AppState) {
             .filter_map(|r| Some((ago(r), round3(r.change?))))
             .collect();
         let row_names: Vec<_> = rows.iter().map(|&c| name(c as usize)).collect();
-        // Mean percentile of the last few readings, so the light does not
-        // flicker from one reading to the next.
-        let pc: Vec<f32> = PCS
-            .with(|p| {
-                let p = p.borrow();
-                let p = p.as_ref()?;
-                let mut sum = vec![0.0f32; p.variance.len()];
-                let mut n = 0.0f32;
-                for r in h.iter().rev().take(PC_SMOOTH) {
-                    for (s, v) in sum.iter_mut().zip(p.percentiles(&r.embedding)) {
-                        *s += v;
-                    }
-                    n += 1.0;
+        // Each reading's percentile on each component, as the mean of the
+        // last few readings so a line does not jump from one reading to the
+        // next: [secondsAgo, p1, p2, ...].
+        let readings: Vec<&Reading> = h.iter().collect();
+        let pc_hist: Vec<Vec<f32>> = (0..readings.len())
+            .filter(|&i| !readings[i].pc.is_empty())
+            .map(|i| {
+                let from = (i + 1).saturating_sub(PC_SMOOTH);
+                let group: Vec<&Reading> = readings[from..=i]
+                    .iter()
+                    .copied()
+                    .filter(|r| r.pc.len() == readings[i].pc.len())
+                    .collect();
+                let mut row = vec![ago(readings[i])];
+                for k in 0..readings[i].pc.len() {
+                    let sum: f32 = group.iter().map(|r| r.pc[k]).sum();
+                    row.push(round3(sum / group.len() as f32));
                 }
-                Some(sum.into_iter().map(|s| round3(s / n)).collect())
+                row
             })
-            .unwrap_or_default();
+            .collect();
+        let pc: Vec<f32> = pc_hist.last().map_or_else(Vec::new, |r| r[1..].to_vec());
         Some(serde_json::json!({
             "pc": pc,
+            "pcHist": pc_hist,
             "min": min,
             "top": top,
             "trail": trail,
@@ -985,7 +1011,7 @@ mod tests {
     #[test]
     fn place_ignores_far_classes() {
         let map = [Some((0.0, 0.0)), Some((0.1, 0.0)), Some((0.9, 0.9))];
-        let (x, y) = place(&[0.8, 0.8, 0.8], &map).unwrap();
+        let (x, y) = place(&[0.8, 0.8, 0.8], &map, PLACE_RADIUS).unwrap();
         assert!((x - 0.05).abs() < 1e-6 && y == 0.0, "{x} {y}");
     }
 
