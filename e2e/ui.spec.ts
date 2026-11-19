@@ -14,18 +14,57 @@ test.describe("mobile layout", () => {
     await page.goto("/");
     // is_mobile is recomputed from viewport width on mount (<768px → mobile).
     await expect(page.locator(".app.mobile")).toBeVisible({ timeout: 30_000 });
-    // Mobile empty-state copy differs from desktop ("Tap ☰..." vs "Drop ...").
+    // The Files sidebar starts open and covers the hint, which shows once it
+    // is closed. Mobile empty-state copy differs from desktop ("Tap ☰..." vs "Drop ...").
+    await expect(page.locator(".empty-state")).not.toContainText(/Tap/);
+    await page.locator("button.toolbar-sidebar-tab-left").click();
     await expect(page.locator(".empty-state")).toContainText(/Tap/);
   });
 
-  test("sidebar starts collapsed on mobile", async ({ page }) => {
+  test("Files sidebar is open while no file is open, and closes when one opens", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator(".app.mobile")).toBeVisible({ timeout: 30_000 });
-    // `.sidebar` gets the `collapsed` class when state.sidebar_collapsed is true.
-    // On mobile, it should default to collapsed so the main view is visible.
-    await expect(page.locator(".sidebar").first()).toHaveClass(/collapsed/);
+    // Files are opened from the sidebar, so with nothing open it is shown,
+    // on phones too (owner, 2026-11-19).
+    const left = page.locator(".sidebar:not(.right-sidebar)");
+    await expect(left).not.toHaveClass(/collapsed/);
+    await expect(page.locator(".sidebar-header-label", { hasText: "Files" })).toBeInViewport();
+
+    // Opening a file closes the overlay so the recording is visible.
+    await page.locator('input[type="file"]').first().setInputFiles({
+      name: "silence.wav", mimeType: "audio/wav", buffer: silentWav(48_000, 1),
+    });
+    await expect(page.locator(".band-gutter").first()).toBeVisible({ timeout: 30_000 });
+    await expect(left).toHaveClass(/collapsed/);
+
+    // Closing the last file leaves it open.
+    await page.locator("button.toolbar-sidebar-tab-left").click();
+    await page.locator(".file-item-close").first().click();
+    await expect(page.locator(".band-gutter")).toHaveCount(0);
+    await page.waitForTimeout(300);
+    await expect(left).not.toHaveClass(/collapsed/);
   });
 });
+
+/** Mono 16-bit WAV of silence. */
+function silentWav(rate: number, seconds: number): Buffer {
+  const data = Buffer.alloc(Math.round(rate * seconds) * 2);
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0);
+  h.writeUInt32LE(36 + data.length, 4);
+  h.write("WAVE", 8);
+  h.write("fmt ", 12);
+  h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20);
+  h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(rate, 24);
+  h.writeUInt32LE(rate * 2, 28);
+  h.writeUInt16LE(2, 32);
+  h.writeUInt16LE(16, 34);
+  h.write("data", 36);
+  h.writeUInt32LE(data.length, 40);
+  return Buffer.concat([h, data]);
+}
 
 test.describe("selection overflow menu", () => {
   test("the ... button appears inside the selection", async ({ page }) => {

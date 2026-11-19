@@ -3238,10 +3238,10 @@ impl AppState {
             }),
         };
 
-        // On mobile, start with sidebar collapsed
-        if s.status.is_mobile().get_untracked() {
-            s.panels.left_collapsed().set(true);
-        }
+        // The Files sidebar starts open on every screen size, phones and
+        // tablets included: no recording is open yet, and the sidebar is
+        // where recordings are opened. `App` closes it on a phone or tablet
+        // once a recording opens (see "Files sidebar follows" in app.rs).
 
         s
     }

@@ -62,4 +62,12 @@ pub fn main() {
     }
 
     mount_to_body(App);
+
+    // The start-up screen from index.html, shown while the WASM loaded.
+    if let Some(splash) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("boot-splash"))
+    {
+        splash.remove();
+    }
 }

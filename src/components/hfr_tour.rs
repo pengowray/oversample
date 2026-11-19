@@ -11,6 +11,10 @@
 //   • The card shows above Play when an ultrasonic recording starts playing
 //     1:1 with HFR off, at most once per session. It offers HFR or the
 //     tutorial; "Don't show again" clears a setting in Settings > Bats.
+//     "Turn on HFR" leaves the card up for NUDGE_ON_MS as "HFR is on", with
+//     the tutorial button, and pulses the HFR button (body.hfr-nudge-on).
+//     The card pulses twice as it opens (style.css, .hfr-nudge): it appears
+//     while sound plays and was easy to miss.
 //
 // Entry points for the tutorial: the card, the Band presets menu beside HFR,
 // and Settings > Bats.
@@ -48,8 +52,19 @@ const L_DONE: &str = "Done";
 const L_CLOSE: &str = "Close tutorial";
 const L_PROGRESS: &str = "{{current}} of {{total}}";
 
-const NUDGE_TEXT_LIVE: &str = "Listening 1:1. Sound above 20 kHz is too high to hear.";
-const NUDGE_TEXT: &str = "Playing 1:1. Sound above 20 kHz is too high to hear.";
+// The card spells out "HFR (High Frequency Range)" once, so the name on the
+// HFR button means something to a new user. The second sentence is D_HFR's.
+const NUDGE_TEXT_LIVE: &str = "Listening 1:1. Sound above 20\u{a0}kHz is too high to hear. \
+    HFR (High Frequency Range) lowers the pitch of bat calls into the range you can hear.";
+const NUDGE_TEXT: &str = "Playing 1:1. Sound above 20\u{a0}kHz is too high to hear. \
+    HFR (High Frequency Range) lowers the pitch of bat calls into the range you can hear.";
+/// The card after "Turn on HFR": it stays a few seconds so the tutorial is
+/// still one press away. It does not say the calls can now be heard: the
+/// recording may have none, and the band HFR picks may miss them.
+const NUDGE_ON_TEXT: &str =
+    "HFR is on. To turn it off, press the HFR button above the spectrogram.";
+/// How long the "HFR is on" card stays while the pointer is not on it.
+const NUDGE_ON_MS: i32 = 10_000;
 const NUDGE_HFR: &str = "Turn on HFR";
 const NUDGE_NEVER: &str = "Don't show again";
 const NUDGE_NEVER_TIP: &str = "Turn back on in Settings > Bats";
@@ -464,24 +479,94 @@ pub fn HfrNudge() -> impl IntoView {
         out
     });
 
+    // True while the card shows "HFR is on" after its "Turn on HFR" button.
+    let hfr_on_state = RwSignal::new(false);
+    // A mouse pointer is over the card: the "HFR is on" card waits instead
+    // of closing under it. Mouse only: a tap sends pointerenter too, and on
+    // touch screens the matching pointerleave is not reliable.
+    let held = RwSignal::new(false);
+    // The card's body, to see whether keyboard focus is inside it. Read on
+    // each timer tick: focusout does not fire when the focused "Turn on HFR"
+    // button is removed, so a flag set by focus events could stay set.
+    let body_ref = NodeRef::<leptos::html::Div>::new();
+    let focus_inside = move || {
+        let Some(Some(el)) = body_ref.try_get_untracked() else {
+            return false;
+        };
+        web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.active_element())
+            .is_some_and(|a| el.contains(Some(a.as_ref())))
+    };
+    // Bumped on every "Turn on HFR", so an older close timer does nothing.
+    let timer_gen = StoredValue::new(0u32);
+
+    // The card closed (any way): leave the "HFR is on" state.
+    Effect::new(move || {
+        if !state.dialogs.hfr_nudge().get() {
+            hfr_on_state.set(false);
+            held.set(false);
+        }
+    });
+
     // HFR turned on some other way, or another recording opened. Starting
     // to listen opens the live recording after the card shows, so a switch
-    // to the live recording leaves the card up.
+    // to the live recording leaves the card up. In the "HFR is on" state the
+    // card stays while HFR is on, and closes if HFR is turned off again.
     Effect::new(move |prev_idx: Option<Option<usize>>| {
         let idx = state.library.current_index().get();
         let hfr = state.viewmode.hfr_enabled().get();
         let to_live = idx.is_some() && idx == state.mic.live_file_idx().get_untracked();
-        if hfr || (prev_idx.is_some_and(|p| p != idx) && !to_live) {
+        let hfr_changed_card = if hfr_on_state.get_untracked() { !hfr } else { hfr };
+        if hfr_changed_card || (prev_idx.is_some_and(|p| p != idx) && !to_live) {
             hide_nudge(state);
         }
         idx
     });
 
+    // Pulse the HFR button while the card says "press the HFR button".
+    Effect::new(move || {
+        let on = hfr_on_state.get();
+        if let Some(body) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.body())
+        {
+            let _ = body.class_list().toggle_with_force("hfr-nudge-on", on);
+        }
+    });
+
     let turn_on_hfr = move |_| {
-        hide_nudge(state);
+        // While listening there is no tutorial to offer, so the card closes.
+        let offer_tour = tour_available(state);
+        if offer_tour {
+            hfr_on_state.set(true);
+        } else {
+            hide_nudge(state);
+        }
         if !state.viewmode.hfr_enabled().get_untracked() {
             state.toggle_hfr();
         }
+        if !offer_tour {
+            return;
+        }
+        timer_gen.update_value(|g| *g = g.wrapping_add(1));
+        let gen = timer_gen.get_value();
+        wasm_bindgen_futures::spawn_local(async move {
+            const STEP_MS: i32 = 250;
+            let mut left = NUDGE_ON_MS;
+            while left > 0 {
+                crate::web_util::sleep_ms(STEP_MS).await;
+                if timer_gen.try_get_value() != Some(gen)
+                    || hfr_on_state.try_get_untracked() != Some(true)
+                {
+                    return;
+                }
+                if held.try_get_untracked() != Some(true) && !focus_inside() {
+                    left -= STEP_MS;
+                }
+            }
+            state.dialogs.hfr_nudge().try_set(false);
+        });
     };
     let show_me = move |_| {
         hide_nudge(state);
@@ -511,19 +596,39 @@ pub fn HfrNudge() -> impl IntoView {
             preferred_align=Align::Start
             class="layer-panel hfr-nudge"
         >
-            <div role="status" on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()>
+            <div class="hfr-nudge-body" role="status" node_ref=body_ref
+                on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
+                on:pointerenter=move |ev: web_sys::PointerEvent| {
+                    if ev.pointer_type() == "mouse" {
+                        held.set(true);
+                    }
+                }
+                on:pointerleave=move |_| held.set(false)
+            >
                 <button class="hfr-nudge-close" title=NUDGE_CLOSE aria-label=NUDGE_CLOSE
                     on:click=move |_| hide_nudge(state)
                 >"\u{00D7}"</button>
                 <p class="hfr-nudge-text">
-                    {move || if state.mic.listening().get() { NUDGE_TEXT_LIVE } else { NUDGE_TEXT }}
+                    {move || if hfr_on_state.get() {
+                        NUDGE_ON_TEXT
+                    } else if state.mic.listening().get() {
+                        NUDGE_TEXT_LIVE
+                    } else {
+                        NUDGE_TEXT
+                    }}
                 </p>
                 <div class="hfr-nudge-actions">
-                    <button class="hfr-nudge-btn primary" on:click=turn_on_hfr>{NUDGE_HFR}</button>
+                    <Show when=move || !hfr_on_state.get()>
+                        <button class="hfr-nudge-btn primary" on:click=turn_on_hfr>{NUDGE_HFR}</button>
+                    </Show>
+                    // Stays a plain button once HFR is on: filled, it read as
+                    // a required next step rather than an offer.
                     <Show when=move || tour_available(state)>
                         <button class="hfr-nudge-btn" on:click=show_me>{TOUR_NAME}</button>
                     </Show>
-                    <button class="hfr-nudge-link" title=NUDGE_NEVER_TIP on:click=never>{NUDGE_NEVER}</button>
+                    <Show when=move || !hfr_on_state.get()>
+                        <button class="hfr-nudge-link" title=NUDGE_NEVER_TIP on:click=never>{NUDGE_NEVER}</button>
+                    </Show>
                 </div>
             </div>
         </PopupPanel>

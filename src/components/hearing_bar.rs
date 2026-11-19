@@ -592,9 +592,9 @@ pub(crate) fn BandHfrCell() -> impl IntoView {
 
     let title = Signal::derive(move || {
         if state.viewmode.hfr_enabled().get() {
-            "High-frequency reception is ON — click to disable.".to_string()
+            "HFR (High Frequency Range) is on. Click to turn it off.".to_string()
         } else {
-            "Enable high-frequency reception — process and listen to the band selected on the frequency strip.".to_string()
+            "Turn on HFR (High Frequency Range): hear the band selected on the frequency strip at a lower pitch.".to_string()
         }
     });
 

@@ -72,16 +72,75 @@ test.describe("HFR card and tutorial", () => {
     const card = page.locator(".hfr-nudge");
     await expect(card).toBeVisible();
     await expect(card).toContainText("Playing 1:1");
+    await expect(card).toContainText("HFR (High Frequency Range)");
     await card.getByRole("button", { name: "Turn on HFR" }).click();
-    await expect(card).toHaveCount(0);
     await expect(hfrOn(page)).toHaveCount(1);
+    // The card stays, says HFR is on, and still offers the tutorial.
+    await expect(card).toContainText("HFR is on");
+    await expect(card.getByRole("button", { name: "HFR tutorial" })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Turn on HFR" })).toHaveCount(0);
 
-    // Once per session: HFR off and play again shows nothing.
+    // Turning HFR off closes it. Once per session: play again shows nothing.
     await page.locator(".hearing-bar .band-cell-hfr").click();
+    await expect(card).toHaveCount(0);
     await page.locator(".play-main-btn").click(); // stop
     await page.locator(".play-main-btn").click(); // play
     await page.waitForTimeout(500);
     await expect(card).toHaveCount(0);
+  });
+
+  test("card pulses a set number of times, and not at all with reduced motion", async ({ page }) => {
+    await openWav(page, 192_000);
+    await page.locator(".play-main-btn").click();
+    const card = page.locator(".hfr-nudge");
+    await expect(card).toBeVisible();
+    const anim = (el: Element) => {
+      const s = getComputedStyle(el);
+      return { name: s.animationName, count: s.animationIterationCount };
+    };
+    expect(await card.evaluate(anim)).toEqual({ name: "hfr-nudge-ring", count: "2" });
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openWav(page, 192_000);
+    await page.locator(".play-main-btn").click();
+    await expect(card).toBeVisible();
+    expect((await card.evaluate(anim)).name).toBe("none");
+  });
+
+  test("HFR is on: tutorial starts at the frequency step; card closes by itself", async ({ page }) => {
+    await openWav(page, 192_000);
+    await page.locator(".play-main-btn").click();
+    const card = page.locator(".hfr-nudge");
+    await card.getByRole("button", { name: "Turn on HFR" }).click();
+    await expect(card).toContainText("HFR is on");
+    // The HFR button pulses while the card points to it.
+    await expect(page.locator("body")).toHaveClass(/hfr-nudge-on/);
+    await page.mouse.move(0, 0);
+    // Closes after about 10 s with the pointer elsewhere.
+    await expect(card).toHaveCount(0, { timeout: 15_000 });
+    await expect(page.locator("body")).not.toHaveClass(/hfr-nudge-on/);
+    await expect(hfrOn(page)).toHaveCount(1);
+  });
+
+  test("HFR is on: card closes by itself after Turn on HFR from the keyboard", async ({ page }) => {
+    await openWav(page, 192_000);
+    await page.locator(".play-main-btn").click();
+    await page.mouse.move(0, 0);
+    const card = page.locator(".hfr-nudge");
+    await card.getByRole("button", { name: "Turn on HFR" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(card).toContainText("HFR is on");
+    await expect(card).toHaveCount(0, { timeout: 15_000 });
+  });
+
+  test("HFR tutorial from the HFR-is-on card skips the HFR step", async ({ page }) => {
+    await openWav(page, 192_000);
+    await page.locator(".play-main-btn").click();
+    const card = page.locator(".hfr-nudge");
+    await card.getByRole("button", { name: "Turn on HFR" }).click();
+    await card.getByRole("button", { name: "HFR tutorial" }).click();
+    await expect(card).toHaveCount(0);
+    await expect(popoverTitle(page)).toHaveText("Choose frequencies", { timeout: 10_000 });
   });
 
   test("card shows during 1:1 live listening, without the tutorial", async ({ page }) => {
@@ -173,5 +232,25 @@ test.describe("HFR card and tutorial", () => {
     await expect(popoverTitle(page)).toHaveText("Turn on HFR", { timeout: 10_000 });
     await page.keyboard.press("Escape");
     await expect(page.locator(".driver-popover")).toHaveCount(0);
+  });
+});
+
+test.describe("HFR card on a phone", () => {
+  test.use({
+    viewport: { width: 375, height: 812 },
+    isMobile: true,
+    hasTouch: true,
+    userAgent:
+      "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+  });
+
+  test("HFR is on: card closes by itself after a tap on Turn on HFR", async ({ page }) => {
+    await openWav(page, 192_000);
+    await page.locator(".play-main-btn").tap();
+    const card = page.locator(".hfr-nudge");
+    await card.getByRole("button", { name: "Turn on HFR" }).tap();
+    await expect(card).toContainText("HFR is on");
+    await expect(hfrOn(page)).toHaveCount(1);
+    await expect(card).toHaveCount(0, { timeout: 15_000 });
   });
 });

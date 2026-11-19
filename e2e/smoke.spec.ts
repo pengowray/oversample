@@ -70,7 +70,20 @@ test.describe("Oversample web smoke", () => {
     // .app is the root element Leptos mounts inside <body>. If we can see it,
     // the WASM module initialised and components rendered.
     await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    // The start-up screen from index.html is removed once the app mounts.
+    await expect(page.locator("#boot-splash")).toHaveCount(0);
     failOnFatal(errors);
+  });
+
+  test("start-up screen shows before the app mounts", async ({ page }) => {
+    // Hold the WASM back, so the page stays at the start-up screen.
+    await page.route(/_bg\.wasm$/, () => {});
+    await page.goto("/");
+    const splash = page.locator("#boot-splash");
+    await expect(splash).toBeVisible();
+    await expect(splash).toContainText("Oversample");
+    await expect(splash.locator(".boot-bar")).toBeVisible();
+    expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(26, 26, 26)");
   });
 
   test("toolbar renders with brand", async ({ page }) => {

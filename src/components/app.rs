@@ -1394,8 +1394,12 @@ pub fn App() -> impl IntoView {
             if mobile != was_mobile {
                 state_resize.status.is_mobile().set(mobile);
                 if mobile {
-                    // Switching to mobile: collapse sidebars (they become overlays)
-                    state_resize.panels.left_collapsed().set(true);
+                    // Switching to mobile: collapse sidebars (they become
+                    // overlays), but keep Files open while no recording is
+                    // open, as at start.
+                    let empty = state_resize.library.current_index().get_untracked().is_none()
+                        && state_resize.timeline.active().with_untracked(|t| t.is_none());
+                    state_resize.panels.left_collapsed().set(!empty);
                     state_resize.panels.right_collapsed().set(true);
                 } else {
                     // Switching to desktop: show left sidebar by default
@@ -1407,6 +1411,24 @@ pub fn App() -> impl IntoView {
             window.add_event_listener_with_callback("resize", on_resize.as_ref().unchecked_ref());
         on_resize.forget();
     }
+
+    // Files sidebar follows whether a recording is open. With none open
+    // (at start, or after the last file is closed) it opens on every screen
+    // size, since files are opened from it. On a phone or tablet it is an
+    // overlay over the recording, so it closes when a recording opens.
+    Effect::new(move |was_empty: Option<bool>| {
+        let empty = state.no_recording_open();
+        let mobile = state.status.is_mobile().get_untracked();
+        if empty && was_empty != Some(true) {
+            state.panels.left_collapsed().set(false);
+            if mobile {
+                state.panels.right_collapsed().set(true);
+            }
+        } else if !empty && was_empty == Some(true) && mobile {
+            state.panels.left_collapsed().set(true);
+        }
+        empty
+    });
 
     let grid_style = move || {
         if state.status.is_mobile().get() {
@@ -1958,11 +1980,19 @@ fn MainArea() -> impl IntoView {
                         {move || state.panels.show_status_bar().get().then(|| view! { <AnalysisPanel /> })}
                     }.into_any()
                 } else {
-                    // Mobile: show the very icon the sidebar toggle uses.
-                    let empty_msg = if state.status.is_mobile().get() {
-                        view! { "Tap\u{a0}" <Icon kind=Icon::SidebarLeft /> "\u{a0}to load audio files" }.into_any()
-                    } else {
-                        view! { "Drop WAV, FLAC or MP3 files into the sidebar" }.into_any()
+                    // Mobile: show the very icon the sidebar toggle uses. The
+                    // hint is only for when the Files sidebar has been closed:
+                    // while it is open it covers the hint, which then showed
+                    // in pieces at its edge.
+                    let mobile = state.status.is_mobile().get();
+                    let empty_msg = move || {
+                        if !mobile {
+                            Some(view! { "Drop WAV, FLAC or MP3 files into the sidebar" }.into_any())
+                        } else if state.panels.left_collapsed().get() {
+                            Some(view! { "Tap\u{a0}" <Icon kind=Icon::SidebarLeft /> "\u{a0}to load audio files" }.into_any())
+                        } else {
+                            None
+                        }
                     };
                     view! {
                         <div class="empty-state">
