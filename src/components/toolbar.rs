@@ -424,7 +424,7 @@ pub fn Toolbar() -> impl IntoView {
                     }
                 }
                 title=move || if state.panels.left_collapsed().get() { "Show sidebar" } else { "Hide sidebar" }
-            ><Icon kind=Icon::SidebarLeft /></button>
+            ><Icon kind=Icon::SidebarLeft /><span class="toolbar-sidebar-tab-label">"Files"</span></button>
 
             // Center: brand + filename (row 1) + badges (row 2)
             <div class="toolbar-title-center">
@@ -722,7 +722,7 @@ pub fn Toolbar() -> impl IntoView {
                         }
                     }
                     title=move || if state.panels.right_collapsed().get() { "Show info panel" } else { "Hide info panel" }
-                ><Icon kind=Icon::SidebarRight /></button>
+                ><span class="toolbar-sidebar-tab-label">"Info"</span><Icon kind=Icon::SidebarRight /></button>
             </div>
 
             // CC License modal

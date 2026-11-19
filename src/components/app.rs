@@ -8,7 +8,6 @@ use crate::components::chromagram_view::ChromagramView;
 use crate::components::file_sidebar::FileSidebar;
 use crate::components::file_sidebar::{fetch_demo_index, load_single_demo};
 use crate::components::hearing_bar::HearingBar;
-use crate::components::icons::Icon;
 use crate::components::overflow_menu::CanvasOverflowMenus;
 use crate::components::overview::{OverviewPanel, OverviewToolbar};
 use crate::components::play_controls::{BookmarkPopup, ToastDisplay};
@@ -1980,7 +1979,7 @@ fn MainArea() -> impl IntoView {
                         {move || state.panels.show_status_bar().get().then(|| view! { <AnalysisPanel /> })}
                     }.into_any()
                 } else {
-                    // Mobile: show the very icon the sidebar toggle uses. The
+                    // Mobile: name the toolbar's Files button. The
                     // hint is only for when the Files sidebar has been closed:
                     // while it is open it covers the hint, which then showed
                     // in pieces at its edge.
@@ -1989,7 +1988,7 @@ fn MainArea() -> impl IntoView {
                         if !mobile {
                             Some(view! { "Drop WAV, FLAC or MP3 files into the sidebar" }.into_any())
                         } else if state.panels.left_collapsed().get() {
-                            Some(view! { "Tap\u{a0}" <Icon kind=Icon::SidebarLeft /> "\u{a0}to load audio files" }.into_any())
+                            Some(view! { "Tap Files to load audio files" }.into_any())
                         } else {
                             None
                         }

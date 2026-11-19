@@ -6153,21 +6153,45 @@ button.toolbar-overflow-btn {
     border-color: #444;
 }
 
-/* Toolbar sidebar tab buttons */
+/* Toolbar buttons that open the Files and Info sidebars. Each has its name
+   beside the icon: the bare 28 px icons were easy to miss, most of all on
+   phones and tablets, where they are also taller (36 px) for a finger. */
 .toolbar-sidebar-tab {
     flex-shrink: 0;
-    width: 28px;
     height: 28px;
-    background: #282828;
-    border: 1px solid #444;
+    background: #2e2e2e;
+    border: 1px solid #666;
     border-radius: 4px;
     font-size: 16px;
-    color: #777;
+    color: #e8e8e8;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0;
+    gap: 6px;
+    padding: 0 8px;
+}
+.toolbar-sidebar-tab-label {
+    font-size: 13px;
+    font-weight: 600;
+}
+.app.mobile .toolbar-sidebar-tab {
+    height: 36px;
+    padding: 0 10px;
+}
+.app.mobile .toolbar-sidebar-tab-label {
+    font-size: 14px;
+}
+/* Phones: the name without the icon, so the file name and badges between
+   the two buttons keep enough width (a heterodyne badge and a licence
+   still share one line at 375 px; e2e/badges.spec.ts checks it). */
+@media (max-width: 480px) {
+    .app.mobile .toolbar-sidebar-tab {
+        padding: 0 7px;
+    }
+    .app.mobile .toolbar-sidebar-tab svg {
+        display: none;
+    }
 }
 
 .toolbar-sidebar-tab:hover {
@@ -6178,7 +6202,7 @@ button.toolbar-overflow-btn {
 .toolbar-sidebar-tab.active {
     background: #1a3a2a;
     border-color: #4a8;
-    color: #aaa;
+    color: #e8e8e8;
 }
 
 .toolbar-right-group {
