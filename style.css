@@ -10093,8 +10093,10 @@ body.hfr-nudge-on .band-cell-hfr {
     display: flex;
     align-items: center;
 }
+/* 24 px tall: the smallest size that is easy to press. */
 .live-emb-tools button {
     white-space: nowrap;
+    min-height: 24px;
 }
 .live-emb-full-btn {
     padding: 2px 8px;

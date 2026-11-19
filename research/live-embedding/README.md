@@ -64,8 +64,8 @@ In the app, the live view and the classifier agreed on the test recordings:
    and the one before. A steady sound stays under 0.1; a new call or a change
    of scene reaches 0.2 to 0.5. It shows change that the scores miss, for
    example a new sound that BirdNET has no class for.
-4. **The species map with a marker**: the existing t-SNE map of the class
-   rows (`research/species-map`), with the current reading placed by the same
+4. **The species map with a marker**: the class rows on the UMAP layout (or
+   the t-SNE map of `research/species-map`, see 5), with the current reading placed by the same
    rule as the map's windows (score-weighted mean of the top 3 classes within
    0.15 map units of the top one) and a fading 15 s trail. A hit is a filled
    green dot sized by the score; below the minimum it is a large dashed ring.
@@ -75,7 +75,7 @@ In the app, the live view and the classifier agreed on the test recordings:
    moving; the name comes from the text above it.
    Pointing anywhere on the map (hover with a mouse, or tap) lists the 5
    species nearest that point, nearest first, with the nearest ringed; a
-   click or tap keeps the list until the next click, tap or pan. The 3
+   click or tap keeps the list (see 7). The 3
    species nearest the reading are named beside the marker, and once
    zoomed in to half the map's width or less, up to 12 species nearest the
    middle of the view are named too, without overlapping. The trail's
@@ -140,7 +140,7 @@ In the app, the live view and the classifier agreed on the test recordings:
    - Pointing at a small map says what the colour there stands for: the
      share of the species around the pointer that are in the area's fifth.
      Pointing at a graph gives the percentile and time of that reading.
-   - Cost: a reading redraws eight map copies and graphs in about 0.1 ms; a
+   - Cost: a reading redraws eight map copies and graphs in about 0.3 ms; a
      zoom or pan redraws all species once per frame.
    - Removed: the `?pclight=` looks (regions, regions5, two, outer, halves,
      fine, typical). Zooming in now gives the `regions` look.
@@ -211,7 +211,8 @@ In the app, the live view and the classifier agreed on the test recordings:
   embeddings of recordings was not tried; the change trace already shows "the
   sound is changing", which was the remaining use for unnamed axes.
 - **UMAP of the class rows, with new readings projected onto it** (for the
-  live view's map). Not built. It kept less of the
+  live view's map). Not built: the UMAP layout that is now the default (5)
+  places readings from the class scores, as the t-SNE one does. It kept less of the
   genus grouping than t-SNE (0.19 against 0.33 same-genus share), shipping
   the fitted model to the browser costs megabytes, and placing the marker from
   the class scores already puts it among the right species (it agrees with
