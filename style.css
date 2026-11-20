@@ -4808,8 +4808,21 @@ a.open-link-btn {
 }
 
 .bottom-toolbar.mobile .combo-btn-right {
-    padding: 6px 20px 7px 8px;
+    /* 16px on the right clears the corner arrow (12px, 2px in). At 20px,
+       "Listen" had 2px too few at 375 px wide and was cut to "List...". */
+    padding: 6px 16px 7px 8px;
     min-height: 48px;
+    /* The right half holds the label that changes (ALL, HERE, Mem); it
+       keeps its width and the left half gives way. */
+    flex: 0 0 auto;
+}
+
+/* Each grid cell has a fixed width here, so the lock-grow width lock
+   (index.html) has nothing to hold still. Its inline min-widths, taken from
+   the widest label each half has shown, added up to more than a cell: after
+   "HERE" the Play button reached over "CH Mono". */
+.bottom-toolbar.mobile .lock-grow {
+    min-width: 0 !important;
 }
 
 .bottom-toolbar.mobile .combo-btn-arrow {
