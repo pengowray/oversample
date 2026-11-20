@@ -7,7 +7,7 @@ use crate::cloud::google_auth::{self, Provider};
 use crate::cloud::store;
 use crate::cloud::sync;
 use crate::state::store_fields::*;
-use crate::state::{AppState, DriveCheck, DriveProblem, DriveSignInProblem};
+use crate::state::{AppState, DeviceOnly, DriveCheck, DriveProblem, DriveSignInProblem};
 use leptos::prelude::*;
 
 const SIGNED_OUT_NOTE: &str = "Sign in to keep copies of your annotations and projects in an \"Oversample\" folder in your Google Drive.";
@@ -86,6 +86,21 @@ const COPIES_LABEL: &str = "Annotations and projects";
 /// Recordings are not saved to Drive yet: the row is shown disabled.
 const RECORDINGS_LABEL: &str = "Recordings";
 const NOT_YET: &str = "Not available yet";
+
+const MOVE_BUTTON: &str = "Move to Google Drive";
+
+/// What is still only in the device store, e.g. "Only on this device: 12
+/// annotation files, 2 projects".
+fn device_only_text(d: DeviceOnly) -> String {
+    let mut parts = Vec::new();
+    if d.annotations > 0 {
+        parts.push(count(d.annotations, "annotation file", "annotation files"));
+    }
+    if d.projects > 0 {
+        parts.push(count(d.projects, "project", "projects"));
+    }
+    format!("Only {}: {}", store::here(), parts.join(", "))
+}
 
 /// The state of the Drive copies while signed in, shown beside COPIES_LABEL.
 fn status_text(uploading: bool, waiting: usize) -> String {
@@ -190,6 +205,27 @@ pub(super) fn DriveSettings() -> impl IntoView {
                             aria-label="Save recordings to Google Drive"
                         />
                     </div>
+                    // Made while signed out: still only here until moved.
+                    {move || state.drive.device_only().get().filter(|d| !d.is_empty()).map(|d| {
+                        let moving = state.drive.moving().get();
+                        let failed = state.drive.move_failed().get();
+                        view! {
+                            <div class="drive-note">{device_only_text(d)}</div>
+                            {(failed > 0).then(|| view! {
+                                <div class="drive-note drive-warning">
+                                    {format!("Couldn't move {}.", count(failed, "file", "files"))}
+                                </div>
+                            })}
+                            <div class="setting-row">
+                                <span></span>
+                                <button
+                                    class="setting-button drive-button"
+                                    disabled=moving
+                                    on:click=move |_| sync::move_device_to_account(state)
+                                >{if moving { "Moving\u{2026}" } else { MOVE_BUTTON }}</button>
+                            </div>
+                        }
+                    })}
                     <div class="setting-row">
                         <span></span>
                         <button

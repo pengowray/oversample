@@ -469,6 +469,8 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
                     log::debug!("OPFS saved annotations: {dir}/{key}");
                     if let (true, Some(text)) = (to_account, drive_text) {
                         crate::cloud::sync::annotation_saved(&key, &audio_name, text, seq);
+                    } else if !to_account {
+                        crate::cloud::sync::device_store_changed();
                     }
                 }
                 Some(Ok(false)) => log::debug!("OPFS save of {key} skipped: removed or reloaded"),

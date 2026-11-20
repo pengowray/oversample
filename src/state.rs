@@ -1950,6 +1950,27 @@ pub struct DriveState {
     /// While copies are off (`check_only`): what the read-only check of
     /// the account's Drive found.
     pub read_only_check: Option<DriveCheck>,
+    /// Signed in: what is still only in the device store (made while signed
+    /// out), which "Move to Google Drive" moves into the account. `None`
+    /// until counted.
+    pub device_only: Option<DeviceOnly>,
+    /// "Move to Google Drive" is running.
+    pub moving: bool,
+    /// Files the last move could not move.
+    pub move_failed: usize,
+}
+
+/// Annotation sets and projects in the device store (see `DriveState`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeviceOnly {
+    pub annotations: usize,
+    pub projects: usize,
+}
+
+impl DeviceOnly {
+    pub fn is_empty(&self) -> bool {
+        self.annotations == 0 && self.projects == 0
+    }
 }
 
 /// What the read-only check of Google Drive found (the desktop app, while

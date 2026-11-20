@@ -20,6 +20,9 @@ const SAVED_IN_BROWSER: &str = "Saved in this browser";
 const SAVED_ON_DEVICE: &str = "Saved on this device";
 const NOT_SAVED_VIEW_ONLY: &str = "Not saved: this file is view-only";
 const DRIVE_BUTTON_TIP: &str = "Open the Google Drive settings";
+const NOT_IN_DRIVE: &str = "Not in Google Drive";
+const NOT_IN_DRIVE_TIP: &str =
+    "Made while signed out. Move it with \"Move to Google Drive\" in the Google Drive settings.";
 const NOT_COPIED_TIP: &str =
     "Google Drive has annotations for a different recording with the same name and size.";
 
@@ -132,14 +135,23 @@ pub fn AnnotationStorage() -> impl IntoView {
                     })}
                     {move || {
                         // Only a set whose home is the signed-in account has a
-                        // Drive copy (one shown from the device store has none).
-                        let s = sync::file_drive_state(state, key.as_deref()?)?;
-                        if !matches!(
-                            crate::cloud::store::home_of(file.id),
-                            crate::cloud::store::Store::Account(_)
-                        ) {
-                            return None;
+                        // Drive copy. One from the device store (made while
+                        // signed out) says so, until "Move to Google Drive".
+                        // (The count changes when a move is done.)
+                        let _ = state.drive.device_only().get();
+                        let home = crate::cloud::store::home_of(file.id);
+                        if home == crate::cloud::store::Store::Device {
+                            let copies_here = state.drive.signed_in().get()
+                                && !state.drive.check_only().get();
+                            return copies_here.then(|| view! {
+                                <button
+                                    class="annotation-storage-drive"
+                                    title=NOT_IN_DRIVE_TIP
+                                    on:click=move |_| open_drive_settings(state)
+                                >{NOT_IN_DRIVE}</button>
+                            }.into_any());
                         }
+                        let s = sync::file_drive_state(state, key.as_deref()?)?;
                         let (text, warning) = drive_text(s);
                         let class = if warning {
                             "annotation-storage-drive drive-warning"
@@ -157,7 +169,7 @@ pub fn AnnotationStorage() -> impl IntoView {
                                 title=title
                                 on:click=move |_| open_drive_settings(state)
                             >{text}</button>
-                        })
+                        }.into_any())
                     }}
                 </div>
             }

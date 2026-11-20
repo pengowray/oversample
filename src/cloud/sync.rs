@@ -920,6 +920,7 @@ async fn start_session() {
     switch_open_files(state);
     state.drive.email().set(Some(email));
     set_problem(None);
+    count_device_only().await;
     if let Err(e) = reconcile(gen).await {
         on_error(gen, e);
     }
@@ -1047,6 +1048,164 @@ async fn move_file(src_dir: &str, dst_dir: &str, name: &str) -> bool {
     })
     .await
     .unwrap_or(false)
+}
+
+// ── Moving what was made while signed out ────────────────────────────────
+
+/// Count what is still only in the device store and show it (signed in,
+/// with copies on).
+pub async fn count_device_only() {
+    let Some(state) = app_state() else {
+        return;
+    };
+    if !copies_enabled() || !with(|s| s.signed_in) {
+        state.drive.device_only().set(None);
+        return;
+    }
+    let annotations = store::keys(&Store::Device.annotations_dir(), ".batm")
+        .await
+        .len();
+    let projects = store::keys(&Store::Device.projects_dir(), ".batproj")
+        .await
+        .len();
+    if with(|s| s.signed_in) {
+        state.drive.device_only().set(Some(crate::state::DeviceOnly {
+            annotations,
+            projects,
+        }));
+    }
+}
+
+/// A set was saved to the device store while signed in: count again.
+pub fn device_store_changed() {
+    if with(|s| s.signed_in) && copies_enabled() {
+        wasm_bindgen_futures::spawn_local(count_device_only());
+    }
+}
+
+/// "Move to Google Drive": move every annotation set and project made while
+/// signed out from the device store into the signed-in account, which then
+/// uploads them. A set the account has too is merged with it (all
+/// annotations of both kept, as at a first comparison with Drive); for a
+/// project the later one is kept. Open files whose set moved now save to
+/// the account.
+pub fn move_device_to_account(state: AppState) {
+    if state.drive.moving().get_untracked() {
+        return;
+    }
+    let Some(account) = with(|s| s.account.clone()) else {
+        return;
+    };
+    let gen = generation();
+    state.drive.moving().set(true);
+    state.drive.move_failed().set(0);
+    wasm_bindgen_futures::spawn_local(async move {
+        let mut failed = 0;
+        let device_sets = Store::Device.annotations_dir();
+        for key in store::keys(&device_sets, ".batm").await {
+            if !alive(gen) {
+                break;
+            }
+            match move_set(&device_sets, &account.annotations_dir(), &key).await {
+                Some(merged) => {
+                    if let Some(file_id) = open_file_with_key(state, &key) {
+                        if store::home_of(file_id) == Store::Device {
+                            store::set_home(file_id, account.clone());
+                            // A merged set has annotations the open file lacks.
+                            if merged {
+                                crate::opfs::reload_annotations(state, file_id);
+                            }
+                        }
+                    }
+                }
+                None => failed += 1,
+            }
+        }
+        let device_projects = Store::Device.projects_dir();
+        for name in store::keys(&device_projects, ".batproj").await {
+            if !alive(gen) {
+                break;
+            }
+            if move_project(&device_projects, &account.projects_dir(), &name).await {
+                if let Some(id) = name.strip_suffix(".batproj") {
+                    store::set_project_home(id, account.clone());
+                }
+            } else {
+                failed += 1;
+            }
+        }
+        state.drive.moving().set(false);
+        state.drive.move_failed().set(failed);
+        count_device_only().await;
+        if alive(gen) {
+            spawn(async move { reconcile(gen).await });
+        }
+    });
+}
+
+/// Move one annotation set, merging it with the account's copy when there
+/// is one. `Some(merged)` when done, `None` when it stayed where it was.
+async fn move_set(src_dir: &str, dst_dir: &str, key: &str) -> Option<bool> {
+    let (src, dst, key) = (src_dir.to_string(), dst_dir.to_string(), key.to_string());
+    let lock = store::file_lock(&src, &key);
+    store::with_lock(&lock, move || {
+        Box::pin(async move {
+            let device_text = store::read(&src, &key).await?;
+            let device_set: AnnotationSet = yaml_serde::from_str(&device_text).ok()?;
+            let dst_lock = store::file_lock(&dst, &key);
+            let (dst2, key2) = (dst.clone(), key.clone());
+            let merged = store::with_lock(&dst_lock, move || {
+                Box::pin(async move {
+                    let (text, merged) = match store::read(&dst2, &key2).await {
+                        Some(account_text) => {
+                            let account_set: AnnotationSet =
+                                yaml_serde::from_str(&account_text).ok()?;
+                            let merged = rules::merge_annotation_sets(account_set, &device_set);
+                            (yaml_serde::to_string(&merged).ok()?, true)
+                        }
+                        None => (device_text, false),
+                    };
+                    store::bump_epoch(&dst2, &key2);
+                    store::write(&dst2, &key2, &text).await.ok()?;
+                    (store::read(&dst2, &key2).await.as_deref() == Some(text.as_str()))
+                        .then_some(merged)
+                })
+            })
+            .await
+            .flatten()?;
+            store::bump_epoch(&src, &key);
+            store::remove(&src, &key).await.ok()?;
+            Some(merged)
+        })
+    })
+    .await
+    .flatten()
+}
+
+/// Move one project; when the account has it too, the later one is kept.
+async fn move_project(src_dir: &str, dst_dir: &str, name: &str) -> bool {
+    let account_copy = store::read(dst_dir, name).await;
+    let Some(account_copy) = account_copy else {
+        return move_file(src_dir, dst_dir, name).await;
+    };
+    let Some(device_copy) = store::read(src_dir, name).await else {
+        return false;
+    };
+    let modified = |t: &str| {
+        yaml_serde::from_str::<BatProject>(t)
+            .ok()
+            .and_then(|p| p.modified_at)
+    };
+    if modified(&device_copy) > modified(&account_copy) {
+        // The device's is later: it replaces the account's.
+        let ok = store::write(dst_dir, name, &device_copy).await.is_ok()
+            && store::read(dst_dir, name).await.as_deref() == Some(device_copy.as_str());
+        if !ok {
+            return false;
+        }
+    }
+    store::bump_epoch(src_dir, name);
+    store::remove(src_dir, name).await.is_ok()
 }
 
 /// After the active store changed: each open file's home is worked out
@@ -1180,6 +1339,8 @@ pub fn sign_out(state: AppState) {
         }
     }
     state.drive.session_ended().set(false);
+    state.drive.device_only().set(None);
+    state.drive.move_failed().set(0);
     wasm_bindgen_futures::spawn_local(async move {
         google_auth::logout().await;
     });
