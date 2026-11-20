@@ -34,6 +34,18 @@ fn adaptive_threshold(filtered: &[f32]) -> (f32, f32) {
 /// A crossing must pass this fraction of the envelope either side of zero.
 /// Low enough that a sine sampled at 192 kHz passes it every half-cycle up to
 /// about 87 kHz.
+/// Click height as a fraction of the input envelope at the crossing.
+///
+/// The output follows the input level, as it does in the other hearing
+/// modes, so the same playback gain suits all of them. Clicks used to be
+/// about -40 dBFS whatever the input level. Auto gain is worked out from the
+/// input peak, so a quiet recording (+42 dB of gain) played its clicks above
+/// full scale, and the noise between calls clicked as loudly as the calls.
+///
+/// At 1.0 a steady tone comes out no higher than it went in, so ZC cannot
+/// clip at a gain that does not clip 1:1 playback.
+const CLICK_GAIN: f32 = 1.0;
+
 const CROSSING_FRACTION: f32 = 0.15;
 
 /// What [`CrossingDetector::step`] found at one sample.
@@ -135,8 +147,9 @@ impl CrossingDetector {
 /// So a call at `f` is heard at `f / division_factor`: a 40 kHz call with a
 /// division factor of 10 makes clicks at 4 kHz.
 ///
-/// The output amplitude tracks the input envelope so that louder bat calls
-/// produce louder clicks, matching the behavior of analog FD detectors.
+/// Each click is as high as the input envelope at its crossing (see
+/// [`CLICK_GAIN`]), so louder calls make louder clicks and gain applied
+/// before or after this function has the same effect.
 pub fn zc_divide(
     samples: &[f32],
     sample_rate: u32,
@@ -169,7 +182,6 @@ pub fn zc_divide(
 
     // Click duration: ~0.15ms
     let click_len = ((sample_rate as f64 * 0.00015) as usize).max(2);
-    let output_gain: f32 = 0.01;
 
     for (i, (&x, &env)) in filtered.iter().zip(&envelope).enumerate() {
         match detector.step(i, x, env) {
@@ -179,7 +191,7 @@ pub fn zc_divide(
                 crossing_count += 1;
                 if crossing_count >= crossings_per_click {
                     crossing_count = 0;
-                    let amp = (env / detector.threshold_high).min(1.0) * output_gain;
+                    let amp = env * CLICK_GAIN;
                     let end = (i + click_len).min(samples.len());
                     for (k, out_sample) in output[i..end].iter_mut().enumerate() {
                         let phase = k as f64 / click_len as f64 * std::f64::consts::PI;
@@ -313,8 +325,8 @@ mod tests {
         assert_eq!(output.len(), input.len());
 
         let peak = output.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-        assert!(peak > 0.001, "Should produce audible clicks, peak={peak}");
-        assert!(peak < 0.1, "Should not be too loud, peak={peak}");
+        assert!(peak > 0.2, "Clicks should be near the input level, peak={peak}");
+        assert!(peak <= 0.8, "Clicks should not exceed the input, peak={peak}");
     }
 
     #[test]
