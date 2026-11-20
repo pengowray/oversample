@@ -627,6 +627,7 @@ mod tests {
                     start_s: i as f64 * 3.0,
                     end_s: (i + 1) as f64 * 3.0,
                     slot: i as u32,
+                    live: false,
                     top: t
                         .iter()
                         .map(|&class| Score {

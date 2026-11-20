@@ -15,6 +15,9 @@
 //! no more often than every ten times its last duration, so a long file does
 //! not hold up the page. When the run ends it is redone straight away.
 //!
+//! Readings the live view adds while the file plays count as a run going,
+//! until playback stops (`ClassifierState::live_filling`).
+//!
 //! Quiet windows (`crate::classifier::quiet`) are left out of the grouping.
 //! Their check needs the file's frame levels, measured once per file and
 //! method by reading the whole file in pieces (streamed files too) after the
@@ -422,13 +425,17 @@ pub fn drive(state: AppState) {
         if windows == 0 || BUSY.with(Cell::get) || WAITING.with(|w| w.get() == Some(key)) {
             return;
         }
+        // An Analyse going, or the live view adding readings while the file
+        // plays (`classifier::played`): both add windows often, so the
+        // grouping is redone at most every `RUN_GAP_MS`, and the levels are
+        // measured once they stop.
         let running = state.classifier.run().with(|r| match r {
             RunStatus::Running {
                 file_id, method: m, ..
             }
             | RunStatus::LoadingModel { file_id, method: m } => *file_id == file && *m == method,
             _ => false,
-        });
+        }) || state.classifier.live_filling().get() == Some(key);
         let cached = CACHE.with(|c| {
             c.borrow().get(&key).map(|e| {
                 (

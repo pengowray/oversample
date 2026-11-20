@@ -87,7 +87,7 @@ thread_local! {
     static CLIENT: RefCell<Option<Client>> = const { RefCell::new(None) };
 }
 
-fn now_ms() -> f64 {
+pub(super) fn now_ms() -> f64 {
     web_sys::window()
         .and_then(|w| w.performance())
         .map_or(0.0, |p| p.now())

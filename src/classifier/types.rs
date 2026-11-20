@@ -205,6 +205,11 @@ pub struct WindowScores {
     /// (`ClassifierState::embeddings`), which are kept in the order the
     /// windows arrived ([`embedding`]).
     pub slot: u32,
+    /// Made by the live view from the file's own audio, while the file
+    /// played or of the window Play starts with (`crate::classifier::
+    /// played`), not by Analyse. The scores are the ones Analyse gives a
+    /// window with the same start.
+    pub live: bool,
 }
 
 /// Two window starts closer than this, in seconds, are the same window:
@@ -299,9 +304,74 @@ impl ClassifierRun {
                 end_s,
                 top,
                 slot,
+                live: false,
             },
         );
         Some(at)
+    }
+
+    /// A run with no windows yet: what Analyse starts with, and what the live
+    /// view starts a file's results with (`crate::classifier::played`).
+    /// `step_secs` is the step Analyse asked for, the window length for
+    /// windows end to end and for a run with no Analyse.
+    pub fn empty(
+        method: Method,
+        region: Option<BatScope>,
+        backbone: &'static ModelFile,
+        head: Option<&'static ModelFile>,
+        source_rate: u32,
+        labels: Arc<Vec<SpeciesLabel>>,
+        step_secs: f64,
+    ) -> ClassifierRun {
+        ClassifierRun {
+            method,
+            region,
+            backbone,
+            head,
+            source_rate,
+            model_rate: method.model_rate(),
+            window_secs: method.window_secs(),
+            step_secs,
+            spacing_secs: method.window_secs(),
+            labels,
+            windows: Vec::new(),
+            whole_file: false,
+            complete: false,
+        }
+    }
+
+    /// The windows the live view made ([`WindowScores::live`]) and their
+    /// embeddings, from `embeddings` (this run's), as a new run starts with
+    /// them: in time order, with slots 0, 1, 2... and the embeddings in that
+    /// order.
+    pub fn live_windows(&self, embeddings: &[f32]) -> (Vec<WindowScores>, Vec<f32>) {
+        let len = self.method.embedding_len();
+        let mut kept = Vec::new();
+        let mut emb = Vec::new();
+        for w in self.windows.iter().filter(|w| w.live) {
+            let e = embedding(embeddings, self.method, w.slot as usize);
+            match e {
+                Some(e) => emb.extend_from_slice(e),
+                None => emb.resize(emb.len() + len, 0.0),
+            }
+            kept.push(WindowScores {
+                slot: kept.len() as u32,
+                ..w.clone()
+            });
+        }
+        (kept, emb)
+    }
+
+    /// Windows Analyse made (not [`WindowScores::live`]).
+    pub fn analysed_windows(&self) -> usize {
+        self.windows.iter().filter(|w| !w.live).count()
+    }
+
+    /// The whole window starting at `start_s` (within [`SAME_WINDOW_S`]):
+    /// one of a full window's length, not a run's zero-padded last window.
+    pub fn full_window_at(&self, start_s: f64) -> Option<&WindowScores> {
+        let w = self.windows.get(self.window_at_start(start_s)?)?;
+        (w.end_s - w.start_s >= self.window_secs - 1e-6).then_some(w)
     }
 
     /// The window starting at `start_s` (within [`SAME_WINDOW_S`]).

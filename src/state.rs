@@ -1915,6 +1915,10 @@ pub struct ClassifierState {
     pub live_on: bool,
     /// What the live view is doing, for its status line.
     pub live: crate::live_embedding::LiveStatus,
+    /// The file and method whose results the live view is adding readings to
+    /// while the file plays (`crate::classifier::played`); `None` once
+    /// playback stops.
+    pub live_filling: Option<(u64, crate::classifier::Method)>,
 }
 
 /// Power-spectral-density panel settings.
