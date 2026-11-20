@@ -30,105 +30,12 @@ const MAP_POINTS: usize = 600;
 /// Points in the spectrum line.
 const SPECTRUM_POINTS: usize = 400;
 
-/// A PCA fit of the session's embeddings.
-#[derive(Clone)]
-pub struct Fit {
-    pub mean: Vec<f32>,
-    pub comps: [Vec<f32>; 2],
-    /// Share of the total variance on each component, 0 to 1.
-    pub share: [f32; 2],
-    /// Number of readings the fit used.
-    pub n: usize,
-}
+pub use crate::pca::{fit_pca, Fit};
+use crate::pca::dot;
 
 thread_local! {
     static FIT: RefCell<Option<Fit>> = const { RefCell::new(None) };
     static UMAP_HOOK: RefCell<Option<Closure<dyn Fn() -> JsValue>>> = const { RefCell::new(None) };
-}
-
-fn dot(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
-}
-
-fn normalize(v: &mut [f32]) -> f32 {
-    let n = dot(v, v).sqrt();
-    if n > 0.0 {
-        v.iter_mut().for_each(|x| *x /= n);
-    }
-    n
-}
-
-/// The first two principal components of `points` by power iteration, with
-/// signs matched to `prev` so the picture does not flip between fits.
-pub fn fit_pca(points: &[&[f32]], prev: Option<&Fit>) -> Option<Fit> {
-    let n = points.len();
-    let d = points.first()?.len();
-    if n < 3 || d == 0 {
-        return None;
-    }
-    let mut mean = vec![0.0f32; d];
-    for p in points {
-        for (m, x) in mean.iter_mut().zip(*p) {
-            *m += x;
-        }
-    }
-    mean.iter_mut().for_each(|m| *m /= n as f32);
-    let centred: Vec<Vec<f32>> = points
-        .iter()
-        .map(|p| p.iter().zip(&mean).map(|(x, m)| x - m).collect())
-        .collect();
-    let total: f32 = centred.iter().map(|c| dot(c, c)).sum::<f32>() / n as f32;
-    if total <= 0.0 {
-        return None;
-    }
-    let mut comps: Vec<Vec<f32>> = Vec::new();
-    let mut share = [0.0f32; 2];
-    for k in 0..2 {
-        // Start from the previous fit's axis if there is one, else from the
-        // reading furthest from the mean.
-        let mut v = prev.map(|p| p.comps[k].clone()).unwrap_or_else(|| {
-            centred
-                .iter()
-                .max_by(|a, b| dot(a, a).total_cmp(&dot(b, b)))
-                .cloned()
-                .unwrap_or_else(|| vec![1.0; d])
-        });
-        for _ in 0..60 {
-            let mut w = vec![0.0f32; d];
-            for c in &centred {
-                let s = dot(c, &v);
-                for (wi, ci) in w.iter_mut().zip(c) {
-                    *wi += s * ci;
-                }
-            }
-            for prev_c in &comps {
-                let s = dot(&w, prev_c);
-                for (wi, pi) in w.iter_mut().zip(prev_c) {
-                    *wi -= s * pi;
-                }
-            }
-            if normalize(&mut w) == 0.0 {
-                break;
-            }
-            v = w;
-        }
-        normalize(&mut v);
-        if let Some(p) = prev {
-            if dot(&v, &p.comps[k]) < 0.0 {
-                v.iter_mut().for_each(|x| *x = -*x);
-            }
-        }
-        let var: f32 = centred.iter().map(|c| dot(c, &v).powi(2)).sum::<f32>() / n as f32;
-        share[k] = var / total;
-        comps.push(v);
-    }
-    let [a, b]: [Vec<f32>; 2] = comps.try_into().ok()?;
-    Some(Fit {
-        mean,
-        comps: [a, b],
-        share,
-        n,
-    })
 }
 
 /// Cosine similarity, 0 when either vector is all zero.
@@ -375,27 +282,6 @@ pub fn call(name: &str, args: &[&JsValue]) -> Option<JsValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn pca_finds_the_long_axis() {
-        // Points along (1, 1, 0) with a little spread along (0, 0, 1).
-        let pts: Vec<Vec<f32>> = (0..20)
-            .map(|i| {
-                let t = i as f32 - 10.0;
-                vec![t, t, if i % 2 == 0 { 0.5 } else { -0.5 }]
-            })
-            .collect();
-        let refs: Vec<&[f32]> = pts.iter().map(|p| p.as_slice()).collect();
-        let f = fit_pca(&refs, None).unwrap();
-        let c = &f.comps[0];
-        assert!((c[0].abs() - 0.7071).abs() < 1e-3 && (c[1].abs() - 0.7071).abs() < 1e-3);
-        // The spread along z is slightly correlated with t, so not exactly 0.
-        assert!(c[2].abs() < 0.02, "{c:?}");
-        assert!(f.share[0] > 0.99 && f.share[1] > 0.0);
-        // A refit keeps the signs.
-        let g = fit_pca(&refs, Some(&f)).unwrap();
-        assert!(dot(&g.comps[0], &f.comps[0]) > 0.99);
-    }
 
     #[test]
     fn top_dims_by_variance() {

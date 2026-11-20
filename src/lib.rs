@@ -25,6 +25,7 @@ pub mod native_save;
 pub mod note_line;
 pub mod opfs;
 pub mod opfs_audio;
+pub mod pca;
 pub mod project;
 pub mod project_store;
 pub mod rate_notes;
