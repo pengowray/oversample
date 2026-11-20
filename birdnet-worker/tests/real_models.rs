@@ -740,10 +740,12 @@ fn birdnet_v3_finds_gentoo_penguin_and_skips_digital_silence() {
     }
     // Window 6 starts where the silence does; the resampler's filter may
     // leave the recording's last echo in its first samples.
-    eprintln!(
-        "window 6 (starts at the silence): {} scores",
-        out.windows[6].2.len()
-    );
+    if let Some(top) = out.windows[6].2.first() {
+        eprintln!(
+            "window 6 (starts at the silence): {} {:.3}",
+            names[top.class as usize], top.confidence
+        );
+    }
     for i in 7..9 {
         assert!(out.windows[i].2.is_empty(), "window {i} was scored");
         let e = &out.embeddings[i * V3_EMBEDDING_LEN..(i + 1) * V3_EMBEDDING_LEN];
