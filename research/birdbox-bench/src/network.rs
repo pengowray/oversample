@@ -144,7 +144,17 @@ pub fn cut_demo_graph(proto: &mut tract_onnx::pb::ModelProto) -> TractResult<()>
         name: "just_bird_network".into(),
         node: nodes,
         initializer,
-        input: vec![ValueInfoProto { name: "images".into(), ..Default::default() }],
+        input: vec![ValueInfoProto {
+            name: "images".into(),
+            r#type: Some(tract_onnx::pb::TypeProto {
+                value: Some(tract_onnx::pb::type_proto::Value::TensorType(tract_onnx::pb::type_proto::Tensor {
+                    elem_type: ONNX_FLOAT,
+                    shape: None,
+                })),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }],
         output: vec![ValueInfoProto { name: "output0".into(), ..Default::default() }],
         ..Default::default()
     };
