@@ -1446,7 +1446,9 @@ pub fn draw_score_strips(
 
     // Names over the left end of each row, as outlined text with no box, so
     // the cells under a name stay visible.
-    ctx.set_font("11px sans-serif");
+    // Semi-bold with a solid dark outline, so the name stays readable over
+    // a brightly filled cell.
+    ctx.set_font("600 11px sans-serif");
     ctx.set_text_baseline("middle");
     for (r, row) in strips.rows.iter().enumerate() {
         let y0 = r as f64 * SCORE_ROW_H;
@@ -1458,10 +1460,10 @@ pub fn draw_score_strips(
         }
         let y = y0 + (SCORE_ROW_H - 1.0) / 2.0 + 0.5;
         ctx.set_line_join("round");
-        ctx.set_line_width(3.0);
-        ctx.set_stroke_style_str("rgba(10, 10, 10, 0.9)");
+        ctx.set_line_width(3.5);
+        ctx.set_stroke_style_str("#0a0a0a");
         let _ = ctx.stroke_text(&row.label, x, y);
-        ctx.set_fill_style_str("rgba(240, 240, 245, 0.95)");
+        ctx.set_fill_style_str("#ffffff");
         let _ = ctx.fill_text(&row.label, x, y);
     }
 }

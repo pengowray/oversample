@@ -391,7 +391,7 @@ pub fn hint(top: &GroupTop, name: impl Fn(u16) -> String) -> String {
 
 /// Each group's hint. Groups named after the same class also get that
 /// class's average confidence in the group, which is what tells them apart:
-/// "mostly Gentoo Penguin, average confidence 0.97".
+/// "mostly Gentoo Penguin, avg 0.97".
 pub fn hints(tops: &[GroupTop], name: impl Fn(u16) -> String) -> Vec<String> {
     tops.iter()
         .enumerate()
@@ -404,7 +404,7 @@ pub fn hints(tops: &[GroupTop], name: impl Fn(u16) -> String) -> Vec<String> {
                     .enumerate()
                     .any(|(j, other)| j != i && named_class(other) == class);
             if shared {
-                format!("{base}, average confidence {:.2}", top.mean)
+                format!("{base}, avg {:.2}", top.mean)
             } else {
                 base
             }
@@ -622,8 +622,8 @@ mod tests {
         assert_eq!(
             hints(&tops, name),
             [
-                "mostly Bravo, average confidence 0.95",
-                "mostly Bravo, average confidence 0.15",
+                "mostly Bravo, avg 0.95",
+                "mostly Bravo, avg 0.15",
                 "mostly Charlie",
             ]
         );

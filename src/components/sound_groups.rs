@@ -499,9 +499,10 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                         format!("\nMost often second: {}", class_name(run, c))
                     });
                     format!(
-                        "Top class in {count} of {} windows: {}{second}",
+                        "Top class in {count} of {} windows: {}\nAverage confidence: {:.2}{second}",
                         top.size,
-                        class_name(run, class)
+                        class_name(run, class),
+                        top.mean
                     )
                 });
                 view! {
