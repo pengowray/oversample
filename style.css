@@ -4750,6 +4750,25 @@ a.open-link-btn {
     flex-direction: row;
     align-items: center;
 }
+/* The chip is about 77 px wide at 375 px, which left 23 px for the
+   microphone's name on one line ("Bro..."). The name gets two lines and
+   less padding; fit-text (index.html) still shrinks it when one word is
+   wider than the chip. */
+.bottom-toolbar.mobile .mic-select-btn {
+    padding: 0 8px;
+    gap: 4px;
+}
+.bottom-toolbar.mobile .mic-select-btn .layer-btn-value {
+    font-size: 12px;
+    line-height: 1.15;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    /* No "..." in the middle of the first line: fit-text shrinks a word
+       that is too wide, and the line clamp marks a cut after line two. */
+    text-overflow: clip;
+}
 .bottom-toolbar.mobile .mic-options-btn {
     height: 40px;
     min-height: 0;

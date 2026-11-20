@@ -359,7 +359,7 @@ fn not_drawn_reason(form: Form<'static>) -> Option<&'static str> {
 /// `touch`: on a phone or tablet, where there is no Shift key or scroll wheel.
 fn out_of_view_text(o: OutOfView, touch: bool) -> String {
     let how = if touch {
-        "Zoom out on frequency to see them."
+        "Zoom out on frequency (pinch two fingers together, one above the other) to see them."
     } else {
         "Zoom out on frequency (Shift + scroll wheel) to see them."
     };
