@@ -153,6 +153,7 @@ pub fn row(
             label: "Sound groups".to_string(),
             scientific: String::new(),
             unlikely: false,
+            colour: None,
             cells,
         },
         names,

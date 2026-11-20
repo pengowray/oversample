@@ -1271,8 +1271,14 @@
       // not move up and down as classes come and go.
       el.__rows = Math.max(el.__rows || 1, d.rows.length);
       p.strip.style.height = `${el.__rows * ROW_H + CHANGE_H + 36}px`;
-      const strip = chartFor(p.strip);
-      strip.setOption(stripOptions(d), { replaceMerge: ['series', 'yAxis', 'grid', 'xAxis', 'graphic'] });
+      // Nothing heard yet (a file open and paused shows only the reading of
+      // where Play starts): the strip and its change trace would be empty
+      // frames, so they are hidden until the first reading.
+      p.strip.style.display = d.heard ? '' : 'none';
+      if (d.heard) {
+        const strip = chartFor(p.strip);
+        strip.setOption(stripOptions(d), { replaceMerge: ['series', 'yAxis', 'grid', 'xAxis', 'graphic'] });
+      }
       const map = chartFor(p.map, () => viewChanged(el));
       const t0 = performance.now();
       if (!map.__ready && el.__species) {

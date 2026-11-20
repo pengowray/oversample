@@ -48,6 +48,10 @@ pub struct ScoreRow {
     /// A bird the location list says is unlikely at the recording's place and
     /// month: the flag is drawn before the label.
     pub unlikely: bool,
+    /// A species row's colour slot (`canvas::overlays::species_colour`), the
+    /// same as its swatch in the results lists; `None` for the shared grey
+    /// and for rows that are not a species.
+    pub colour: Option<usize>,
     /// Per window: the value, or `None` when the run has none (outside the
     /// window's top 10, or the window's embedding not in yet).
     pub cells: Vec<Option<f32>>,

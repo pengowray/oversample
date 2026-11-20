@@ -97,6 +97,7 @@ fn build(state: AppState) -> Option<ScoreStrips> {
     state.classifier.results().with(|m| {
         let run = m.get(&(file, method))?;
         let mut rows = Vec::new();
+        let order = crate::classifier::summary::colour_order(run);
         for scientific in &species {
             // Not among this run's classes (a BattyBirdNET region without
             // the species): no row.
@@ -109,6 +110,7 @@ fn build(state: AppState) -> Option<ScoreStrips> {
                 label: display_name(label),
                 scientific: scientific.clone(),
                 unlikely: location::unlikely_here(state, file, method, label),
+                colour: order.iter().position(|&c| c == class),
                 cells: species_cells(run, class),
             });
         }
@@ -130,6 +132,7 @@ fn build(state: AppState) -> Option<ScoreStrips> {
                     label: format!("PC{}", k + 1),
                     scientific: String::new(),
                     unlikely: false,
+                    colour: None,
                     cells,
                 });
             }

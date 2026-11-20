@@ -1101,6 +1101,20 @@ pub const NOT_SPECIES_COLOUR: &str = "rgba(160, 160, 160, 0.6)";
 /// A bat call outside every species window, while species colours are shown.
 const UNLABELLED_CALL: (&str, &str) = ("rgba(170, 170, 170, 0.6)", "rgba(170, 170, 170, 0.06)");
 
+/// The colours of `SPECIES_COLOURS` and `SPECIES_OTHER` as red, green, blue,
+/// for cells whose opacity follows the score.
+const SPECIES_RGB: [(u8, u8, u8); 3] = [(255, 110, 180), (79, 195, 247), (179, 136, 255)];
+const SPECIES_OTHER_RGB: (u8, u8, u8) = (220, 220, 220);
+
+/// A species score cell's fill: the species' colour (grey without a slot) at
+/// opacity `alpha`.
+fn species_cell_fill(slot: Option<usize>, alpha: f64) -> String {
+    let (r, g, b) = slot
+        .and_then(|s| SPECIES_RGB.get(s).copied())
+        .unwrap_or(SPECIES_OTHER_RGB);
+    format!("rgba({r}, {g}, {b}, {alpha:.3})")
+}
+
 /// Stroke and fill for a species' colour slot (see `SPECIES_COLOURS`).
 pub fn species_colour(slot: usize) -> (&'static str, &'static str) {
     SPECIES_COLOURS.get(slot).copied().unwrap_or(SPECIES_OTHER)
@@ -1308,7 +1322,7 @@ const PC_FIFTH_COLOURS: [&str; 5] = ["#4a8ee0", "#2f66b8", "#6a6963", "#b25e18",
 /// time axis (`scroll` seconds at the left edge, `visible_time` seconds across
 /// `width` pixels).
 ///
-/// A species row fills each window green, more opaque for higher scores and
+/// A species row fills each window in the species' colour, more opaque for higher scores and
 /// with a step at the minimum confidence; a window without a stored score
 /// (outside its top 10) stays empty. A component row draws each window's
 /// percentile as a level line (low at the bottom), in the colour of its
@@ -1360,7 +1374,7 @@ pub fn draw_score_strips(
                 for (x, score) in cols.into_iter().enumerate() {
                     let Some(score) = score else { continue };
                     let a = species_alpha(score, strips.min_confidence);
-                    ctx.set_fill_style_str(&format!("rgba(80, 220, 150, {a:.3})"));
+                    ctx.set_fill_style_str(&species_cell_fill(row.colour, a));
                     ctx.fill_rect(x as f64, y0 + 1.0, 1.0, inner_h - 1.0);
                 }
             }
@@ -1376,7 +1390,7 @@ pub fn draw_score_strips(
                     let x0 = x_of(s).max(0.0);
                     let x1 = x_of(e).min(width);
                     let a = species_alpha(score, strips.min_confidence);
-                    ctx.set_fill_style_str(&format!("rgba(80, 220, 150, {a:.3})"));
+                    ctx.set_fill_style_str(&species_cell_fill(row.colour, a));
                     ctx.fill_rect(x0, y0 + 1.0, (x1 - x0 - gap).max(1.0), inner_h - 1.0);
                 }
             }
