@@ -18,7 +18,7 @@
 //! `crate::components::sound_groups`.
 
 use super::ClassifierRun;
-use crate::pca::{project_top, SplitMix64};
+use crate::pca::{SplitMix64, TopProjection};
 
 /// The group counts offered.
 pub const GROUP_CHOICES: [usize; 3] = [2, 3, 4];
@@ -76,9 +76,62 @@ pub struct Grouping {
 }
 
 /// Reduce the first `embeddings.len() / dim` windows' embeddings
-/// (`ClassifierState::embeddings`, `dim` floats per window).
+/// (`ClassifierState::embeddings`, `dim` floats per window), in one go.
 pub fn reduce(embeddings: &[f32], dim: usize) -> Reduced {
-    let n = embeddings.len().checked_div(dim).unwrap_or(0);
+    let mut r = Reducer::new(embeddings, dim);
+    while !r.step() {}
+    r.finish()
+}
+
+/// [`reduce`] one round of the principal component search at a time, so a
+/// caller on the page's thread can let the page draw between rounds.
+pub struct Reducer {
+    n: usize,
+    dims: usize,
+    projection: Option<TopProjection>,
+}
+
+impl Reducer {
+    /// Copies the embeddings, so `embeddings` can be let go before stepping.
+    pub fn new(embeddings: &[f32], dim: usize) -> Self {
+        let n = embeddings.len().checked_div(dim).unwrap_or(0);
+        match centred(embeddings, dim, n) {
+            Some(x) => {
+                let dims = MAX_DIMS.min(n - 1).min(dim);
+                Self {
+                    n,
+                    dims,
+                    projection: Some(TopProjection::new(x, n, dim, dims)),
+                }
+            }
+            None => Self {
+                n,
+                dims: 0,
+                projection: None,
+            },
+        }
+    }
+
+    /// One round; true when done.
+    pub fn step(&mut self) -> bool {
+        self.projection.as_mut().is_none_or(TopProjection::step)
+    }
+
+    pub fn finish(self) -> Reduced {
+        Reduced {
+            n: self.n,
+            dims: self.dims,
+            points: self
+                .projection
+                .map_or_else(Vec::new, TopProjection::finish),
+        }
+    }
+}
+
+/// The first `n` windows scaled to length 1 and centred, or `None` when
+/// there is nothing to separate them by (fewer than 2 windows, or all the
+/// same).
+fn centred(embeddings: &[f32], dim: usize, n: usize) -> Option<Vec<f32>> {
     let mut x: Vec<f32> = embeddings[..n * dim].to_vec();
     // Scale each window to length 1. A window of zeros stays zeros.
     for row in x.chunks_exact_mut(dim.max(1)) {
@@ -100,20 +153,7 @@ pub fn reduce(embeddings: &[f32], dim: usize) -> Reduced {
             spread = spread.max(v.abs());
         }
     }
-    // Identical windows (or a single window): nothing to separate them by.
-    if n < 2 || spread < 1e-6 {
-        return Reduced {
-            n,
-            dims: 0,
-            points: Vec::new(),
-        };
-    }
-    let dims = MAX_DIMS.min(n - 1).min(dim);
-    Reduced {
-        n,
-        dims,
-        points: project_top(&x, n, dim, dims),
-    }
+    (n >= 2 && spread >= 1e-6).then_some(x)
 }
 
 fn dist2(a: &[f32], b: &[f32]) -> f32 {
@@ -468,15 +508,42 @@ mod tests {
         // 1,200 windows of 1,024 floats: an hour of BirdNET at 3 s a window.
         let dim = 1024;
         let mut rng = SplitMix64::new(11);
-        let e: Vec<f32> = (0..1200 * dim).map(|_| rng.next_f64() as f32).collect();
-        let t = std::time::Instant::now();
-        let r = reduce(&e, dim);
-        let reduced = t.elapsed();
-        let t = std::time::Instant::now();
-        for k in GROUP_CHOICES {
-            group(&r, k).unwrap();
+        // Pure noise: no strong components, so the search runs all its rounds
+        // (the slowest case).
+        let noise: Vec<f32> = (0..1200 * dim).map(|_| rng.next_f64() as f32).collect();
+        // Closer to real embeddings: a few sound types (directions) with
+        // noise on top.
+        let types: Vec<Vec<f32>> = (0..6)
+            .map(|_| (0..dim).map(|_| rng.next_f64() as f32).collect())
+            .collect();
+        let mut sounds = Vec::with_capacity(1200 * dim);
+        for i in 0..1200 {
+            let t = &types[(i * 7 / 5) % 6];
+            sounds.extend(t.iter().map(|v| v + rng.next_f64() as f32 * 0.5));
         }
-        let grouped = t.elapsed() / 3;
-        println!("reduce {reduced:?}, group (mean of k = 2, 3, 4) {grouped:?}");
+        for (name, e) in [("noise", &noise), ("6 sound types", &sounds)] {
+            let t = std::time::Instant::now();
+            let mut r = Reducer::new(e, dim);
+            let mut longest = std::time::Duration::ZERO;
+            loop {
+                let s = std::time::Instant::now();
+                let done = r.step();
+                longest = longest.max(s.elapsed());
+                if done {
+                    break;
+                }
+            }
+            let rounds = r.projection.as_ref().map_or(0, TopProjection::rounds);
+            let r = r.finish();
+            let reduced = t.elapsed();
+            let t = std::time::Instant::now();
+            for k in GROUP_CHOICES {
+                group(&r, k).unwrap();
+            }
+            let grouped = t.elapsed() / 3;
+            println!(
+                "{name}: reduce {reduced:?} ({rounds} rounds, longest {longest:?}), group (mean of k = 2, 3, 4) {grouped:?}"
+            );
+        }
     }
 }

@@ -157,15 +157,26 @@ fn compute(state: AppState, key: Key, k: usize, reduce: bool, done: ArcTrigger) 
         crate::web_util::yield_now().await;
         if reduce {
             let len = key.1.embedding_len();
-            let t0 = now_ms();
-            let made = state.classifier.embeddings().with_untracked(|m| {
+            let started = state.classifier.embeddings().with_untracked(|m| {
                 m.get(&key).map(|e| {
                     let w = e.len() / len;
-                    (w, fingerprint(e, len), sg::reduce(&e[..w * len], len))
+                    (w, fingerprint(e, len), sg::Reducer::new(&e[..w * len], len))
                 })
             });
-            if let Some((windows, first, reduced)) = made {
-                let took_ms = now_ms() - t0;
+            if let Some((windows, first, mut reducer)) = started {
+                // One round at a time (about 20 ms each for an hour of
+                // BirdNET, natively), letting the page draw in between.
+                let mut took_ms = 0.0;
+                loop {
+                    let t0 = now_ms();
+                    let done = reducer.step();
+                    took_ms += now_ms() - t0;
+                    if done {
+                        break;
+                    }
+                    crate::web_util::yield_now().await;
+                }
+                let reduced = reducer.finish();
                 CACHE.with(|c| {
                     c.borrow_mut().insert(
                         key,

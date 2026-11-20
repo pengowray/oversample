@@ -104,10 +104,27 @@ pub fn fit_pca(points: &[&[f32]], prev: Option<&Fit>) -> Option<Fit> {
 }
 
 /// Most rounds of [`project_top`]'s iteration.
-const SUBSPACE_ROUNDS: usize = 40;
-/// [`project_top`] stops once every basis vector moves less than this
-/// (1 minus the cosine between rounds).
-const SUBSPACE_TOLERANCE: f32 = 1e-4;
+const SUBSPACE_ROUNDS: usize = 25;
+/// [`project_top`] stops once the basis moves less than this between rounds:
+/// 1 minus the share of the new basis that lies in the old one's span.
+const SUBSPACE_TOLERANCE: f32 = 1e-3;
+
+/// [`dot`] with eight running sums, which the compiler can keep in vector
+/// registers: several times faster on long vectors. The sum is added up in
+/// a different order, so the last bits can differ from [`dot`].
+pub fn dot_fast(a: &[f32], b: &[f32]) -> f32 {
+    let len = a.len().min(b.len());
+    let mut acc = [0.0f32; 8];
+    let (ac, a_rest) = a[..len].as_chunks::<8>();
+    let (bc, b_rest) = b[..len].as_chunks::<8>();
+    let tail: f32 = a_rest.iter().zip(b_rest).map(|(x, y)| x * y).sum();
+    for (x, y) in ac.iter().zip(bc) {
+        for i in 0..8 {
+            acc[i] += x[i] * y[i];
+        }
+    }
+    acc.iter().sum::<f32>() + tail
+}
 
 /// A small, fixed pseudo-random generator (SplitMix64), so results that use
 /// it are the same on every run and every platform.
@@ -152,8 +169,8 @@ fn orthonormalise(basis: &mut [Vec<f32>]) {
 }
 
 /// Each point's coordinates on the top `dims` principal components of the
-/// points. `points` holds `n` points of `d` values back to back, already
-/// centred (mean zero). The result holds `n` rows of `dims` values.
+/// points, worked out one round at a time so a caller on the page's thread
+/// can let the page draw between rounds ([`TopProjection::step`]).
 ///
 /// The components come from block power iteration (orthogonal iteration)
 /// from a fixed start, so the result is the same each time. The basis is only
@@ -162,26 +179,69 @@ fn orthonormalise(basis: &mut [Vec<f32>]) {
 ///
 /// Cost: about `2 * n * d * dims` multiply-adds per round, at most
 /// [`SUBSPACE_ROUNDS`] rounds.
-pub fn project_top(points: &[f32], n: usize, d: usize, dims: usize) -> Vec<f32> {
-    if n == 0 || d == 0 || dims == 0 || points.len() < n * d {
-        return vec![0.0; n * dims];
+pub struct TopProjection {
+    points: Vec<f32>,
+    n: usize,
+    d: usize,
+    dims: usize,
+    basis: Vec<Vec<f32>>,
+    rounds: usize,
+    settled: bool,
+}
+
+impl TopProjection {
+    /// `points` holds `n` points of `d` values back to back, already centred
+    /// (mean zero).
+    pub fn new(points: Vec<f32>, n: usize, d: usize, dims: usize) -> Self {
+        let usable = n > 0 && d > 0 && dims > 0 && points.len() >= n * d;
+        let mut rng = SplitMix64::new(0x0b5e_55ed_ca11_5eed);
+        let mut basis: Vec<Vec<f32>> = if usable {
+            (0..dims)
+                .map(|_| (0..d).map(|_| rng.next_f64() as f32 * 2.0 - 1.0).collect())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        orthonormalise(&mut basis);
+        Self {
+            points,
+            n,
+            d,
+            dims,
+            basis,
+            rounds: 0,
+            settled: !usable,
+        }
     }
-    let rows = || points.chunks_exact(d).take(n);
-    let mut rng = SplitMix64::new(0x0b5e_55ed_ca11_5eed);
-    let mut basis: Vec<Vec<f32>> = (0..dims)
-        .map(|_| (0..d).map(|_| rng.next_f64() as f32 * 2.0 - 1.0).collect())
-        .collect();
-    orthonormalise(&mut basis);
-    let mut coords = vec![0.0f32; n * dims];
-    for _ in 0..SUBSPACE_ROUNDS {
-        // coords = X * basis, then next = X^T * coords.
-        for (row, out) in rows().zip(coords.chunks_exact_mut(dims)) {
-            for (o, v) in out.iter_mut().zip(&basis) {
-                *o = dot(row, v);
+
+    fn rows(&self) -> impl Iterator<Item = &[f32]> {
+        self.points.chunks_exact(self.d.max(1)).take(self.n)
+    }
+
+    /// Each point's coordinates on the current basis, `n` rows of `dims`.
+    fn coords(&self) -> Vec<f32> {
+        let mut coords = vec![0.0f32; self.n * self.dims];
+        if self.basis.is_empty() {
+            return coords;
+        }
+        for (row, out) in self.rows().zip(coords.chunks_exact_mut(self.dims)) {
+            for (o, v) in out.iter_mut().zip(&self.basis) {
+                *o = dot_fast(row, v);
             }
         }
-        let mut next = vec![vec![0.0f32; d]; dims];
-        for (row, c) in rows().zip(coords.chunks_exact(dims)) {
+        coords
+    }
+
+    /// One round. Returns true once the basis has settled or the rounds are
+    /// used up; further calls do nothing.
+    pub fn step(&mut self) -> bool {
+        if self.settled || self.rounds >= SUBSPACE_ROUNDS {
+            return true;
+        }
+        // next = X^T * (X * basis), made orthonormal.
+        let coords = self.coords();
+        let mut next = vec![vec![0.0f32; self.d]; self.dims];
+        for (row, c) in self.rows().zip(coords.chunks_exact(self.dims)) {
             for (w, &s) in next.iter_mut().zip(c) {
                 for (wi, xi) in w.iter_mut().zip(row) {
                     *wi += s * xi;
@@ -189,21 +249,35 @@ pub fn project_top(points: &[f32], n: usize, d: usize, dims: usize) -> Vec<f32> 
             }
         }
         orthonormalise(&mut next);
-        let settled = next
+        // Share of the new basis inside the old one's span: 1 when the span
+        // has stopped moving, whatever the rotation within it.
+        let kept: f32 = next
             .iter()
-            .zip(&basis)
-            .all(|(a, b)| 1.0 - dot(a, b).abs() < SUBSPACE_TOLERANCE);
-        basis = next;
-        if settled {
-            break;
-        }
+            .map(|w| self.basis.iter().map(|v| dot_fast(w, v).powi(2)).sum::<f32>())
+            .sum::<f32>()
+            / self.dims as f32;
+        self.settled = 1.0 - kept < SUBSPACE_TOLERANCE;
+        self.basis = next;
+        self.rounds += 1;
+        self.settled || self.rounds >= SUBSPACE_ROUNDS
     }
-    for (row, out) in rows().zip(coords.chunks_exact_mut(dims)) {
-        for (o, v) in out.iter_mut().zip(&basis) {
-            *o = dot(row, v);
-        }
+
+    /// Rounds run so far.
+    pub fn rounds(&self) -> usize {
+        self.rounds
     }
-    coords
+
+    /// The coordinates on the basis found: `n` rows of `dims` values.
+    pub fn finish(self) -> Vec<f32> {
+        self.coords()
+    }
+}
+
+/// [`TopProjection`] run to the end in one go.
+pub fn project_top(points: &[f32], n: usize, d: usize, dims: usize) -> Vec<f32> {
+    let mut p = TopProjection::new(points.to_vec(), n, d, dims);
+    while !p.step() {}
+    p.finish()
 }
 
 #[cfg(test)]
