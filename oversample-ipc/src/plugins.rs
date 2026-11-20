@@ -21,10 +21,17 @@ pub struct DeviceModelResult {
 }
 
 /// `plugin:geolocation|getWifiSsid` — `ssid` is null when unavailable / not on WiFi.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// `supported` is false when the device has no WiFi hardware.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WifiSsidResult {
     #[serde(default)]
     pub ssid: Option<String>,
+    #[serde(default = "default_true")]
+    pub supported: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// `plugin:geolocation|getCurrentLocation` — either a fix or `{ error }`.

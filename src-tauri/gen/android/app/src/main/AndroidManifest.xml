@@ -22,6 +22,10 @@
     <!-- GPS location for recording metadata (not required — works without GPS) -->
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
+    <!-- WiFi name for privacy zones (not required: ACCESS_WIFI_STATE alone would make
+         Play treat WiFi hardware as required) -->
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+
     <!-- USB bat microphone support (not required — works without USB host hardware) -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 

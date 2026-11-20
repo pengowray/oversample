@@ -214,6 +214,14 @@ class GeolocationPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun getWifiSsid(invoke: Invoke) {
         val result = JSObject()
+        // False on devices with no WiFi hardware; the app then turns privacy zones off.
+        val supported = activity.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI)
+        result.put("supported", supported)
+        if (!supported) {
+            result.put("ssid", org.json.JSONObject.NULL)
+            invoke.resolve(result)
+            return
+        }
         try {
             val wifiManager = activity.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             if (wifiManager == null) {

@@ -20,6 +20,8 @@ enum ZoneStatus {
     Active,
     NotOnZone,
     NoWifi,
+    /// The device has no WiFi hardware.
+    Unsupported,
 }
 
 /// Check current WiFi against saved privacy zones.
@@ -31,6 +33,10 @@ fn check_zone_status(state: AppState, status: RwSignal<ZoneStatus>) {
         )
         .await
         {
+            Ok(r) if !r.supported => {
+                status.set(ZoneStatus::Unsupported);
+                return;
+            }
             Ok(r) => r.ssid,
             Err(_) => {
                 status.set(ZoneStatus::NoWifi);
@@ -180,8 +186,16 @@ pub fn PrivacySettingsModal() -> impl IntoView {
                                 ZoneStatus::NoWifi => view! {
                                     <span style="color: #888;">"Not connected to WiFi"</span>
                                 }.into_any(),
+                                ZoneStatus::Unsupported => view! {
+                                    <span style="color: #888;">"This device has no WiFi. Privacy zones are not available."</span>
+                                }.into_any(),
                             }}
-                            <button class="privacy-refresh-btn" on:click=on_refresh title="Check current network">
+                            <button
+                                class="privacy-refresh-btn"
+                                on:click=on_refresh
+                                title="Check current network"
+                                style:display=move || (zone_status.get() == ZoneStatus::Unsupported).then_some("none")
+                            >
                                 "Check now"
                             </button>
                         </div>
@@ -210,7 +224,7 @@ pub fn PrivacySettingsModal() -> impl IntoView {
                         <button
                             class="privacy-btn"
                             on:click=on_add_network
-                            disabled=move || adding.get()
+                            disabled=move || adding.get() || zone_status.get() == ZoneStatus::Unsupported
                         >
                             {move || if adding.get() { "Requesting permission\u{2026}" } else { "Add current network" }}
                         </button>
