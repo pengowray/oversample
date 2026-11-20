@@ -4293,6 +4293,12 @@ a.open-link-btn {
     background: rgba(255, 255, 255, 0.07);
     color: #eee;
 }
+/* HFR off: the band on its bottom row is the band HFR would use, not one
+   in effect, so it is dimmer than other switched-off values (owner,
+   2026-11-20: "very dimmed"). 3.3:1, under 4.5:1 on purpose. */
+.hfr-switch:not(.on) .switch-btn-value:not(:hover) .switch-btn-value-text {
+    color: #666;
+}
 .switch-btn-value-text {
     flex: 1 1 auto;
     min-width: 0;

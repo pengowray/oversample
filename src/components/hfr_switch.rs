@@ -71,6 +71,31 @@ fn clear_band(state: AppState) {
     state.panels.layer_panel_open().set(None);
 }
 
+/// The band HFR uses when it is turned on with no band set: the range of the
+/// species named in the file's metadata when that fits the file, otherwise
+/// from the lowest bat frequency up (`FocusRange::hfr_default`). Tracks the
+/// open file. With no file open it assumes a 192 kHz recording.
+pub fn hfr_default_band(state: AppState) -> Option<FocusRange> {
+    let idx = state.library.current_index().get();
+    let (nyquist, species_range) = state.library.files().with(|files| {
+        let file = idx.and_then(|i| files.get(i));
+        let nyquist = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
+        let species_range = file.and_then(|f| {
+            use crate::bat_book::auto_resolve;
+            let favourites = state.bat_book.favourites().get_untracked();
+            let resolved = auto_resolve::resolve_auto(Some(f), &favourites);
+            let species_id = resolved.matched_species_id?;
+            let entry = auto_resolve::find_entry_in_manifest(resolved.region, &species_id)
+                .or_else(|| auto_resolve::find_entry_any_book(&species_id))?;
+            (entry.freq_lo_hz > 0.0 && entry.freq_hi_hz > entry.freq_lo_hz)
+                .then_some((entry.freq_lo_hz, entry.freq_hi_hz))
+        });
+        (nyquist, species_range)
+    });
+    let lowest = state.lowest_bat_hz_untracked() as f64;
+    FocusRange::hfr_default(species_range, lowest, nyquist)
+}
+
 /// Range of the bat-book species auto-resolved from the file's metadata.
 fn file_species_range(state: AppState) -> Option<(String, f64, f64)> {
     let files = state.library.files().get_untracked();
@@ -220,15 +245,21 @@ pub fn HfrSwitch() -> impl IntoView {
     });
     let no_file = move || state.no_recording_open();
 
-    // The band in use. While HFR is off it stays, dimmed, when a band is
-    // still set, so turning HFR on and off moves nothing.
+    // The band in use. While HFR is off the row shows, dimmed, the band HFR
+    // will use: the band still set, or the one HFR picks when none is set.
     let value = Signal::derive(move || {
         let lo = state.filter.band_ff_freq_lo().get();
         let hi = state.filter.band_ff_freq_hi().get();
-        if hi > lo {
-            format!("{}\u{2013}{} kHz", fmt_khz(lo), fmt_khz(hi))
+        let band = if hi > lo {
+            Some((lo, hi))
+        } else if state.no_recording_open() {
+            None
         } else {
-            "Band presets".to_string()
+            hfr_default_band(state).map(|r| (r.lo, r.hi))
+        };
+        match band {
+            Some((lo, hi)) => format!("{}\u{2013}{} kHz", fmt_khz(lo), fmt_khz(hi)),
+            None => "Band presets".to_string(),
         }
     });
 

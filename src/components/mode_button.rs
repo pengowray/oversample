@@ -228,26 +228,6 @@ pub fn ModeRadioGroup(#[prop(default = false)] list_layout: bool) -> impl IntoVi
         if stack.hfr_enabled() {
             let eff = stack.effective_range();
             if !eff.is_active() {
-                let files = state.library.files().get();
-                let idx = state.library.current_index().get();
-                let file = idx.and_then(|i| files.get(i));
-                let nyquist = file.map(|f| f.spectrogram.max_freq).unwrap_or(96_000.0);
-
-                let species_range = file.and_then(|f| {
-                    use crate::bat_book::auto_resolve;
-                    let favourites = state.bat_book.favourites().get_untracked();
-                    let resolved = auto_resolve::resolve_auto(Some(f), &favourites);
-                    let species_id = resolved.matched_species_id?;
-                    let entry = auto_resolve::find_entry_in_manifest(resolved.region, &species_id)
-                        .or_else(|| auto_resolve::find_entry_any_book(&species_id))?;
-                    if entry.freq_lo_hz > 0.0 && entry.freq_hi_hz > entry.freq_lo_hz {
-                        Some((entry.freq_lo_hz, entry.freq_hi_hz))
-                    } else {
-                        None
-                    }
-                });
-
-                let lowest = state.lowest_bat_hz_untracked() as f64;
                 // Writing the focus stack runs this effect again. An empty band
                 // would leave the effective range inactive, so the effect would
                 // write it again forever and the page would stop responding.
@@ -256,9 +236,7 @@ pub fn ModeRadioGroup(#[prop(default = false)] list_layout: bool) -> impl IntoVi
                 // species that calls at 35-80 kHz, or a 192 kHz file of one
                 // that calls at 105-115 kHz. `hfr_default` gives a band that
                 // fits the file, or none.
-                if let Some(range) =
-                    crate::focus_stack::FocusRange::hfr_default(species_range, lowest, nyquist)
-                {
+                if let Some(range) = crate::components::hfr_switch::hfr_default_band(state) {
                     state.set_band_ff_range(range.lo, range.hi);
                 }
             }
