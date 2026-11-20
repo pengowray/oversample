@@ -947,6 +947,7 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
             <div class="detection-annotate-row detection-radio-group detection-methods">
                 {option(DetectionMethod::Inbuilt, "In-built bat call detection", "Finds bat calls. Runs automatically.")}
                 {option(DetectionMethod::BirdNet, "BirdNET V2.4", "Bird species, plus some other sounds such as dog and engine")}
+                {option(DetectionMethod::BirdNetV3, "BirdNET+ V3.0", "Birds, insects, frogs and mammals, plus sounds such as sirens. Slower than V2.4")}
                 // Before BattyBirdNET, so the region list stays under it.
                 {option(DetectionMethod::Perch, "Perch 2.0", "Birds, frogs and insects, plus sounds such as thunder and traffic")}
                 {option(DetectionMethod::Bats, "BattyBirdNET", "Bat species of Europe and the USA")}
@@ -954,6 +955,7 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
             </div>
             // One live view for both models, so picking the other one restarts
             // the readings with it instead of building the view again.
+            // BirdNET+ V3.0 has no live view yet.
             <Show when=move || matches!(method(), DetectionMethod::BirdNet | DetectionMethod::Perch)>
                 <live_view::LiveView method=Signal::derive(move || match method() {
                     DetectionMethod::Perch => Method::Perch,
@@ -965,6 +967,7 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
                 DetectionMethod::BirdNet => view! { <ClassifierSection method=Method::BirdNet /> }.into_any(),
                 DetectionMethod::Perch => view! { <ClassifierSection method=Method::Perch /> }.into_any(),
                 DetectionMethod::Bats => view! { <ClassifierSection method=Method::Bats /> }.into_any(),
+                DetectionMethod::BirdNetV3 => view! { <ClassifierSection method=Method::BirdNetV3 /> }.into_any(),
             }}
         </div>
     }

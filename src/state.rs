@@ -1828,6 +1828,10 @@ pub struct CallDetectionState {
     /// show an animal, and 61 of 81 correct windows stay (`research/perch.md`,
     /// "Sound events").
     pub perch_min_confidence: f32,
+    /// The same for BirdNET+ V3.0. 0.25, the BirdNET team's suggestion: the
+    /// pruned model's scores run up to 0.16 lower than the full model's
+    /// (`research/birdnet-v3-bench/README.md`).
+    pub v3_min_confidence: f32,
     /// BirdNET and Perch: mark birds the BirdNET+ Geomodel does not expect at
     /// the recording's place and week (when its metadata has a place).
     pub mark_unexpected: bool,
@@ -1861,6 +1865,8 @@ pub enum DetectionMethod {
     Bats,
     /// Perch 2.0: birds, frogs, insects, some mammals and everyday sounds.
     Perch,
+    /// BirdNET+ V3.0: birds, insects, frogs, mammals and some other sounds.
+    BirdNetV3,
 }
 
 impl DetectionMethod {
@@ -1872,6 +1878,7 @@ impl DetectionMethod {
             DetectionMethod::BirdNet => Some(Method::BirdNet),
             DetectionMethod::Bats => Some(Method::Bats),
             DetectionMethod::Perch => Some(Method::Perch),
+            DetectionMethod::BirdNetV3 => Some(Method::BirdNetV3),
         }
     }
 }
@@ -3087,6 +3094,7 @@ impl AppState {
                 bat_pick: crate::classifier::BatPick::Auto,
                 min_confidence: 0.05,
                 perch_min_confidence: 0.3,
+                v3_min_confidence: 0.25,
                 mark_unexpected: true,
                 selected_window: None,
                 preview: None,

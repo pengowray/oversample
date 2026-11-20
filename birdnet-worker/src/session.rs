@@ -3,9 +3,10 @@
 
 use crate::denoise::stream::StreamDenoiser;
 use crate::denoise::{check_smooth_frames, Denoiser, TractMask};
-use crate::engine::{sigmoid, top_scores, Backbone, Head, MergedHeads};
+use crate::engine::{sigmoid, top_confidences, top_scores, Backbone, Head, MergedHeads};
 use crate::perch;
 use crate::resample::StreamResampler;
+use crate::v3;
 use crate::windows::{Window, Windower};
 use oversample_ipc::classifier::{
     ClassifierError, FromWorker, Method, ModelPart, ModelSlot, ToWorker,
@@ -41,6 +42,7 @@ struct Run {
 enum AudioModel {
     BirdNet(Backbone),
     Perch(perch::Embedding),
+    BirdNetV3(v3::Model),
 }
 
 /// The model that scores the audio model's output.
@@ -111,6 +113,9 @@ impl Session {
                         .map_err(|e| format!("{e:#}")),
                     ModelPart::PerchEmbedding => perch::Embedding::load(&bytes)
                         .map(|m| self.audio = Some((key.clone(), AudioModel::Perch(m))))
+                        .map_err(|e| format!("{e:#}")),
+                    ModelPart::BirdNetV3 => v3::Model::load(&bytes)
+                        .map(|m| self.audio = Some((key.clone(), AudioModel::BirdNetV3(m))))
                         .map_err(|e| format!("{e:#}")),
                     ModelPart::BatHead => Head::load(&bytes)
                         .map(|m| self.head = Some((key.clone(), HeadModel::Bat(m))))
@@ -408,7 +413,7 @@ impl Session {
                 }
                 let samples = att.samples.as_deref().unwrap_or_default();
                 // The model in the audio slot says which: BirdNET's backbone,
-                // or Perch's embedding model with its classifier.
+                // BirdNET+ V3.0, or Perch's embedding model with its classifier.
                 let payload = match (
                     self.audio.as_ref().map(|(_, m)| m),
                     self.head.as_ref().map(|(_, h)| h),
@@ -418,6 +423,14 @@ impl Session {
                         backbone.run(&window).map(|b| {
                             let mut payload = b.embedding;
                             payload.extend(b.logits.iter().map(|&l| sigmoid(l)));
+                            payload
+                        })
+                    }
+                    (Some(AudioModel::BirdNetV3(model)), _) => {
+                        let window = live_window(samples, source_rate, Method::BirdNetV3);
+                        model.run(&window).map(|o| {
+                            let mut payload = o.embedding;
+                            payload.extend(o.confidences);
                             payload
                         })
                     }
@@ -496,6 +509,7 @@ impl Session {
             (Method::Perch, Some(AudioModel::Perch(_)), _) => {
                 Err("Perch's classifier is not loaded")
             }
+            (Method::BirdNetV3, Some(AudioModel::BirdNetV3(_)), _) => Ok(()),
             _ => Err("no model loaded"),
         };
         if let Err(message) = ready {
@@ -522,6 +536,7 @@ impl Session {
                         (perch::top_scores(&logits), e.embedding)
                     })
                 }
+                (Some(AudioModel::BirdNetV3(model)), _) => v3_window(model, &w.samples),
                 _ => unreachable!("checked above"),
             };
             match res {
@@ -542,7 +557,24 @@ impl Session {
     }
 }
 
-/// The last window of `samples` (3 s for BirdNET, 5 s for Perch) at the
+/// BirdNET+ V3.0's scores and embedding for one window. A window of digital
+/// silence is not run: it gets no scores and an embedding of zeros, so later
+/// windows keep their places.
+fn v3_window(
+    model: &v3::Model,
+    samples: &[f32],
+) -> tract_onnx::prelude::TractResult<(Vec<oversample_ipc::classifier::Score>, Vec<f32>)> {
+    if v3::is_digital_silence(samples) {
+        return Ok((Vec::new(), vec![0.0; Method::BirdNetV3.embedding_len()]));
+    }
+    // The model's outputs went through its own sigmoid already.
+    model
+        .run(samples)
+        .map(|o| (top_confidences(&o.confidences), o.embedding))
+}
+
+/// The last window of `samples` (3 s for BirdNET and BirdNET+ V3.0, 5 s for
+/// Perch) at the
 /// model's rate: resampled from `source_rate`, then cut or zero-padded at the
 /// front to one window.
 pub fn live_window(samples: &[f32], source_rate: u32, method: Method) -> Vec<f32> {

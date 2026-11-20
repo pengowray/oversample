@@ -1,9 +1,10 @@
-//! The model files BirdNET, BattyBirdNET and Perch 2.0 need: where to download
-//! them, their size and SHA-256, and the attribution to show with results.
+//! The model files BirdNET, BattyBirdNET, Perch 2.0 and BirdNET+ V3.0 need:
+//! where to download them, their size and SHA-256, and the attribution to show
+//! with results.
 //!
-//! The URLs name a fixed Hugging Face revision, so a file never changes under
-//! the same name. Hugging Face sends CORS headers, so the browser can fetch them
-//! directly. Nothing here is bundled with the app: files are downloaded when the
+//! The URLs name a fixed Hugging Face revision, or a Zenodo record version
+//! (BirdNET+ V3.0), so a file never changes under the same name. Both send
+//! CORS headers, so the browser can fetch the files directly. Nothing here is bundled with the app: files are downloaded when the
 //! user asks, then kept (OPFS in the browser, the app data folder in Tauri).
 
 use super::{BatRegion, BatScope, Method, ModelPart};
@@ -28,6 +29,11 @@ pub enum FileKind {
     /// Perch 2.0's class names (one header line, then one per class), in the
     /// order of the classifier's outputs.
     PerchLabels,
+    /// BirdNET+ V3.0, the pruned float16 file as published: 3 s at 32 kHz in,
+    /// 11,725 confidences and a 1,280-value embedding out. Its labels are not
+    /// downloaded: a trimmed copy is served with the app
+    /// ([`BIRDNET_V3_LABELS_ASSET`]).
+    BirdNetV3,
     /// The BirdNET+ Geomodel: latitude, longitude and week in, a 0 to 1
     /// occurrence score for each of its 14,082 species out. Used to mark birds
     /// not expected at a recording's place and time.
@@ -63,6 +69,7 @@ impl ModelFile {
             FileKind::BatHead(_) => Some(ModelPart::BatHead),
             FileKind::PerchEmbedding => Some(ModelPart::PerchEmbedding),
             FileKind::PerchClassifier => Some(ModelPart::PerchClassifier),
+            FileKind::BirdNetV3 => Some(ModelPart::BirdNetV3),
             FileKind::Denoiser => Some(ModelPart::Denoiser),
             // Run on its own, outside the worker's two slots.
             FileKind::Geomodel => None,
@@ -166,6 +173,26 @@ pub const PERCH_LABELS: ModelFile = ModelFile {
 
 /// Everything Perch needs, largest first.
 pub const PERCH_FILES: [&ModelFile; 3] = [&PERCH_CLASSIFIER, &PERCH_EMBEDDING, &PERCH_LABELS];
+
+/// BirdNET+ V3.0 (`BirdNET+_V3.0_Global_12K_FP16_pruned.onnx`), unchanged, from
+/// Zenodo record 24362980, version 3.0.1 (Apache 2.0). Zenodo sends
+/// `Access-Control-Allow-Origin: *`. To serve the same file from a mirror,
+/// change only `url`: the size and SHA-256 stay. The worker converts its
+/// float16 weights to float32 as it loads it (`research/birdnet-v3-bench`).
+pub const BIRDNET_V3: ModelFile = ModelFile {
+    id: "birdnet-v3.0-global-12k-fp16-pruned.onnx",
+    url: "https://zenodo.org/api/records/24362980/files/BirdNET%2B_V3.0_Global_12K_FP16_pruned.onnx/content",
+    size: 72_317_224,
+    sha256: "feadeccc84feb021aeb9c51ec5288f6f5bd7065fe3773e2d48a69ea8a26b412a",
+    kind: FileKind::BirdNetV3,
+};
+
+/// BirdNET+ V3.0's labels, served next to the app (index.html copies it from
+/// `research/birdnet-v3-bench/`): one line per class in output order,
+/// tab-separated: BirdNET id, scientific name, English name (the scientific
+/// name when there is none), taxon group. Made by `labels.py` there from the
+/// record's `BirdNET+_V3.0_Global_12K_Labels.csv` (SHA-256 `88d97647...7640`).
+pub const BIRDNET_V3_LABELS_ASSET: &str = "birdnet-v3-labels.tsv";
 
 pub const BACKBONE: ModelFile = ModelFile {
     id: "birdnet-v2.4-embeddings-fp32.onnx",
@@ -292,6 +319,7 @@ pub enum ModelChoice {
     BirdNet,
     Bats(BatScope),
     Perch,
+    BirdNetV3,
 }
 
 impl ModelChoice {
@@ -300,6 +328,7 @@ impl ModelChoice {
             ModelChoice::BirdNet => Method::BirdNet,
             ModelChoice::Bats(_) => Method::Bats,
             ModelChoice::Perch => Method::Perch,
+            ModelChoice::BirdNetV3 => Method::BirdNetV3,
         }
     }
 
@@ -312,6 +341,7 @@ impl ModelChoice {
                 .chain(bat_label_files(scope))
                 .collect(),
             ModelChoice::Perch => PERCH_FILES.to_vec(),
+            ModelChoice::BirdNetV3 => vec![&BIRDNET_V3],
         }
     }
 }
@@ -320,12 +350,13 @@ impl ModelChoice {
 pub fn all_files() -> impl Iterator<Item = &'static ModelFile> {
     birdnet_files()
         .chain(PERCH_FILES)
+        .chain(std::iter::once(&BIRDNET_V3))
         .chain(GEOMODEL_FILES)
         .chain(std::iter::once(&DENOISER))
 }
 
-/// BirdNET's and BattyBirdNET's files (they share the backbone), without
-/// Perch's.
+/// BirdNET V2.4's and BattyBirdNET's files (they share the backbone),
+/// without Perch's or BirdNET+ V3.0's.
 pub fn birdnet_files() -> impl Iterator<Item = &'static ModelFile> {
     [&BACKBONE, &BIRDNET_LABELS]
         .into_iter()
@@ -391,6 +422,18 @@ const PERCH_CREDITS: &[&str] = &[
 const PERCH_CITATION: &str =
     "Perch 2.0: The Bittern Lesson for Bioacoustics (2025). arXiv:2508.04665.";
 
+const BIRDNET_V3_CREDITS: &[&str] = &[
+    "BirdNET+ V3.0 was developed by the BirdNET team.",
+    "Oversample downloads the team's pruned float16 model file, version 3.0.1, from Zenodo (zenodo.org/records/24362980) and uses it unchanged.",
+    "The model's acceptable use policy is published in the same Zenodo record.",
+    GEOMODEL_CREDIT,
+];
+
+const BIRDNET_V3_CITATION: &str = "Lasseck, M., Eibl, M., Klinck, H., & Kahl, S. (2026). BirdNET+ V3.0 model files (Version 3.0.1). Zenodo. doi:10.5281/zenodo.24362980.";
+
+/// The Zenodo record version BirdNET+ V3.0 comes from.
+pub const BIRDNET_V3_REVISION: &str = "3.0.1";
+
 pub fn attribution(method: Method) -> Attribution {
     match method {
         Method::BirdNet => Attribution {
@@ -425,6 +468,17 @@ pub fn attribution(method: Method) -> Attribution {
             citation: PERCH_CITATION,
             source_url: "https://huggingface.co/pengowray/perch-v2-tract",
             revision: PERCH_REVISION,
+        },
+        Method::BirdNetV3 => Attribution {
+            name: "BirdNET+ V3.0",
+            powered_by: "Powered by BirdNET+ V3.0",
+            powered_by_url: "https://birdnet.cornell.edu/",
+            licence: "Apache 2.0",
+            licence_url: "https://www.apache.org/licenses/LICENSE-2.0",
+            credits: BIRDNET_V3_CREDITS,
+            citation: BIRDNET_V3_CITATION,
+            source_url: "https://zenodo.org/records/24362980",
+            revision: BIRDNET_V3_REVISION,
         },
     }
 }
@@ -510,5 +564,14 @@ mod tests {
             assert!(f.url.ends_with(f.id));
         }
         assert!(PERCH_LABELS.url.contains(PERCH_LABELS_REVISION));
+    }
+
+    #[test]
+    fn birdnet_v3_is_one_pinned_file() {
+        assert_eq!(file_by_id(BIRDNET_V3.id), Some(&BIRDNET_V3));
+        assert_eq!(BIRDNET_V3.sha256.len(), 64);
+        assert_eq!(ModelChoice::BirdNetV3.files(), vec![&BIRDNET_V3]);
+        assert_eq!(BIRDNET_V3.part(), Some(ModelPart::BirdNetV3));
+        assert!(!birdnet_files().any(|f| f.id == BIRDNET_V3.id));
     }
 }

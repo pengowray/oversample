@@ -1,5 +1,6 @@
-//! BirdNET (birds), BattyBirdNET (bats) and Perch 2.0 (birds, frogs, insects,
-//! some mammals and everyday sounds) on the device.
+//! BirdNET V2.4 (birds), BattyBirdNET (bats), Perch 2.0 (birds, frogs,
+//! insects, some mammals and everyday sounds) and BirdNET+ V3.0 (birds,
+//! insects, frogs and mammals) on the device.
 //!
 //! The models run in a Web Worker built from the `birdnet-worker` crate, so the
 //! page never blocks and tract stays out of the app's WASM. The worker starts
@@ -13,7 +14,8 @@
 //!   panel opens; until then every status is [`DownloadStatus::Unknown`].
 //! - [`download`]: download what a [`ModelChoice`] needs (the 67 MB backbone,
 //!   plus labels, plus a region's head for bats, or all 11 heads, 1.1 MB, for
-//!   "All regions"; Perch's three files, 136 MB).
+//!   "All regions"; Perch's three files, 136 MB; BirdNET+ V3.0's one file,
+//!   72 MB, whose labels are served with the app).
 //!   Progress goes to `state.classifier.downloads()`, per file id.
 //! - [`is_ready`]: true when every file a choice needs is downloaded (reads
 //!   `downloads`, so it is reactive).
@@ -31,8 +33,9 @@
 //!   in the tab, or with "Auto" the one for the recording's place.
 //! - [`cancel`]: stop the run; the windows so far are kept, marked incomplete.
 //! - [`unload`]: stop the worker and free its memory (about 300 MB while a
-//!   BirdNET model is loaded, about 400 MB for Perch). The next run starts it
-//!   again. Switching between BirdNET and Perch restarts it too.
+//!   BirdNET model is loaded, about 400 MB for Perch and for BirdNET+ V3.0).
+//!   The next run starts it again. Switching between BirdNET V2.4, BirdNET+
+//!   V3.0 and Perch restarts it too.
 //!
 //! State (`state.classifier`, a [`crate::state::ClassifierState`]):
 //! - `downloads()`: `HashMap<&'static str, DownloadStatus>`, keyed by
@@ -43,20 +46,21 @@
 //! - `results()`: `HashMap<(file_id, Method), ClassifierRun>`. Windows fill in
 //!   while a run goes (about every 100 ms). Read with `.with(..)`, not `.get()`.
 //! - `embeddings()`: `HashMap<(file_id, Method), Vec<f32>>`, 1,024 floats per
-//!   window (1,536 for Perch) in window order (see [`types::embedding`]), for a
+//!   window (1,536 for Perch, 1,280 for BirdNET+ V3.0) in window order (see
+//!   [`types::embedding`]), for a
 //!   later "find similar calls" feature. Kept apart from `results` so showing
 //!   scores never copies them.
 //!
 //! Attribution: [`catalog::attribution`] gives the licence (CC BY-NC-SA 4.0 for
-//! BirdNET, Apache 2.0 for Perch), the "Powered by" line and link, credits,
+//! BirdNET V2.4, Apache 2.0 for Perch and BirdNET+ V3.0), the "Powered by" line and link, credits,
 //! citation, source URL and revision, to show with results and in About.
 
 pub mod bat_pick;
 pub mod location;
 pub mod quiet;
+pub mod sound_groups;
 pub mod species_map;
 pub mod store;
-pub mod sound_groups;
 pub mod strips;
 pub mod summary;
 pub mod test_hook;
@@ -69,6 +73,7 @@ pub use location::Occurrence;
 pub use oversample_ipc::classifier::catalog::{self, Attribution, ModelChoice, ModelFile};
 pub use oversample_ipc::classifier::{
     BatRegion, BatScope, ClassifierError, Method, Score, EMBEDDING_LEN, PERCH_CLASSES, TOP_K,
+    V3_CLASSES,
 };
 pub use types::{ClassifierRun, DownloadStatus, RunStatus, SpeciesLabel, WindowScores};
 
@@ -205,26 +210,32 @@ pub async fn ensure_downloaded(
 }
 
 /// The minimum confidence the tab uses for `method` (reactive). Perch has its
-/// own, since its confidences are softmax shares.
+/// own, since its confidences are softmax shares, and so has BirdNET+ V3.0
+/// (default 0.25), whose scores run differently from V2.4's.
 pub fn min_confidence(state: AppState, method: Method) -> f32 {
-    match method {
-        Method::Perch => state.call_detection.perch_min_confidence().get(),
-        Method::BirdNet | Method::Bats => state.call_detection.min_confidence().get(),
-    }
+    min_confidence_field(state, method).get()
 }
 
 /// [`min_confidence`] without tracking.
 pub fn min_confidence_untracked(state: AppState, method: Method) -> f32 {
-    match method {
-        Method::Perch => state.call_detection.perch_min_confidence().get_untracked(),
-        Method::BirdNet | Method::Bats => state.call_detection.min_confidence().get_untracked(),
-    }
+    min_confidence_field(state, method).get_untracked()
 }
 
 pub fn set_min_confidence(state: AppState, method: Method, value: f32) {
+    min_confidence_field(state, method).set(value)
+}
+
+fn min_confidence_field(
+    state: AppState,
+    method: Method,
+) -> impl leptos::reactive::traits::Get<Value = f32>
+       + leptos::reactive::traits::GetUntracked<Value = f32>
+       + leptos::reactive::traits::Set<Value = f32> {
+    let cd = state.call_detection;
     match method {
-        Method::Perch => state.call_detection.perch_min_confidence().set(value),
-        Method::BirdNet | Method::Bats => state.call_detection.min_confidence().set(value),
+        Method::Perch => cd.perch_min_confidence(),
+        Method::BirdNetV3 => cd.v3_min_confidence(),
+        Method::BirdNet | Method::Bats => cd.min_confidence(),
     }
 }
 
@@ -263,6 +274,32 @@ pub fn cached_labels(file: &ModelFile) -> Option<Arc<Vec<SpeciesLabel>>> {
 /// they are known.
 pub async fn perch_labels(state: AppState) -> Result<Arc<Vec<SpeciesLabel>>, ClassifierError> {
     labels(state, &catalog::PERCH_LABELS).await
+}
+
+/// BirdNET+ V3.0's labels, fetched from the app's own files (they are served
+/// with it, not downloaded with the model) the first time.
+pub async fn birdnet_v3_labels() -> Result<Arc<Vec<SpeciesLabel>>, ClassifierError> {
+    let key = catalog::BIRDNET_V3_LABELS_ASSET;
+    if let Some(l) = LABELS.with(|m| m.borrow().get(key).cloned()) {
+        return Ok(l);
+    }
+    let bytes = crate::components::file_sidebar::fetch_bytes(key)
+        .await
+        .map_err(|message| ClassifierError::Download {
+            file: key.to_string(),
+            message,
+        })?;
+    let l = types::parse_birdnet_v3_labels(&String::from_utf8_lossy(&bytes));
+    // A list that doesn't line up with the model would name every result
+    // wrongly.
+    if l.len() != V3_CLASSES {
+        return Err(ClassifierError::Corrupt {
+            file: key.to_string(),
+        });
+    }
+    let l = Arc::new(l);
+    LABELS.with(|m| m.borrow_mut().insert(key, l.clone()));
+    Ok(l)
 }
 
 async fn labels(
@@ -529,7 +566,7 @@ async fn run_task(
             .into());
         }
     }
-    worker::ensure_family(method == Method::Perch);
+    worker::ensure_family(method.family());
     worker::ensure_started(state).await?;
     let (backbone, head, region, labels) = match choice {
         ModelChoice::BirdNet => {
@@ -557,6 +594,11 @@ async fn run_task(
                 None,
                 labels,
             )
+        }
+        ModelChoice::BirdNetV3 => {
+            let labels = birdnet_v3_labels().await?;
+            worker::ensure_model(&catalog::BIRDNET_V3).await?;
+            (&catalog::BIRDNET_V3, None, None, labels)
         }
     };
     if !is_latest(state, generation) {
@@ -726,7 +768,7 @@ async fn rescore_task(
     {
         download_file(state, f).await?;
     }
-    worker::ensure_family(false);
+    worker::ensure_family(Method::Bats.family());
     worker::ensure_started(state).await?;
     let labels = load_bat_heads(state, scope).await?;
     if !is_latest(state, generation) {

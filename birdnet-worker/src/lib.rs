@@ -12,6 +12,7 @@
 //! - [`denoise`]: the learned denoiser for bat and bird recordings.
 //! - [`engine`]: BirdNET's backbone and the regional heads in tract.
 //! - [`perch`]: Perch's embedding model in tract and its classifier.
+//! - [`v3`]: BirdNET+ V3.0 in tract, patched to float32 as it loads.
 //! - [`session`]: the worker's state and message handling, browser-free so the
 //!   native tests run it.
 
@@ -21,6 +22,7 @@ pub mod geomodel;
 pub mod perch;
 pub mod resample;
 pub mod session;
+pub mod v3;
 pub mod windows;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "worker"))]

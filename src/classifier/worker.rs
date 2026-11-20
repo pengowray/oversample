@@ -12,7 +12,7 @@ use crate::state::{AppState, ClassifierStateStoreFields};
 use futures_channel::oneshot;
 use leptos::prelude::*;
 use oversample_ipc::classifier::{
-    attach, BatHeadPart, FromWorker, Method, ModelSlot, Score, ToWorker,
+    attach, BatHeadPart, FromWorker, Method, ModelFamily, ModelSlot, Score, ToWorker,
 };
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
@@ -73,9 +73,9 @@ struct Client {
     /// The model in each slot, by file id.
     audio: Option<String>,
     head: Option<String>,
-    /// True once a Perch model has been loaded, false once a BirdNET one has.
-    /// The worker's memory never shrinks, so changing family restarts it.
-    perch: Option<bool>,
+    /// The family of the models loaded last. The worker's memory never
+    /// shrinks, so changing family restarts it.
+    family: Option<ModelFamily>,
     waiters: Vec<(Wait, oneshot::Sender<Result<Reply, ClassifierError>>)>,
     active: Option<Active>,
 }
@@ -120,7 +120,7 @@ pub async fn ensure_started(state: AppState) -> Result<(), Stopped> {
             ready: false,
             audio: None,
             head: None,
-            perch: None,
+            family: None,
             waiters: Vec::new(),
             active: None,
         };
@@ -351,14 +351,14 @@ fn on_error(ev: web_sys::Event) {
     }
 }
 
-/// Stop the worker if it holds models of the other family (BirdNET or Perch),
-/// so loading this family starts from fresh memory. Call before
-/// [`ensure_started`].
-pub fn ensure_family(perch: bool) {
+/// Stop the worker if it holds models of another family (BirdNET V2.4,
+/// BirdNET+ V3.0 or Perch), so loading this family starts from fresh memory.
+/// Call before [`ensure_started`].
+pub fn ensure_family(family: ModelFamily) {
     let other = CLIENT.with(|c| {
         c.borrow()
             .as_ref()
-            .is_some_and(|cl| cl.perch.is_some_and(|p| p != perch))
+            .is_some_and(|cl| cl.family.is_some_and(|f| f != family))
     });
     if other {
         terminate();
@@ -395,7 +395,7 @@ pub async fn ensure_model(file: &'static super::catalog::ModelFile) -> Result<()
             ModelSlot::Head => client.head = None,
             ModelSlot::Denoise => {}
         }
-        client.perch = Some(part.is_perch());
+        client.family = part.family();
         let buf = bytes.buffer();
         client.post(
             &ToWorker::Load {
@@ -459,7 +459,7 @@ pub async fn ensure_bat_heads(
         let mut c = c.borrow_mut();
         let client = c.as_mut()?;
         client.head = None;
-        client.perch = Some(false);
+        client.family = Some(ModelFamily::BirdNet);
         let buf = all.buffer();
         client.post(
             &ToWorker::LoadBatHeads {

@@ -23,6 +23,14 @@
 //!   1,536-value embedding and a 16 x 4 grid of them; the classifier scores the
 //!   grid for 14,795 classes. Its logits go through a softmax over all classes,
 //!   so a confidence is a share of 1 (the classes compete).
+//!
+//! The fourth is BirdNET+ V3.0 (the pruned float16 file from Zenodo, patched
+//! to float32 in the worker; `research/birdnet-v3-bench`):
+//!
+//! - **BirdNET+ V3.0 (birds, insects, frogs and mammals):** audio at 32 kHz,
+//!   3 s windows of 96,000 samples. The model gives a 1,280-value embedding and
+//!   11,725 confidences that have already been through a sigmoid. Windows that
+//!   are digital silence are not scored: the model gives them false birds.
 
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +53,12 @@ pub const PERCH_WINDOW_SAMPLES: usize = 160_000;
 pub const PERCH_EMBEDDING_LEN: usize = 1536;
 /// Classes Perch's classifier scores.
 pub const PERCH_CLASSES: usize = 14_795;
+/// Samples per BirdNET+ V3.0 window: 3 s at 32 kHz.
+pub const V3_WINDOW_SAMPLES: usize = 96_000;
+/// Length of BirdNET+ V3.0's embedding.
+pub const V3_EMBEDDING_LEN: usize = 1280;
+/// Classes BirdNET+ V3.0 (the pruned file) scores.
+pub const V3_CLASSES: usize = 11_725;
 /// Classes kept per window, highest confidence first.
 pub const TOP_K: usize = 10;
 /// Lowest sample rate BattyBirdNET accepts. Bat calls above 48 kHz are missing
@@ -69,6 +83,9 @@ pub enum Method {
     /// Google's Perch 2.0: birds, frogs, insects, some mammals and everyday
     /// sounds, 14,795 classes.
     Perch,
+    /// BirdNET+ V3.0: birds, insects, frogs, mammals and some other sounds,
+    /// 11,725 classes.
+    BirdNetV3,
 }
 
 impl Method {
@@ -77,7 +94,7 @@ impl Method {
         match self {
             Method::BirdNet => 48_000,
             Method::Bats => 256_000,
-            Method::Perch => 32_000,
+            Method::Perch | Method::BirdNetV3 => 32_000,
         }
     }
 
@@ -86,6 +103,7 @@ impl Method {
         match self {
             Method::BirdNet | Method::Bats => WINDOW_SAMPLES,
             Method::Perch => PERCH_WINDOW_SAMPLES,
+            Method::BirdNetV3 => V3_WINDOW_SAMPLES,
         }
     }
 
@@ -94,6 +112,7 @@ impl Method {
         match self {
             Method::BirdNet | Method::Bats => EMBEDDING_LEN,
             Method::Perch => PERCH_EMBEDDING_LEN,
+            Method::BirdNetV3 => V3_EMBEDDING_LEN,
         }
     }
 
@@ -105,14 +124,14 @@ impl Method {
     /// Lowest source sample rate this method accepts, if any.
     pub fn min_source_rate(self) -> Option<u32> {
         match self {
-            Method::BirdNet | Method::Perch => None,
+            Method::BirdNet | Method::Perch | Method::BirdNetV3 => None,
             Method::Bats => Some(BATS_MIN_SOURCE_RATE),
         }
     }
 }
 
 /// What a model file is to the worker. The worker holds one model of each
-/// [`ModelSlot`]; a model of another family (BirdNET or Perch) replaces it.
+/// [`ModelSlot`]; a model of another [`ModelFamily`] replaces it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ModelPart {
     /// BirdNET V2.4 with an embeddings output.
@@ -123,6 +142,9 @@ pub enum ModelPart {
     PerchEmbedding,
     /// Perch 2.0's int8 classifier.
     PerchClassifier,
+    /// BirdNET+ V3.0 as published (float16 weights), which the worker
+    /// converts to float32 as it loads it.
+    BirdNetV3,
     /// The learned denoiser for bat and bird recordings. It is not a
     /// classifier and runs in a worker of its own (see `src/denoise.rs` in the
     /// app).
@@ -132,8 +154,8 @@ pub enum ModelPart {
 /// Where a model sits in the worker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ModelSlot {
-    /// The model that takes the audio: BirdNET's backbone or Perch's embedding
-    /// model.
+    /// The model that takes the audio: BirdNET's backbone, BirdNET+ V3.0 or
+    /// Perch's embedding model.
     Audio,
     /// The model that scores its output: a BattyBirdNET head or Perch's
     /// classifier.
@@ -145,16 +167,44 @@ pub enum ModelSlot {
 impl ModelPart {
     pub fn slot(self) -> ModelSlot {
         match self {
-            ModelPart::Backbone | ModelPart::PerchEmbedding => ModelSlot::Audio,
+            ModelPart::Backbone | ModelPart::PerchEmbedding | ModelPart::BirdNetV3 => {
+                ModelSlot::Audio
+            }
             ModelPart::BatHead | ModelPart::PerchClassifier => ModelSlot::Head,
             ModelPart::Denoiser => ModelSlot::Denoise,
         }
     }
 
-    /// True for Perch's files. The worker restarts when the family changes,
-    /// since its memory never shrinks.
-    pub fn is_perch(self) -> bool {
-        matches!(self, ModelPart::PerchEmbedding | ModelPart::PerchClassifier)
+    /// The family the model belongs to; `None` for the denoiser, which runs
+    /// in a worker of its own.
+    pub fn family(self) -> Option<ModelFamily> {
+        match self {
+            ModelPart::Backbone | ModelPart::BatHead => Some(ModelFamily::BirdNet),
+            ModelPart::PerchEmbedding | ModelPart::PerchClassifier => Some(ModelFamily::Perch),
+            ModelPart::BirdNetV3 => Some(ModelFamily::BirdNetV3),
+            ModelPart::Denoiser => None,
+        }
+    }
+}
+
+/// Models that share the classifier worker without restarting it. The worker
+/// restarts when the family changes, since its memory never shrinks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ModelFamily {
+    /// BirdNET V2.4 and the BattyBirdNET heads on its embedding.
+    BirdNet,
+    Perch,
+    BirdNetV3,
+}
+
+impl Method {
+    /// The family of the models a run of this method uses.
+    pub fn family(self) -> ModelFamily {
+        match self {
+            Method::BirdNet | Method::Bats => ModelFamily::BirdNet,
+            Method::Perch => ModelFamily::Perch,
+            Method::BirdNetV3 => ModelFamily::BirdNetV3,
+        }
     }
 }
 
@@ -277,7 +327,8 @@ pub struct BatHeadPart {
 /// One class and its confidence, 0 to 1. `class` indexes the label list of the
 /// model that scored it. BirdNET and BattyBirdNET: the sigmoid of the logit.
 /// Perch: the softmax over all its classes, so the confidences of one window
-/// add up to at most 1.
+/// add up to at most 1. BirdNET+ V3.0: the model's own output, already a
+/// sigmoid.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Score {
     pub class: u16,
@@ -375,7 +426,8 @@ pub mod attach {
     /// [`super::FromWorker::DenoisedPiece`].
     pub const SAMPLES: &str = "samples";
     /// `Float32Array` of the method's [`super::Method::embedding_len`] values per
-    /// window, on [`super::FromWorker::Window`] (one window) and
+    /// window, on [`super::FromWorker::Window`] (one window; zeros for a
+    /// BirdNET+ V3.0 window of digital silence, which is not run) and
     /// [`super::ToWorker::Rescore`] (all windows, back to back).
     pub const EMBEDDING: &str = "embedding";
 }
@@ -506,11 +558,11 @@ pub enum ToWorker {
     DenoisePiece { run: u32 },
     /// Score one window of the most recent audio, for the live view.
     /// [`attach::SAMPLES`] holds mono audio at `source_rate` that ends now; the
-    /// last window of it is used (3 s for BirdNET, 5 s for Perch), padded with
-    /// zeros at the front when shorter. The model in the audio slot picks
-    /// which: the BirdNET backbone, or Perch's embedding model, which also
-    /// needs Perch's classifier in the head slot. Answered by `Live`. It leaves
-    /// any run alone.
+    /// last window of it is used (3 s for BirdNET and BirdNET+ V3.0, 5 s for
+    /// Perch), padded with zeros at the front when shorter. The model in the
+    /// audio slot picks which: the BirdNET backbone, BirdNET+ V3.0, or Perch's
+    /// embedding model, which also needs Perch's classifier in the head slot.
+    /// Answered by `Live`. It leaves any run alone.
     Live { req: u32, source_rate: u32 },
 }
 
@@ -522,7 +574,9 @@ pub enum FromWorker {
     Ready,
     /// A model was built; `ms` is the time tract took.
     Loaded { key: String, ms: f64 },
-    /// One window's result. The embedding is in [`attach::EMBEDDING`].
+    /// One window's result. The embedding is in [`attach::EMBEDDING`]. `top`
+    /// is empty for a window that was not scored (BirdNET+ V3.0 on digital
+    /// silence).
     Window {
         run: u32,
         index: u32,
@@ -553,9 +607,10 @@ pub enum FromWorker {
     /// and when the two are equal the recording is complete.
     DenoisedPiece { run: u32, done: u32, total: u32 },
     /// The answer to `Live`. [`attach::EMBEDDING`] holds the embedding
-    /// (1,024 values for BirdNET, 1,536 for Perch) followed by the confidence
-    /// (0 to 1) of every class in label order: a sigmoid for BirdNET, Perch's
-    /// softmax share over all its classes, as in a run's results. `ms` is the
+    /// (1,024 values for BirdNET, 1,536 for Perch, 1,280 for BirdNET+ V3.0)
+    /// followed by the confidence (0 to 1) of every class in label order: a
+    /// sigmoid for BirdNET and BirdNET+ V3.0, Perch's softmax share over all
+    /// its classes, as in a run's results. `ms` is the
     /// time the resampling and the model took.
     Live { req: u32, ms: f64 },
     /// Something failed. `run` is `None` for model loading.
@@ -574,6 +629,20 @@ mod tests {
         assert_eq!(Method::BirdNet.window_secs(), 3.0);
         assert_eq!(Method::Bats.window_secs(), 0.5625);
         assert_eq!(Method::Perch.window_secs(), 5.0);
+        assert_eq!(Method::BirdNetV3.window_secs(), 3.0);
+    }
+
+    #[test]
+    fn families() {
+        assert_eq!(ModelPart::BatHead.family(), Method::Bats.family().into());
+        assert_eq!(ModelPart::Backbone.family(), Some(ModelFamily::BirdNet));
+        assert_eq!(ModelPart::BirdNetV3.family(), Some(ModelFamily::BirdNetV3));
+        assert_eq!(
+            ModelPart::PerchClassifier.family(),
+            Some(ModelFamily::Perch)
+        );
+        assert_eq!(ModelPart::Denoiser.family(), None);
+        assert_eq!(ModelPart::BirdNetV3.slot(), ModelSlot::Audio);
     }
 
     #[test]

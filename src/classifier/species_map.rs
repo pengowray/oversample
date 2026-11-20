@@ -42,12 +42,13 @@ pub const PERCH_MAP: MapSpec = MapSpec {
 const PERCH_RADIUS: f32 = 0.09;
 
 /// The species map for `method`, if it has one. BattyBirdNET's regional
-/// classifiers give no usable map (research/species-map/README.md).
+/// classifiers give no usable map (research/species-map/README.md), and
+/// BirdNET+ V3.0 has no map file yet.
 pub fn map_spec(method: Method) -> Option<&'static MapSpec> {
     match method {
         Method::BirdNet => Some(&BIRDNET_MAP),
         Method::Perch => Some(&PERCH_MAP),
-        Method::Bats => None,
+        Method::Bats | Method::BirdNetV3 => None,
     }
 }
 

@@ -144,6 +144,33 @@ pub fn parse_perch_labels(text: &str) -> Vec<SpeciesLabel> {
         .collect()
 }
 
+/// Parse BirdNET+ V3.0's trimmed labels (`catalog::BIRDNET_V3_LABELS_ASSET`):
+/// one class per line, tab-separated: BirdNET id, scientific name, English
+/// name, taxon group. A line with no English name gets the scientific name.
+/// The taxon groups Anthropogenic, Geophony and Music ("Engine", "Fire",
+/// "Music") are named sounds; every other class, Human included, is a species.
+pub fn parse_birdnet_v3_labels(text: &str) -> Vec<SpeciesLabel> {
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let mut f = l.split('\t').map(str::trim);
+            let _id = f.next();
+            let scientific = f.next().unwrap_or_default().to_string();
+            let common = f
+                .next()
+                .filter(|c| !c.is_empty())
+                .map_or_else(|| scientific.clone(), str::to_string);
+            let group = f.next().unwrap_or_default();
+            SpeciesLabel {
+                scientific,
+                common,
+                is_species: true,
+                is_sound: matches!(group, "Anthropogenic" | "Geophony" | "Music"),
+            }
+        })
+        .collect()
+}
+
 /// Give each label whose scientific name is in `names` ("Genus species" to an
 /// English name) that common name. Others keep the scientific name.
 pub fn add_common_names(
@@ -167,7 +194,8 @@ pub struct WindowScores {
     /// recording.
     pub end_s: f64,
     /// Up to [`super::TOP_K`] classes, highest confidence first. `class` indexes
-    /// [`ClassifierRun::labels`].
+    /// [`ClassifierRun::labels`]. Empty for a window that was not scored
+    /// (BirdNET+ V3.0 on digital silence), which counts as below any minimum.
     pub top: Vec<Score>,
 }
 
@@ -180,8 +208,8 @@ pub struct ClassifierRun {
     /// The region whose head gave the scores, or all regions (BattyBirdNET
     /// only).
     pub region: Option<BatScope>,
-    /// The model that took the audio: BirdNET's backbone or Perch's embedding
-    /// model (its URL holds the pinned revision).
+    /// The model that took the audio: BirdNET's backbone, Perch's embedding
+    /// model or BirdNET+ V3.0 (its URL holds the pinned revision).
     pub backbone: &'static ModelFile,
     /// The model that scored it: a BattyBirdNET regional head or Perch's
     /// classifier. `None` for BirdNET, and for BattyBirdNET's "All regions",
@@ -211,7 +239,9 @@ impl ClassifierRun {
 
 /// Window `i`'s embedding in a run's embeddings
 /// (`ClassifierState::embeddings`): `method.embedding_len()` floats per window
-/// (1,024 for BirdNET, 1,536 for Perch), back to back, in window order.
+/// (1,024 for BirdNET, 1,536 for Perch, 1,280 for BirdNET+ V3.0), back to
+/// back, in window order. A BirdNET+ V3.0 window of digital silence has an
+/// embedding of zeros (it is not run).
 pub fn embedding(embeddings: &[f32], method: Method, i: usize) -> Option<&[f32]> {
     let len = method.embedding_len();
     embeddings.get(i * len..(i + 1) * len)
@@ -243,6 +273,39 @@ mod tests {
         assert_eq!(l[2].common, "Motor vehicle (road)");
         assert!(l.iter().all(|x| x.is_species));
         assert!(!l[0].is_sound && l[1].is_sound && l[2].is_sound);
+    }
+
+    #[test]
+    fn birdnet_v3_labels_parse() {
+        let l = parse_birdnet_v3_labels(
+            "BN00001\tAbeillia abeillei\tEmerald-chinned Hummingbird\tAves\n\
+             BN30001\tAcanthacris ruficornis\t\tInsecta\n\
+             BN21000\tHomo sapiens\tHuman\tMammalia\n\
+             BN90057\tFire\tFire\tGeophony\n\
+             BN90050\tEngine\tEngine\tAnthropogenic\n\
+             BN90081\tMusic\tMusic\tMusic\n\n",
+        );
+        assert_eq!(l.len(), 6);
+        assert_eq!(l[0].scientific, "Abeillia abeillei");
+        assert_eq!(l[0].common, "Emerald-chinned Hummingbird");
+        // No English name: the scientific name stands in.
+        assert_eq!(l[1].common, "Acanthacris ruficornis");
+        assert!(l.iter().all(|x| x.is_species));
+        assert!(!l[0].is_sound && !l[1].is_sound && !l[2].is_sound);
+        assert!(l[3].is_sound && l[4].is_sound && l[5].is_sound);
+    }
+
+    #[test]
+    fn birdnet_v3_label_file_lines_up_with_the_model() {
+        let text = include_str!("../../research/birdnet-v3-bench/birdnet-v3-labels.tsv");
+        let l = parse_birdnet_v3_labels(text);
+        assert_eq!(l.len(), super::super::V3_CLASSES);
+        assert_eq!(l.iter().filter(|x| x.is_sound).count(), 16);
+        assert!(l
+            .iter()
+            .all(|x| !x.scientific.is_empty() && !x.common.is_empty()));
+        let human = l.iter().find(|x| x.scientific == "Homo sapiens").unwrap();
+        assert!(!human.is_sound && human.common == "Human");
     }
 
     #[test]

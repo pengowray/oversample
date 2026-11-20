@@ -1374,6 +1374,7 @@ pub fn Spectrogram() -> impl IntoView {
                         detection_method,
                         crate::state::DetectionMethod::BirdNet
                             | crate::state::DetectionMethod::Perch
+                            | crate::state::DetectionMethod::BirdNetV3
                     )
                     && detection_file.is_some()
                     && detection_file == state.current_file_id()

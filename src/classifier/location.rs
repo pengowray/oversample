@@ -108,7 +108,7 @@ pub async fn english_names(state: AppState, download: bool) -> Option<HashMap<St
 
 /// Methods whose results can be marked.
 pub fn applies_to(method: Method) -> bool {
-    matches!(method, Method::BirdNet | Method::Perch)
+    matches!(method, Method::BirdNet | Method::Perch | Method::BirdNetV3)
 }
 
 /// Work out the location list for file `file_id` if it has a place (its own,
