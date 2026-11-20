@@ -1,0 +1,16 @@
+BirdNET+ V3.0 (pruned head), 11725 classes. Class vector: the class's row of head.weight, scaled to length 1, cosine.
+Head: predictions = sigmoid(5 * (embeddings @ W.T + b) / s), s = 5.0; largest difference from onnxruntime on one window: 1.2e-07
+Row lengths: min 9.152, median 21.650, max 39.357; rows of length 0: 0
+Share of the 5 nearest neighbours that match: genus (over 11709 species), taxon group (birds, insects, amphibians, mammals, other animals, sounds; all classes).
+
+method                            genus  group   secs
+random pairs                     0.0012  0.706
+full 1,280-d vectors              0.307  0.958      0
+PCA to 50-d                       0.193  0.951      0
+PCA to 2-d                        0.003  0.728      0
+t-SNE p30 (full)                  0.339  0.967    141
+UMAP n15 (PCA-50, umap-js)        0.075  0.950     25
+
+Chosen: t-SNE p30 (full), as for BirdNET V2.4 and Perch.
+Distance to 3rd nearest class, map units: median 0.0104, 90th percentile 0.0189
+(BirdNET V2.4's map: median 0.0149, radius 0.15; so the V3.0 radius is 0.15 x 0.0104 / 0.0149 = 0.105)
