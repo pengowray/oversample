@@ -1597,13 +1597,10 @@ fn strips_group(state: AppState, method: Method, current_file: Memo<Option<u64>>
         }
         .into_any()
     };
-    // BirdNET only: the components of its embedding. The count comes from
+    // BirdNET V2.4 and V3.0: the components of the embedding. The count comes from
     // the components file, loaded on first use.
     let components = move || {
-        if method != Method::BirdNet {
-            return None;
-        }
-        let pcs = crate::components::score_strips::birdnet_components()?;
+        let pcs = crate::components::score_strips::components_for(method)?;
         let buttons = pcs
             .variance
             .iter()

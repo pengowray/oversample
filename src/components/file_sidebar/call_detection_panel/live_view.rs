@@ -36,7 +36,7 @@ pub(super) fn LiveView(
         let ready = state.classifier.downloads().with(|d| {
             m.parts
                 .iter()
-                .chain([&m.labels])
+                .chain(&m.labels)
                 .all(|f| matches!(d.get(f.id), Some(DownloadStatus::Downloaded)))
         });
         let waiting = state

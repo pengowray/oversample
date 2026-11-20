@@ -438,12 +438,20 @@ impl Session {
                         })
                     }
                     (Some(AudioModel::BirdNetV3(model)), _) => {
-                        model.run(&cut(Method::BirdNetV3)).map(|o| {
-                            let top = top_confidences(&o.confidences);
-                            let mut payload = o.embedding;
-                            payload.extend(o.confidences);
-                            (payload, top)
-                        })
+                        let window = cut(Method::BirdNetV3);
+                        if v3::is_digital_silence(&window) {
+                            // As `v3_window` does for a run: not run, no
+                            // scores, an embedding of zeros. The app keeps it
+                            // and draws nothing for it.
+                            Ok((vec![0.0; Method::BirdNetV3.embedding_len()], Vec::new()))
+                        } else {
+                            model.run(&window).map(|o| {
+                                let top = top_confidences(&o.confidences);
+                                let mut payload = o.embedding;
+                                payload.extend(o.confidences);
+                                (payload, top)
+                            })
+                        }
                     }
                     (Some(AudioModel::Perch(embed)), Some(HeadModel::Perch(classifier))) => {
                         embed.run(&cut(Method::Perch)).map(|e| {

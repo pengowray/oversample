@@ -276,6 +276,19 @@ pub fn cached_labels(file: &ModelFile) -> Option<Arc<Vec<SpeciesLabel>>> {
     LABELS.with(|m| m.borrow().get(file.id).cloned())
 }
 
+/// The labels of `method` if they have been read, as they are now: the same
+/// list [`birdnet_labels`], [`perch_labels`] or [`birdnet_v3_labels`] gave.
+/// `None` for BattyBirdNET, whose labels depend on the region.
+pub fn cached_method_labels(method: Method) -> Option<Arc<Vec<SpeciesLabel>>> {
+    let key = match method {
+        Method::BirdNet => catalog::BIRDNET_LABELS.id,
+        Method::Perch => catalog::PERCH_LABELS.id,
+        Method::BirdNetV3 => catalog::BIRDNET_V3_LABELS_ASSET,
+        Method::Bats => return None,
+    };
+    LABELS.with(|m| m.borrow().get(key).cloned())
+}
+
 /// Perch's labels, read from the stored label file, with English names where
 /// they are known.
 pub async fn perch_labels(state: AppState) -> Result<Arc<Vec<SpeciesLabel>>, ClassifierError> {

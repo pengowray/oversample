@@ -60,8 +60,9 @@ pub fn LiveExplorerPanel() -> impl IntoView {
         })
     };
     let status = move || match state.classifier.live().get() {
-        // The live view in the Call detection tab runs Perch: the explorer's
-        // views are BirdNET's, so only the spectrum is drawn.
+        // The live view in the Call detection tab runs Perch or BirdNET+
+        // V3.0: the explorer's views are BirdNET V2.4's, so only the
+        // spectrum is drawn.
         s if s != LiveStatus::Off
             && live_embedding::active().method != classifier::Method::BirdNet =>
         {

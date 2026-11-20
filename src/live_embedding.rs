@@ -1,13 +1,14 @@
 //! Experimental live view: a model run on the last window of audio (3 s for
-//! BirdNET V2.4, 5 s for Perch 2.0) a few times a second, while a file plays or
-//! the microphone is listening. [`LiveModel`] holds what differs between the
-//! two; the Call detection tab's method picks one ([`set_picked`]).
+//! BirdNET V2.4 and BirdNET+ V3.0, 5 s for Perch 2.0) a few times a second,
+//! while a file plays or the microphone is listening. [`LiveModel`] holds
+//! what differs between them; the Call detection tab's method picks one
+//! ([`set_picked`]).
 //!
 //! It has a worker of its own (the same `birdnet-worker` WASM as the
 //! classifier, started a second time), so a classifier run or the denoiser
 //! never wait for it and it never waits for them. The worker holds one model
-//! (BirdNET's backbone, about 300 MB, or Perch's two files); turning the view
-//! off stops it, and picking the other model restarts it.
+//! (BirdNET's backbone, about 300 MB, BirdNET+ V3.0, or Perch's two files);
+//! turning the view off stops it, and picking another model restarts it.
 //!
 //! One request is in flight at a time: the next goes out after the answer and
 //! at least the model's `min_gap_ms` after the last one, so a slow device
@@ -29,13 +30,14 @@ use crate::recording_place::{file_place, file_week, Place};
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use classifier::catalog::ModelFile;
-use classifier::species_map::{MapSpec, BIRDNET_MAP, PERCH_MAP};
+use classifier::species_map::{MapSpec, BIRDNET_MAP, BIRDNET_V3_MAP, PERCH_MAP};
 use futures_channel::oneshot;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_core::audio::source::ChannelView;
 use oversample_ipc::classifier::{
     attach, live_cut, FromWorker, LiveCut, ToWorker, EMBEDDING_LEN, PERCH_EMBEDDING_LEN,
+    V3_EMBEDDING_LEN,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -58,7 +60,8 @@ const MAX_ROWS: usize = 8;
 /// top class, so the marker never sits between unrelated groups.
 const PLACE_TOP: usize = 3;
 /// Recordings at or above this rate are usually bats or other ultrasound,
-/// which neither model hears (BirdNET 0 to 15 kHz, Perch 60 Hz to 16 kHz).
+/// which no model here hears (BirdNET V2.4 and V3.0 0 to 15 kHz, Perch 60 Hz
+/// to 16 kHz).
 pub const ULTRASONIC_RATE: u32 = 96_000;
 
 /// What differs between the models the live view can run.
@@ -68,7 +71,9 @@ pub struct LiveModel {
     pub name: &'static str,
     /// The files the worker loads, in this order. All must be downloaded.
     pub parts: &'static [&'static ModelFile],
-    pub labels: &'static ModelFile,
+    /// The label file, which must be downloaded too; `None` when the labels
+    /// are served with the app (BirdNET+ V3.0's).
+    pub labels: Option<&'static ModelFile>,
     /// Length of a reading, in seconds (the model's window).
     pub window_s: f64,
     pub embedding_len: usize,
@@ -108,7 +113,7 @@ pub const BIRDNET: LiveModel = LiveModel {
     method: Method::BirdNet,
     name: "BirdNET",
     parts: &[&catalog::BACKBONE],
-    labels: &catalog::BIRDNET_LABELS,
+    labels: Some(&catalog::BIRDNET_LABELS),
     window_s: 3.0,
     embedding_len: EMBEDDING_LEN,
     map: &BIRDNET_MAP,
@@ -178,7 +183,7 @@ pub const PERCH: LiveModel = LiveModel {
     method: Method::Perch,
     name: "Perch 2.0",
     parts: &[&catalog::PERCH_EMBEDDING, &catalog::PERCH_CLASSIFIER],
-    labels: &catalog::PERCH_LABELS,
+    labels: Some(&catalog::PERCH_LABELS),
     window_s: 5.0,
     embedding_len: PERCH_EMBEDDING_LEN,
     map: &PERCH_MAP,
@@ -240,12 +245,107 @@ pub const PERCH: LiveModel = LiveModel {
 /// `research/live-embedding/perch_live_data.txt`).
 const PERCH_UMAP_RADIUS: f32 = PERCH_MAP.radius * 0.67;
 
-/// The live view's model for `method`: Perch for Perch, else BirdNET V2.4
-/// (BirdNET+ V3.0 has no live view yet; the tab does not offer one).
+/// Placement radius on BirdNET+ V3.0's UMAP layout: the t-SNE map's radius,
+/// scaled by how much closer classes sit on the UMAP layout (the 10th
+/// nearest class is at 0.0151 map units, against 0.0226 on t-SNE;
+/// `research/live-embedding/v3_live_data.txt`).
+const BIRDNET_V3_UMAP_RADIUS: f32 = BIRDNET_V3_MAP.radius * 0.67;
+
+pub const BIRDNET_V3: LiveModel = LiveModel {
+    method: Method::BirdNetV3,
+    name: "BirdNET+ V3.0",
+    parts: &[&catalog::BIRDNET_V3],
+    labels: None,
+    window_s: 3.0,
+    embedding_len: V3_EMBEDDING_LEN,
+    map: &BIRDNET_V3_MAP,
+    umap_file: "birdnet-v3-umap.bin",
+    umap_radius: BIRDNET_V3_UMAP_RADIUS,
+    pc_file: "birdnet-v3-pc-rows.bin",
+    pc_rec_file: None,
+    // From the classes at each end in v3_live_data.txt, and the taxon groups
+    // in each outer tenth.
+    pc_ends: &V3_PC_ENDS,
+    // The model takes about 320 to 410 ms per window in WASM
+    // (research/birdnet-v3-bench), so as for Perch the gap rarely holds a
+    // request back and the one-request-in-flight rule paces the readings.
+    min_gap_ms: 500.0,
+    lost_after_ms: 10_000.0,
+    pc_smooth: 2,
+    row_min: V3_ROW_MIN,
+    hearing: "BirdNET+ V3.0 hears up to 15 kHz, so bat calls do not show here.",
+};
+
+/// Score a class needs for a row in BirdNET+ V3.0's strip: 0.1, as for the
+/// other models, 40% of V3.0's default minimum confidence (0.25). White
+/// noise gives no class over 0.03 (research/birdnet-v3-bench), and on
+/// BirdSet's HSN and POW windows the second best class reaches 0.1 in 29%
+/// of windows (median 0.04), so a second call gets a row without the strip
+/// filling with guesses (`research/live-embedding/v3_live_data.txt`).
+const V3_ROW_MIN: f32 = 0.1;
+
+/// What lies at each end of BirdNET+ V3.0's class-row components: the 12
+/// classes at each end and the taxon groups in each outer tenth, in
+/// `research/live-embedding/v3_live_data.txt`.
+const V3_PC_ENDS: [[&str; 2]; 12] = [
+    [
+        "small forest songbirds: elaenias, tyrannulets, antwrens",
+        "Pacific island birds, lemurs and monkeys",
+    ],
+    [
+        "Southeast Asian forest birds, monkeys and squirrels",
+        "Andean and desert ground birds: ground tyrants, larks, miners",
+    ],
+    [
+        "cicadas, crickets, frogs and waterbirds",
+        "New Guinea and Andean forest birds: pigeons, pihas, satinbirds",
+    ],
+    [
+        "insects, mammals, snakes and fish (under half birds)",
+        "African sunbirds, firefinches and seedeaters",
+    ],
+    [
+        "monkeys, baboons and large loud birds",
+        "tropical American tanagers, hummingbirds and euphonias",
+    ],
+    [
+        "cicadas, frogs and Javan forest birds",
+        "Pacific island birds and some mammals",
+    ],
+    [
+        "sunbirds, flowerpeckers, white-eyes and finches",
+        "mammals (kangaroos, baboons, possums) and guineafowl",
+    ],
+    [
+        "European bush-crickets and birds-of-paradise",
+        "seabirds and waterbirds: albatrosses, petrels, cormorants",
+    ],
+    [
+        "hummingbirds, sunbirds and island doves",
+        "night birds and mammals, guineafowl, frogs",
+    ],
+    [
+        "Caribbean and Pacific island birds, small frogs",
+        "European bush-crickets and grasshoppers",
+    ],
+    [
+        "monkeys and other mammals",
+        "Pacific island reed warblers and monarchs",
+    ],
+    [
+        "Australian cicadas and parrots",
+        "owls, frogmouths and other night birds",
+    ],
+];
+
+/// The live view's model for `method`: Perch for Perch, BirdNET+ V3.0 for
+/// V3.0, else BirdNET V2.4 (BattyBirdNET has no live view; the tab does not
+/// offer one).
 pub fn model_for(method: Method) -> &'static LiveModel {
     match method {
         Method::Perch => &PERCH,
-        Method::BirdNet | Method::Bats | Method::BirdNetV3 => &BIRDNET,
+        Method::BirdNetV3 => &BIRDNET_V3,
+        Method::BirdNet | Method::Bats => &BIRDNET,
     }
 }
 
@@ -382,7 +482,7 @@ impl FileWindow {
             source_rate,
             start_s: cut.start_s,
             end_s: cut.end_s,
-            keep: matches!(method, Method::BirdNet | Method::Perch),
+            keep: matches!(method, Method::BirdNet | Method::Perch | Method::BirdNetV3),
         }
     }
 
@@ -716,7 +816,7 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
     // A restart (another model picked) while this waits: stop here, so this
     // model's labels and maps never land on the next model's readings.
     let stale = || generation() != gen;
-    for f in model.parts.iter().copied().chain([model.labels]) {
+    for f in model.parts.iter().copied().chain(model.labels) {
         if !classifier::store::is_downloaded(f).await {
             return Err(LiveStatus::NeedsDownload);
         }
@@ -728,9 +828,8 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
     let fail = |e: String| LiveStatus::Failed(e);
     let labels = match model.method {
         Method::Perch => classifier::perch_labels(state).await,
-        Method::BirdNet | Method::Bats | Method::BirdNetV3 => {
-            classifier::birdnet_labels(state).await
-        }
+        Method::BirdNetV3 => classifier::birdnet_v3_labels().await,
+        Method::BirdNet | Method::Bats => classifier::birdnet_labels(state).await,
     }
     .map_err(|e| fail(e.to_string()))?;
     if stale() {
@@ -915,9 +1014,12 @@ fn on_message(state: AppState, gen: u32, ev: MessageEvent) {
                 .map(|(_, w)| w);
             let len = active().embedding_len;
             // The reading describes the file's window whatever happens next
-            // (a pause, another file), so it is kept either way.
+            // (a pause, another file), so it is kept either way. A window of
+            // digital silence comes back from BirdNET+ V3.0 with no scores,
+            // only an embedding of zeros, as Analyse stores it: it is kept,
+            // but neither drawn nor shown as the paused reading.
             if let Some(w) = window {
-                if payload.len() > len {
+                if payload.len() >= len {
                     keep(state, w, top, &payload[..len]);
                 }
             }
@@ -1105,8 +1207,10 @@ fn stored_payload(state: AppState, window: &FileWindow, full: bool) -> Option<Ve
 /// to keep.
 fn keep(state: AppState, window: FileWindow, top: Vec<Score>, embedding: &[f32]) {
     // Only while the Live view in the Call detection tab is on: the Live
-    // explorer on its own does not add to a file's results.
-    if !window.keep || top.is_empty() || USERS.with(|u| u.get()) & LIVE_VIEW == 0 {
+    // explorer on its own does not add to a file's results. No top classes
+    // is BirdNET+ V3.0's answer for digital silence, which Analyse keeps the
+    // same way.
+    if !window.keep || USERS.with(|u| u.get()) & LIVE_VIEW == 0 {
         return;
     }
     classifier::played::keep(
@@ -1662,7 +1766,7 @@ fn draw_view(state: AppState, view: PausedView) {
     };
     let model = active();
     let min = classifier::min_confidence_untracked(state, model.method);
-    if let Some(fresh) = classifier::cached_labels(model.labels) {
+    if let Some(fresh) = classifier::cached_method_labels(model.method) {
         let replaced = LABELS.with(|l| {
             let mut l = l.borrow_mut();
             let old = l.as_ref().is_some_and(|l| !Arc::ptr_eq(l, &fresh));
@@ -1974,13 +2078,38 @@ mod tests {
 
     #[test]
     fn models_match_their_methods() {
-        for m in [&BIRDNET, &PERCH] {
+        for m in [&BIRDNET, &PERCH, &BIRDNET_V3] {
             assert_eq!(m.embedding_len, m.method.embedding_len());
             assert_eq!(m.window_s, m.method.window_secs());
             assert!(m.parts.iter().all(|f| f.part().is_some()));
             assert!(m.pc_smooth >= 1);
+            assert_eq!(model_for(m.method).method, m.method);
         }
         assert_eq!(model_for(Method::Bats).method, Method::BirdNet);
+    }
+
+    /// BirdNET+ V3.0's live view: 3 s at 32 kHz, the model file alone (its
+    /// labels come with the app), paced like Perch's, and its own maps.
+    #[test]
+    fn birdnet_v3_live_model() {
+        let m = model_for(Method::BirdNetV3);
+        assert_eq!(m.window_s, 3.0);
+        assert_eq!(Method::BirdNetV3.model_rate(), 32_000);
+        assert_eq!(m.embedding_len, V3_EMBEDDING_LEN);
+        assert_eq!(m.parts, &[&catalog::BIRDNET_V3]);
+        assert!(m.labels.is_none());
+        assert_eq!(m.map.file, BIRDNET_V3_MAP.file);
+        // Readings take 320 to 410 ms in WASM: not V2.4's 250 ms gap.
+        assert!(m.min_gap_ms >= 400.0 && m.lost_after_ms >= 20.0 * 400.0);
+        assert!(m.umap_radius > 0.0 && m.umap_radius < m.map.radius);
+        assert!(m.pc_ends.iter().flatten().all(|e| !e.is_empty()));
+        let umap = classifier::species_map::parse_map(include_bytes!(
+            "../research/live-embedding/birdnet-v3-umap.bin"
+        ));
+        assert_eq!(umap.len(), oversample_ipc::classifier::V3_CLASSES);
+        assert!(umap
+            .iter()
+            .all(|p| p.is_some_and(|(x, y)| x.is_finite() && y.is_finite())));
     }
 
     #[test]
@@ -2007,6 +2136,21 @@ mod tests {
             .ranks
             .iter()
             .all(|r| r.len() == oversample_ipc::classifier::PERCH_CLASSES));
+        let v3 = Components::parse(include_bytes!(
+            "../research/live-embedding/birdnet-v3-pc-rows.bin"
+        ))
+        .expect("BirdNET+ V3.0's class-row components");
+        assert_eq!(v3.dim, V3_EMBEDDING_LEN);
+        assert_eq!(v3.variance.len(), 12);
+        assert_eq!(v3.variance.len(), BIRDNET_V3.pc_ends.len());
+        assert!(v3
+            .ranks
+            .iter()
+            .all(|r| r.len() == oversample_ipc::classifier::V3_CLASSES));
+        assert!(v3.variance.iter().all(|v| v.is_finite() && *v > 0.0));
+        // A reading lands somewhere between the ends on every component.
+        let p = v3.percentiles(&[0.1; V3_EMBEDDING_LEN]);
+        assert!(p.iter().all(|v| (0.0..=1.0).contains(v)));
     }
 
     #[test]

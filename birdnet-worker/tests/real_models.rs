@@ -952,3 +952,109 @@ fn birdnet_v3_finds_gentoo_penguin_and_skips_digital_silence() {
     }
     assert!(out.embeddings[..V3_EMBEDDING_LEN].iter().any(|&v| v != 0.0));
 }
+
+fn v3_model() -> Option<PathBuf> {
+    let p = PathBuf::from(std::env::var_os("BIRDNET_V3_MODEL")?);
+    p.is_file().then_some(p)
+}
+
+/// BirdNET+ V3.0's `Live` request on the 3 s of a run's window gives the same
+/// top class and nearly the same confidence as the run, and the same
+/// embedding; on digital silence it gives no scores and an embedding of
+/// zeros, as the run does. Also prints the time per reading.
+#[test]
+fn birdnet_v3_live_matches_the_run() {
+    let Some(model) = v3_model() else {
+        eprintln!("BIRDNET_V3_MODEL not set; skipped");
+        return;
+    };
+    let mut s = Session::new();
+    load_part(&mut s, ModelPart::BirdNetV3, &model);
+    let (samples, rate) = load(
+        &sounds_dir()
+            .join("no-bat-sounds/sounds/XC1083752 - Pauraque - Nyctidromus albicollis.wav"),
+        30.0,
+    );
+    let out = analyse(&mut s, Method::BirdNetV3, &samples, rate);
+    let live = |s: &mut Session, req: u32, audio: Vec<f32>| {
+        let mut got = None;
+        let mut sink = |m: FromWorker, emb: Option<&[f32]>| {
+            if let FromWorker::Live { top, .. } = m {
+                got = Some((top, emb.map(<[f32]>::to_vec).unwrap_or_default()));
+            }
+        };
+        s.handle(
+            ToWorker::Live {
+                req,
+                source_rate: rate,
+                at: None,
+            },
+            Attached {
+                samples: Some(audio),
+                ..Default::default()
+            },
+            &mut sink,
+            &|| 0.0,
+        );
+        got.expect("a Live answer")
+    };
+    let mut checked = 0;
+    for (k, (start, end, top)) in out.windows.iter().enumerate().take(4) {
+        let a = (start * rate as f64) as usize;
+        let b = ((end * rate as f64) as usize).min(samples.len());
+        if b - a < 3 * rate as usize {
+            continue;
+        }
+        let t = std::time::Instant::now();
+        let (live_top, payload) = live(&mut s, k as u32, samples[a..b].to_vec());
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(payload.len(), V3_EMBEDDING_LEN + V3_CLASSES);
+        let (embedding, scores) = payload.split_at(V3_EMBEDDING_LEN);
+        // The model's own confidences: no second sigmoid.
+        assert!(scores.iter().all(|&c| (0.0..=1.0).contains(&c)));
+        assert!((scores[live_top[0].class as usize] - live_top[0].confidence).abs() < 1e-6);
+        let (best, score) = scores
+            .iter()
+            .enumerate()
+            .max_by(|x, y| x.1.total_cmp(y.1))
+            .unwrap();
+        let run_emb = &out.embeddings[k * V3_EMBEDDING_LEN..(k + 1) * V3_EMBEDDING_LEN];
+        let dot: f32 = embedding.iter().zip(run_emb).map(|(x, y)| x * y).sum();
+        let norm = |v: &[f32]| v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let cos = dot / (norm(embedding) * norm(run_emb));
+        eprintln!(
+            "window {k}: run {} {:.3}, live {best} {score:.3}, embedding cosine {cos:.5}, {ms:.0} ms",
+            top[0].class, top[0].confidence
+        );
+        assert_eq!(best, top[0].class as usize);
+        assert!((score - top[0].confidence).abs() < 0.05);
+        assert!(cos > 0.99);
+        checked += 1;
+    }
+    assert!(checked > 0, "no whole 3 s window to check");
+    let (top, payload) = live(&mut s, 99, vec![0.0; 3 * rate as usize]);
+    assert!(top.is_empty(), "digital silence was scored");
+    assert_eq!(payload.len(), V3_EMBEDDING_LEN);
+    assert!(payload.iter().all(|&v| v == 0.0));
+}
+
+/// The live view's reading of a file window for BirdNET+ V3.0 (resampled to
+/// 32 kHz on a cut made by `live_cut`) is the run's window with the same
+/// start, as for BirdNET V2.4 and Perch.
+#[test]
+fn birdnet_v3_kept_reading_is_the_run_window() {
+    let Some(model) = v3_model() else {
+        eprintln!("BIRDNET_V3_MODEL not set; skipped");
+        return;
+    };
+    let mut s = Session::new();
+    load_part(&mut s, ModelPart::BirdNetV3, &model);
+    let (samples, rate) = load(
+        &sounds_dir()
+            .join("bat-demo-sounds/sounds/XC540767 - Gentoo Penguin - Pygoscelis papua.mp3"),
+        9.0,
+    );
+    let checked = kept_reading_matches(&mut s, Method::BirdNetV3, &samples, rate);
+    eprintln!("{checked} windows at {rate} Hz");
+    assert!(checked >= 4);
+}

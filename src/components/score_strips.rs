@@ -1,5 +1,6 @@
 //! Rows above the spectrogram: the picked species' scores and the picked
-//! BirdNET principal components over the whole recording, one cell per
+//! principal components (BirdNET V2.4 or BirdNET+ V3.0) over the whole
+//! recording, one cell per
 //! window of the current file's classifier run (`crate::classifier::strips`).
 //! The rows follow the method picked in the Call detection tab, as the label
 //! strip on the spectrogram does, and share the spectrogram's time axis.
@@ -18,36 +19,56 @@ use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
 thread_local! {
-    /// BirdNET's principal components, once loaded.
-    static COMPONENTS: RefCell<Option<Arc<Components>>> = const { RefCell::new(None) };
-    static LOAD_STARTED: Cell<bool> = const { Cell::new(false) };
-    /// Notified when the components file has loaded (or failed to).
+    /// Each method's principal components, once loaded.
+    static COMPONENTS: RefCell<HashMap<Method, Arc<Components>>> = RefCell::new(HashMap::new());
+    static LOAD_STARTED: RefCell<HashSet<Method>> = RefCell::new(HashSet::new());
+    /// Notified when a components file has loaded (or failed to).
     static LOADED: ArcTrigger = ArcTrigger::new();
 }
 
-/// BirdNET's principal components: the components of its class rows
-/// (`birdnet-pc-rows.bin`), the live view's default. The first call starts
-/// loading the file and returns `None`; reactive callers run again once it is
-/// in. The number of components comes from the file.
-pub fn birdnet_components() -> Option<Arc<Components>> {
+/// The components file of `method`'s embedding, for rows above the
+/// spectrogram: the live view's class-row components. BirdNET V2.4 and
+/// BirdNET+ V3.0 only. BattyBirdNET's embeddings have V2.4's length but come
+/// from 256 kHz audio; Perch's are not offered yet.
+fn components_file(method: Method) -> Option<&'static str> {
+    match method {
+        Method::BirdNet | Method::BirdNetV3 => {
+            Some(crate::live_embedding::model_for(method).pc_file)
+        }
+        Method::Bats | Method::Perch => None,
+    }
+}
+
+/// `method`'s principal components: the components of its class rows
+/// (`birdnet-pc-rows.bin`, `birdnet-v3-pc-rows.bin`), the live view's
+/// default. `None` for a method without them. The first call starts loading
+/// the file and returns `None`; reactive callers run again once it is in. The
+/// number of components comes from the file.
+pub fn components_for(method: Method) -> Option<Arc<Components>> {
+    let file = components_file(method)?;
     LOADED.with(|t| t.track());
-    if let Some(c) = COMPONENTS.with(|c| c.borrow().clone()) {
+    if let Some(c) = COMPONENTS.with(|c| c.borrow().get(&method).cloned()) {
         return Some(c);
     }
-    if !LOAD_STARTED.with(|s| s.replace(true)) {
-        spawn_local(async {
-            let file = crate::live_embedding::PC_FILE_ROWS;
+    if LOAD_STARTED.with(|s| s.borrow_mut().insert(method)) {
+        spawn_local(async move {
             match crate::components::file_sidebar::fetch_bytes(file).await {
-                Ok(bytes) => match Components::parse(&bytes) {
-                    Some(c) => COMPONENTS.with(|p| *p.borrow_mut() = Some(Arc::new(c))),
-                    None => log::warn!("score strips: {file} is not a components file"),
-                },
+                // A file for another embedding would give wrong rows.
+                Ok(bytes) => {
+                    match Components::parse(&bytes).filter(|c| c.dim == method.embedding_len()) {
+                        Some(c) => COMPONENTS.with(|p| {
+                            p.borrow_mut().insert(method, Arc::new(c));
+                        }),
+                        None => log::warn!("score strips: {file} is not a components file"),
+                    }
+                }
                 Err(e) => log::warn!("score strips: could not load {file}: {e}"),
             }
             LOADED.with(|t| t.notify());
@@ -81,9 +102,9 @@ fn build(state: AppState) -> Option<ScoreStrips> {
             .map(|s| s.scientific.clone())
             .collect()
     });
-    // Components are of BirdNET's embedding; BattyBirdNET's embeddings have
-    // the same length but come from 256 kHz audio, so they are left out.
-    let picked_pcs: Vec<usize> = if method == Method::BirdNet {
+    // Components of the method's embedding, for the methods that have them
+    // (`components_file`).
+    let picked_pcs: Vec<usize> = if components_file(method).is_some() {
         state.call_detection.strip_components().get()
     } else {
         Vec::new()
@@ -93,7 +114,9 @@ fn build(state: AppState) -> Option<ScoreStrips> {
         return None;
     }
     let min = classifier::min_confidence(state, method);
-    let pcs = (!picked_pcs.is_empty()).then(birdnet_components).flatten();
+    let pcs = (!picked_pcs.is_empty())
+        .then(|| components_for(method))
+        .flatten();
     state.classifier.results().with(|m| {
         let run = m.get(&(file, method))?;
         let mut rows = Vec::new();

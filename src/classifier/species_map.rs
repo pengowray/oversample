@@ -1,5 +1,6 @@
 //! Positions for the species map: each model's classes from its map file in
-//! `research/species-map` (`birdnet-map.bin`, `perch-map.bin`), and each window
+//! `research/species-map` (`birdnet-map.bin`, `birdnet-v3-map.bin`,
+//! `perch-map.bin`), and each window
 //! of a run placed among the species it scored highest.
 
 use super::summary::{window_kind, WindowKind};
@@ -41,14 +42,28 @@ pub const PERCH_MAP: MapSpec = MapSpec {
 /// closer together classes sit on the Perch map.
 const PERCH_RADIUS: f32 = 0.09;
 
+pub const BIRDNET_V3_MAP: MapSpec = MapSpec {
+    file: "birdnet-v3-map.bin",
+    radius: BIRDNET_V3_RADIUS,
+    classes: "BirdNET+ V3.0's 11,725 species and sounds",
+    model: "BirdNET+ V3.0",
+    source: "Positions from BirdNET+ V3.0's classifier weights. Apache 2.0.",
+};
+
+/// BirdNET's 0.15, scaled by how much closer together classes sit on the
+/// V3.0 map: the median distance to a class's 3rd nearest class is 0.0104
+/// map units, against 0.0149 on BirdNET's (research/species-map/README.md,
+/// `v3-check.txt`).
+const BIRDNET_V3_RADIUS: f32 = 0.105;
+
 /// The species map for `method`, if it has one. BattyBirdNET's regional
-/// classifiers give no usable map (research/species-map/README.md), and
-/// BirdNET+ V3.0 has no map file yet.
+/// classifiers give no usable map (research/species-map/README.md).
 pub fn map_spec(method: Method) -> Option<&'static MapSpec> {
     match method {
         Method::BirdNet => Some(&BIRDNET_MAP),
+        Method::BirdNetV3 => Some(&BIRDNET_V3_MAP),
         Method::Perch => Some(&PERCH_MAP),
-        Method::Bats | Method::BirdNetV3 => None,
+        Method::Bats => None,
     }
 }
 
@@ -166,6 +181,24 @@ mod tests {
             whole_file: true,
             complete: true,
         }
+    }
+
+    /// The shipped V3.0 map has a finite place inside the map for every one
+    /// of the model's classes, and its radius is set.
+    #[test]
+    fn birdnet_v3_map_covers_every_class() {
+        let m = parse_map(include_bytes!(
+            "../../research/species-map/birdnet-v3-map.bin"
+        ));
+        assert_eq!(m.len(), oversample_ipc::classifier::V3_CLASSES);
+        assert!(m.iter().all(|p| p.is_some_and(|(x, y)| x.is_finite()
+            && y.is_finite()
+            && x.abs() <= 1.0
+            && y.abs() <= 1.0)));
+        let spec = map_spec(Method::BirdNetV3).expect("a map for V3.0");
+        assert_eq!(spec.file, "birdnet-v3-map.bin");
+        assert!(spec.radius > 0.0 && spec.radius < BIRDNET_MAP.radius);
+        assert!(map_spec(Method::Bats).is_none());
     }
 
     #[test]

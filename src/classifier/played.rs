@@ -1,5 +1,5 @@
 //! Readings the live view (`crate::live_embedding`) makes of a file, kept in
-//! that file's results for BirdNET V2.4 or Perch 2.0, so the rows above the
+//! that file's results for BirdNET V2.4, BirdNET+ V3.0 or Perch 2.0, so the rows above the
 //! spectrogram, the overlay, the overview marks and Sound groups fill in
 //! wherever the file has been played, without Analyse.
 //!
@@ -210,12 +210,10 @@ fn new_run(r: &Reading) -> Option<ClassifierRun> {
     let choice = match r.method {
         Method::BirdNet => catalog::ModelChoice::BirdNet,
         Method::Perch => catalog::ModelChoice::Perch,
-        Method::Bats | Method::BirdNetV3 => return None,
+        Method::BirdNetV3 => catalog::ModelChoice::BirdNetV3,
+        Method::Bats => return None,
     };
-    let labels = super::cached_labels(match r.method {
-        Method::Perch => &catalog::PERCH_LABELS,
-        _ => &catalog::BIRDNET_LABELS,
-    })?;
+    let labels = super::cached_method_labels(r.method)?;
     let (backbone, head) = super::model_files(choice);
     Some(ClassifierRun::empty(
         r.method,
