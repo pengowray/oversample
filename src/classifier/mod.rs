@@ -46,8 +46,9 @@
 //! - `results()`: `HashMap<(file_id, Method), ClassifierRun>`. Windows fill in
 //!   while a run goes (about every 100 ms), kept in time order; with a step
 //!   shorter than the window, later passes insert windows between earlier
-//!   ones ([`ClassifierRun::insert_reading`]). Read with `.with(..)`, not
-//!   `.get()`.
+//!   ones ([`ClassifierRun::insert_reading`]). The live view adds its
+//!   readings of a file too, wherever it plays ([`played`]). Read with
+//!   `.with(..)`, not `.get()`.
 //! - `embeddings()`: `HashMap<(file_id, Method), Vec<f32>>`, 1,024 floats per
 //!   window (1,536 for Perch, 1,280 for BirdNET+ V3.0) in the order the
 //!   windows arrived, which only ever grows at the end; each window's `slot`
@@ -61,6 +62,7 @@
 
 pub mod bat_pick;
 pub mod location;
+pub mod played;
 pub mod quiet;
 pub mod sound_groups;
 pub mod species_map;
@@ -368,6 +370,17 @@ async fn all_regions() -> Result<AllRegions, ClassifierError> {
     Ok(all)
 }
 
+/// The model that takes the audio and the one that scores it, as a run of
+/// `choice` records them (`ClassifierRun::backbone`, `head`).
+pub fn model_files(choice: ModelChoice) -> (&'static ModelFile, Option<&'static ModelFile>) {
+    match choice {
+        ModelChoice::BirdNet => (&catalog::BACKBONE, None),
+        ModelChoice::Bats(scope) => (&catalog::BACKBONE, single_bat_head(scope)),
+        ModelChoice::Perch => (&catalog::PERCH_EMBEDDING, Some(&catalog::PERCH_CLASSIFIER)),
+        ModelChoice::BirdNetV3 => (&catalog::BIRDNET_V3, None),
+    }
+}
+
 /// The head of `scope` as one file; `None` for all regions.
 fn single_bat_head(scope: BatScope) -> Option<&'static ModelFile> {
     match scope {
@@ -524,7 +537,8 @@ pub fn step_for(method: Method, step_secs: f64) -> f64 {
 
 /// Analyse file `file_id` (the current file) with `choice`, with `step_secs`
 /// between window starts ([`step_for`]). Replaces that file's earlier results
-/// for the same method, and cancels any other run.
+/// for the same method, except the readings the live view made of it
+/// ([`played`]), and cancels any other run.
 ///
 /// With a step shorter than the window the run goes over the recording more
 /// than once (`oversample_ipc::classifier::refine_passes`): first the windows
@@ -594,39 +608,29 @@ async fn run_task(
     }
     worker::ensure_family(method.family());
     worker::ensure_started(state).await?;
-    let (backbone, head, region, labels) = match choice {
+    let (region, labels) = match choice {
         ModelChoice::BirdNet => {
             let labels = labels(state, &catalog::BIRDNET_LABELS).await?;
             worker::ensure_model(&catalog::BACKBONE).await?;
-            (&catalog::BACKBONE, None, None, labels)
+            (None, labels)
         }
         ModelChoice::Bats(scope) => {
             worker::ensure_model(&catalog::BACKBONE).await?;
-            let labels = load_bat_heads(state, scope).await?;
-            (
-                &catalog::BACKBONE,
-                single_bat_head(scope),
-                Some(scope),
-                labels,
-            )
+            (Some(scope), load_bat_heads(state, scope).await?)
         }
         ModelChoice::Perch => {
             let labels = labels(state, &catalog::PERCH_LABELS).await?;
             worker::ensure_model(&catalog::PERCH_EMBEDDING).await?;
             worker::ensure_model(&catalog::PERCH_CLASSIFIER).await?;
-            (
-                &catalog::PERCH_EMBEDDING,
-                Some(&catalog::PERCH_CLASSIFIER),
-                None,
-                labels,
-            )
+            (None, labels)
         }
         ModelChoice::BirdNetV3 => {
             let labels = birdnet_v3_labels().await?;
             worker::ensure_model(&catalog::BIRDNET_V3).await?;
-            (&catalog::BIRDNET_V3, None, None, labels)
+            (None, labels)
         }
     };
+    let (backbone, head) = model_files(choice);
     if !is_latest(state, generation) {
         return Err(Stopped::Superseded);
     }
@@ -639,28 +643,30 @@ async fn run_task(
         method.step_samples(step_secs).unwrap_or(window),
     );
     let key = (file_id, method);
+    // The new run starts with the readings the live view made of this file
+    // (`played`), which are the windows Analyse gives for their starts; the
+    // windows of an earlier Analyse go. Its own windows then go in around
+    // them, and one at a kept reading's start is not added twice.
+    played::flush(state, worker::now_ms());
+    let old_embeddings = state
+        .classifier
+        .embeddings()
+        .try_update_untracked(|m| m.remove(&key))
+        .flatten()
+        .unwrap_or_default();
+    let (kept, kept_embeddings) = state.classifier.results().with_untracked(|m| {
+        m.get(&key)
+            .filter(|r| r.source_rate == rate)
+            .map(|r| r.live_windows(&old_embeddings))
+            .unwrap_or_default()
+    });
     state.classifier.results().update(|m| {
-        m.insert(
-            key,
-            ClassifierRun {
-                method,
-                region,
-                backbone,
-                head,
-                source_rate: rate,
-                model_rate: method.model_rate(),
-                window_secs: method.window_secs(),
-                step_secs,
-                spacing_secs: method.window_secs(),
-                labels,
-                windows: Vec::new(),
-                whole_file: false,
-                complete: false,
-            },
-        );
+        let mut run = ClassifierRun::empty(method, region, backbone, head, rate, labels, step_secs);
+        run.windows = kept;
+        m.insert(key, run);
     });
     state.classifier.embeddings().update(|m| {
-        m.insert(key, Vec::new());
+        m.insert(key, kept_embeddings);
     });
     let run_id = generation;
     for (p, pass) in passes.iter().enumerate() {

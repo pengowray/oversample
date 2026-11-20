@@ -76,6 +76,10 @@ fn window_len(secs: f64) -> String {
 #[derive(Clone, Copy, PartialEq)]
 struct RunInfo {
     windows: usize,
+    /// Windows Analyse made; the rest are the live view's readings.
+    analysed: usize,
+    /// Time the windows' cells cover, in seconds.
+    covered_secs: f64,
     complete: bool,
     whole_file: bool,
     region: Option<classifier::BatScope>,
@@ -422,6 +426,8 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         state.classifier.results().with(|m| {
             m.get(&(file, method)).map(|r| RunInfo {
                 windows: r.windows.len(),
+                analysed: r.analysed_windows(),
+                covered_secs: classifier::types::cells_secs(r.cells().iter()),
                 complete: r.complete,
                 whole_file: r.whole_file,
                 region: r.region,
@@ -579,9 +585,11 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                     Some(fraction * 100.0),
                 ),
                 RunStatus::Running { fraction, .. } => {
+                    // Windows Analyse made: the live view's readings kept in
+                    // the results are not part of the count.
                     let (done, len) = results_info
                         .get()
-                        .map(|r| (r.windows, r.window_secs))
+                        .map(|r| (r.analysed, r.window_secs))
                         .unwrap_or((0, method.window_secs()));
                     let total = source_rate
                         .get()
@@ -640,10 +648,19 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                     "Stopped with a {} step, not {asked}. Analyse again for the {asked} step.",
                     summary::step_text(r.spacing_secs)
                 ))
+            } else if r.analysed == 0 {
+                // Only the live view's readings (`classifier::played`): no
+                // Analyse has run on this file.
+                let length = source_rate.get().map_or(0.0, |(_, d)| d);
+                Some(format!(
+                    "Results from Live view: {} of the {} recording. Analyse for the whole recording.",
+                    summary::time_amount(r.covered_secs),
+                    summary::time_amount(length)
+                ))
             } else {
                 Some(format!(
                     "Stopped after {}. Analyse again for the whole recording.",
-                    count(r.windows, "window", "windows")
+                    count(r.analysed, "window", "windows")
                 ))
             }
         });
@@ -766,10 +783,18 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             </div>
         })
     };
-    // The lists, when any window reaches the minimum confidence.
+    // The lists, when any window reaches the minimum confidence. Through a
+    // memo of that alone, so new windows (an Analyse, or the live view's
+    // readings while the file plays) leave the lists in place; each list
+    // follows the results itself.
+    let any_listed = Memo::new(move |_| {
+        summary.with(|s| {
+            s.as_ref()
+                .is_some_and(|s| s.species_windows + s.not_species_windows > 0)
+        })
+    });
     let lists = move || {
-        let s = summary.get()?;
-        if s.species_windows + s.not_species_windows == 0 {
+        if !any_listed.get() {
             return None;
         }
         let view_button = move |value: ListView, label: &'static str| {
@@ -1319,71 +1344,127 @@ fn species_table(
     }
 }
 
+/// One row of the "By window" list.
+#[derive(Clone, PartialEq)]
+struct WindowRow {
+    /// The window's number, when windows do not overlap.
+    number: Option<usize>,
+    start: f64,
+    end: f64,
+    label: Option<classifier::SpeciesLabel>,
+    /// The species' place in `summary::colour_order`; `None` for a class
+    /// that is not a species.
+    slot: Option<usize>,
+    other: bool,
+    confidence: f32,
+}
+
+impl WindowRow {
+    /// Everything the row shows, so a row is drawn again only when it changes.
+    fn key(&self) -> (u64, Option<usize>, Option<usize>, bool, u32, String) {
+        (
+            self.start.to_bits(),
+            self.number,
+            self.slot,
+            self.other,
+            self.confidence.to_bits(),
+            self.label
+                .as_ref()
+                .map_or_else(String::new, |l| l.scientific.clone()),
+        )
+    }
+}
+
 /// The "By window" list: windows at or above the minimum, in time order.
+/// The rows are worked out in a memo and drawn by key, so readings that add
+/// no row (below the minimum) redraw nothing, and a new row adds one row.
 fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>) -> impl IntoView {
-    let min = classifier::min_confidence(state, method);
-    // With overlapping windows the numbers change as a run adds windows
-    // between others, so the column is left out.
-    let mut numbered = true;
-    let rows = state.classifier.results().with(|m| {
-        let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
-            return Vec::new();
-        };
-        numbered = !run.overlapping();
-        let order = summary::colour_order(run);
-        run.windows
-            .iter()
-            .enumerate()
-            .filter_map(|(i, w)| {
-                let kind = summary::window_kind(run, i, min);
-                if kind == WindowKind::Below {
-                    return None;
-                }
-                let top = w.top[0];
-                let label = run.label(&top);
-                let name = class_name(label);
-                let scientific = label.map(|l| l.scientific.clone()).unwrap_or_default();
-                let (start, end) = (w.start_s, w.end_s);
-                let flag = flag_cell(state, method, current_file.get(), label);
-                let other = kind == WindowKind::NotSpecies;
-                let slot = (!other)
-                    .then(|| order.iter().position(|&c| c == top.class))
-                    .flatten();
-                let class = move || {
-                    let mut c = String::from("detection-row");
-                    if other {
-                        c.push_str(" detection-row-other");
+    let rows = Memo::new(move |_| {
+        let min = classifier::min_confidence(state, method);
+        state.classifier.results().with(|m| {
+            let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
+                return (true, Vec::new());
+            };
+            // With overlapping windows the numbers change as a run adds
+            // windows between others, so the column is left out.
+            let numbered = !run.overlapping();
+            let order = summary::colour_order(run);
+            let rows = run
+                .windows
+                .iter()
+                .enumerate()
+                .filter_map(|(i, w)| {
+                    let kind = summary::window_kind(run, i, min);
+                    if kind == WindowKind::Below {
+                        return None;
                     }
-                    if state.call_detection.selected_window().get() == Some(start) {
-                        c.push_str(" selected");
-                    }
-                    c
-                };
-                Some(view! {
-                    <tr class=class title=scientific on:click=move |_| show_window(state, start, end)>
-                        {numbered.then(|| view! { <td class="detection-col-num">{i + 1}</td> })}
-                        <td>{crate::format_time::format_time_display(start, 1)}</td>
-                        <td class="detection-col-kind">{species_swatch(slot)}{name}</td>
-                        {flag}
-                        <td class="detection-col-num">{format!("{:.2}", top.confidence)}</td>
-                    </tr>
+                    let top = w.top[0];
+                    let other = kind == WindowKind::NotSpecies;
+                    Some(WindowRow {
+                        number: numbered.then_some(i + 1),
+                        start: w.start_s,
+                        end: w.end_s,
+                        label: run.label(&top).cloned(),
+                        slot: (!other)
+                            .then(|| order.iter().position(|&c| c == top.class))
+                            .flatten(),
+                        other,
+                        confidence: top.confidence,
+                    })
                 })
-            })
-            .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (numbered, rows)
+        })
     });
+    let numbered = move || rows.with(|r| r.0);
+    let row = move |r: WindowRow| {
+        let (start, end, other) = (r.start, r.end, r.other);
+        let class = move || {
+            let mut c = String::from("detection-row");
+            if other {
+                c.push_str(" detection-row-other");
+            }
+            if state.call_detection.selected_window().get() == Some(start) {
+                c.push_str(" selected");
+            }
+            c
+        };
+        let scientific = r
+            .label
+            .as_ref()
+            .map(|l| l.scientific.clone())
+            .unwrap_or_default();
+        let flag = flag_cell(
+            state,
+            method,
+            current_file.get_untracked(),
+            r.label.as_ref(),
+        );
+        view! {
+            <tr class=class title=scientific on:click=move |_| show_window(state, start, end)>
+                {r.number.map(|n| view! { <td class="detection-col-num">{n}</td> })}
+                <td>{crate::format_time::format_time_display(start, 1)}</td>
+                <td class="detection-col-kind">{species_swatch(r.slot)}{class_name(r.label.as_ref())}</td>
+                {flag}
+                <td class="detection-col-num">{format!("{:.2}", r.confidence)}</td>
+            </tr>
+        }
+    };
     view! {
         <div class="detection-list">
             <table class="detection-table">
                 <thead>
                     <tr>
-                        {numbered.then(|| view! { <th class="detection-col-num">"#"</th> })}
+                        {move || numbered().then(|| view! { <th class="detection-col-num">"#"</th> })}
                         <th>"Start"</th>
                         <th>"Species"</th>
                         {flag_header(method)}
                         <th class="detection-col-num" title="Confidence">"Conf."</th>
                     </tr>
                 </thead>
-                <tbody>{rows}</tbody>
+                <tbody>
+                    <For each=move || rows.with(|r| r.1.clone()) key=WindowRow::key children=row />
+                </tbody>
             </table>
         </div>
     }

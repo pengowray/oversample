@@ -16,8 +16,14 @@
 //! Each answer goes straight to the chart (`live-embedding.js`) through a
 //! registered element; only the status line (loading, the update interval, an
 //! error) goes through the store, so nothing reactive changes per reading.
+//!
+//! Readings of a file (while it plays, and the paused reading) are kept in
+//! the file's results, and a window already there is shown from the results
+//! without running the model (`classifier::played`). While a file plays, the
+//! window read starts on that module's grid, so it ends up to
+//! `played::GRID_S` before the playhead.
 
-use crate::classifier::{self, catalog, location, ClassifierError, Method, SpeciesLabel};
+use crate::classifier::{self, catalog, location, ClassifierError, Method, Score, SpeciesLabel};
 use crate::format_time::format_time_display;
 use crate::recording_place::{file_place, file_week, Place};
 use crate::state::store_fields::*;
@@ -29,7 +35,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_core::audio::source::ChannelView;
 use oversample_ipc::classifier::{
-    attach, FromWorker, ToWorker, EMBEDDING_LEN, PERCH_EMBEDDING_LEN,
+    attach, live_cut, FromWorker, LiveCut, ToWorker, EMBEDDING_LEN, PERCH_EMBEDDING_LEN,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -346,6 +352,43 @@ thread_local! {
     static PAUSED_DRAWN: Cell<PausedView> = const { Cell::new(None) };
     /// Whether the chart's flags were drawn with a location list.
     static FLAGS_DRAWN: Cell<bool> = const { Cell::new(false) };
+    /// The file window the request in flight reads, with the request's
+    /// number, when it is a window of a file.
+    static REQ_WINDOW: Cell<Option<(u32, FileWindow)>> = const { Cell::new(None) };
+    /// The file window last read or shown while a file plays (the file's id
+    /// and the start in ms), so the same window is not shown twice running.
+    static LAST_WINDOW: Cell<Option<(u64, i64)>> = const { Cell::new(None) };
+}
+
+/// A window of a file that a reading is of.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FileWindow {
+    file_id: u64,
+    method: Method,
+    /// The file's sample rate when the audio was read.
+    source_rate: u32,
+    start_s: f64,
+    end_s: f64,
+    /// The reading goes into the file's results: a method Analyse has, and
+    /// all of the cut's audio was read.
+    keep: bool,
+}
+
+impl FileWindow {
+    fn new(file_id: u64, method: Method, source_rate: u32, cut: &LiveCut) -> Self {
+        FileWindow {
+            file_id,
+            method,
+            source_rate,
+            start_s: cut.start_s,
+            end_s: cut.end_s,
+            keep: matches!(method, Method::BirdNet | Method::Perch),
+        }
+    }
+
+    fn id(&self) -> (u64, i64) {
+        (self.file_id, (self.start_s * 1000.0).round() as i64)
+    }
 }
 
 /// What the chart shows while paused: `None` when something plays (or no
@@ -592,6 +635,10 @@ pub fn restart(state: AppState) {
     }
     LINK.with(|l| *l.borrow_mut() = None);
     IN_FLIGHT.with(|f| f.set(None));
+    REQ_WINDOW.with(|r| r.set(None));
+    LAST_WINDOW.with(|w| w.set(None));
+    classifier::played::flush(state, now_ms());
+    stop_filling(state);
     HISTORY.with(|h| h.borrow_mut().clear());
     SESSION.with(|h| h.borrow_mut().clear());
     SPECTRUM.with(|h| *h.borrow_mut() = None);
@@ -853,7 +900,7 @@ fn on_message(state: AppState, gen: u32, ev: MessageEvent) {
     };
     match msg {
         FromWorker::Ready | FromWorker::Loaded { .. } => resolve(Ok(())),
-        FromWorker::Live { req, ms } => {
+        FromWorker::Live { req, ms, top } => {
             let payload = js_sys::Reflect::get(&data, &attach::EMBEDDING.into())
                 .ok()
                 .and_then(|v| v.dyn_into::<js_sys::Float32Array>().ok())
@@ -861,6 +908,18 @@ fn on_message(state: AppState, gen: u32, ev: MessageEvent) {
                 .unwrap_or_default();
             if IN_FLIGHT.with(|f| f.get().map(|(r, _)| r)) == Some(req) {
                 IN_FLIGHT.with(|f| f.set(None));
+            }
+            let window = REQ_WINDOW
+                .with(|w| w.get())
+                .filter(|&(r, _)| r == req)
+                .map(|(_, w)| w);
+            let len = active().embedding_len;
+            // The reading describes the file's window whatever happens next
+            // (a pause, another file), so it is kept either way.
+            if let Some(w) = window {
+                if payload.len() > len {
+                    keep(state, w, top, &payload[..len]);
+                }
             }
             let preview = PREVIEW_REQ
                 .with(|p| p.get())
@@ -871,11 +930,11 @@ fn on_message(state: AppState, gen: u32, ev: MessageEvent) {
                     // Playback or the microphone started meanwhile: the live
                     // readings take over, and the next pause asks again.
                     PREVIEW_REQ.with(|p| p.set(None));
-                } else if payload.len() > active().embedding_len {
+                } else if payload.len() > len {
                     add_preview(state, key, &payload);
                 }
-            } else if payload.len() > active().embedding_len {
-                add_reading(state, payload, ms);
+            } else if payload.len() > len {
+                add_reading(state, payload, Some(ms));
             }
         }
         FromWorker::Error { error, run } => {
@@ -936,6 +995,150 @@ async fn current_audio(state: AppState) -> Option<(Vec<f32>, u32)> {
     )
     .await?;
     Some((s, rate))
+}
+
+/// The next reading to show.
+enum Next {
+    /// Audio to send to the model, at `rate`. With `at`, a cut of a file
+    /// (`live_cut`) whose window starts `at` model samples in; without, the
+    /// last window of it.
+    Audio {
+        samples: Vec<f32>,
+        rate: u32,
+        at: Option<u32>,
+        window: Option<FileWindow>,
+    },
+    /// The window's reading is in the file's results already: its embedding
+    /// and every class's score, shown without the model.
+    Stored {
+        payload: Vec<f32>,
+        window: FileWindow,
+    },
+    /// The window shown last: nothing new yet (a slow playback speed).
+    Same,
+}
+
+/// What to read next: the microphone's last window, or while a file plays,
+/// its window on the grid (`played::snap_start`) a window before the
+/// playhead. Before a whole window has played, and for a timeline, the last
+/// window before the playhead, as [`current_audio`] reads it.
+async fn next_reading(state: AppState) -> Option<Next> {
+    let plain = |a: Option<(Vec<f32>, u32)>| {
+        a.map(|(samples, rate)| Next::Audio {
+            samples,
+            rate,
+            at: None,
+            window: None,
+        })
+    };
+    let mic = state.mic.listening().get_untracked() || state.mic.recording().get_untracked();
+    if mic || state.timeline.active().with_untracked(Option::is_some) {
+        return plain(current_audio(state).await);
+    }
+    if !state.playback.is_playing().get_untracked() {
+        return None;
+    }
+    let model = active();
+    let idx = state.library.current_index().get_untracked()?;
+    let (file_id, source, rate) = state.library.files().with_untracked(|f| {
+        f.get(idx)
+            .map(|f| (f.id, f.audio.source.clone(), f.audio.sample_rate))
+    })?;
+    let playhead = state.playback.playhead_time().get_untracked();
+    let cut = classifier::played::snap_start(playhead, model.window_s)
+        .and_then(|start| live_cut(model.method, rate, start, source.total_samples()));
+    let Some(cut) = cut else {
+        return plain(current_audio(state).await);
+    };
+    let window = FileWindow::new(file_id, model.method, rate, &cut);
+    if LAST_WINDOW.with(|w| w.get()) == Some(window.id()) {
+        return Some(Next::Same);
+    }
+    if let Some(payload) = stored_payload(state, &window, true) {
+        return Some(Next::Stored { payload, window });
+    }
+    let samples = crate::audio::streaming_source::read_region_ready(
+        &*source,
+        ChannelView::MonoMix,
+        cut.from,
+        cut.len as usize,
+    )
+    .await?;
+    // A file whose length is still a guess can end early: such a reading is
+    // shown but not kept.
+    let whole = samples.len() as u64 == cut.len;
+    Some(Next::Audio {
+        samples,
+        rate,
+        at: Some(cut.skip),
+        window: Some(FileWindow {
+            keep: window.keep && whole,
+            ..window
+        }),
+    })
+}
+
+/// The stored reading of `window` as the worker would send it: the embedding,
+/// then every class's score. With `full`, only when the scores kept show the
+/// same as all of them would (`played::full_scores`); without, for the
+/// paused reading, which uses the top 3 classes only.
+fn stored_payload(state: AppState, window: &FileWindow, full: bool) -> Option<Vec<f32>> {
+    let classes = LABELS.with(|l| l.borrow().as_ref().map(|l| l.len()))?;
+    let (top, embedding) = classifier::played::stored(
+        state,
+        window.file_id,
+        window.method,
+        window.source_rate,
+        window.start_s,
+    )?;
+    let scores = if full {
+        classifier::played::full_scores(&top, classes)?
+    } else {
+        classifier::played::fill_scores(&top, classes)?
+    };
+    let mut payload = embedding;
+    payload.extend(scores);
+    Some(payload)
+}
+
+/// Keep a reading of `window` in the file's results (`played`), if it is one
+/// to keep.
+fn keep(state: AppState, window: FileWindow, top: Vec<Score>, embedding: &[f32]) {
+    // Only while the Live view in the Call detection tab is on: the Live
+    // explorer on its own does not add to a file's results.
+    if !window.keep || top.is_empty() || USERS.with(|u| u.get()) & LIVE_VIEW == 0 {
+        return;
+    }
+    classifier::played::keep(
+        state,
+        classifier::played::Reading {
+            file_id: window.file_id,
+            method: window.method,
+            source_rate: window.source_rate,
+            start_s: window.start_s,
+            end_s: window.end_s,
+            top,
+            embedding: embedding.to_vec(),
+        },
+        now_ms(),
+    );
+    let key = Some((window.file_id, window.method));
+    if state.playback.is_playing().get_untracked()
+        && state.classifier.live_filling().get_untracked() != key
+    {
+        state.classifier.live_filling().set(key);
+    }
+}
+
+/// Playback stopped (or the view did): put the readings kept into the
+/// results now, and say no more are coming.
+fn stop_filling(state: AppState) {
+    if classifier::played::waiting() {
+        classifier::played::flush(state, now_ms());
+    }
+    if state.classifier.live_filling().get_untracked().is_some() {
+        state.classifier.live_filling().set(None);
+    }
 }
 
 /// True while a file plays or the microphone listens or records.
@@ -1033,9 +1236,29 @@ async fn preview_tick(state: AppState, gen: u32, now: f64) {
         return;
     }
     let total = source.total_samples();
+    let model = active();
+    // A whole window: cut so that it has the samples Analyse gives a window
+    // with this start, and shown from the file's results when it is there.
+    // The key's times are rounded to the ms, which can put the last window
+    // of a file a fraction of a ms past its end: 1 ms earlier then.
+    let cut = (key.2 - key.1 >= (model.window_s * 1000.0).round() as i64)
+        .then(|| {
+            let from = key.1 as f64 / 1000.0;
+            live_cut(model.method, rate, from, total)
+                .or_else(|| live_cut(model.method, rate, from - 0.001, total))
+        })
+        .flatten();
+    let window = cut.map(|c| FileWindow::new(key.0, model.method, rate, &c));
+    if let Some(payload) = window.and_then(|w| stored_payload(state, &w, false)) {
+        add_preview(state, key, &payload);
+        return;
+    }
     let at = |ms: i64| ((ms as f64 / 1000.0 * rate as f64) as u64).min(total);
-    let (start, end) = (at(key.1), at(key.2));
-    if end <= start {
+    let (start, len) = match cut {
+        Some(c) => (c.from, c.len),
+        None => (at(key.1), at(key.2).saturating_sub(at(key.1))),
+    };
+    if len == 0 {
         return;
     }
     // Not decoded yet (a long file still streaming in): tried again next tick.
@@ -1043,7 +1266,7 @@ async fn preview_tick(state: AppState, gen: u32, now: f64) {
         &*source,
         ChannelView::MonoMix,
         start,
-        (end - start) as usize,
+        len as usize,
     )
     .await
     else {
@@ -1052,14 +1275,26 @@ async fn preview_tick(state: AppState, gen: u32, now: f64) {
     if generation() != gen || sound_on(state) || preview_key(state) != Some(key) {
         return;
     }
-    if let Some(req) = send(&samples, rate, now) {
+    let window = window.map(|w| FileWindow {
+        keep: w.keep && samples.len() as u64 == len,
+        ..w
+    });
+    if let Some(req) = send(&samples, rate, cut.map(|c| c.skip), window, now) {
         PREVIEW_REQ.with(|p| p.set(Some((req, key, now))));
     }
 }
 
-/// Send `samples` for a reading. Returns the request's number, or `None`
-/// when the worker is gone.
-fn send(samples: &[f32], rate: u32, now: f64) -> Option<u32> {
+/// Send `samples` for a reading: the last window of them, or with `at` the
+/// window starting `at` model samples in (a cut of a file, `live_cut`).
+/// `window` is the file window they hold, if any. Returns the request's
+/// number, or `None` when the worker is gone.
+fn send(
+    samples: &[f32],
+    rate: u32,
+    at: Option<u32>,
+    window: Option<FileWindow>,
+    now: f64,
+) -> Option<u32> {
     let req = NEXT_REQ.with(|n| {
         let r = n.get();
         n.set(r.wrapping_add(1));
@@ -1076,6 +1311,7 @@ fn send(samples: &[f32], rate: u32, now: f64) -> Option<u32> {
             &ToWorker::Live {
                 req,
                 source_rate: rate,
+                at,
             },
             Some((attach::SAMPLES, &arr)),
         );
@@ -1085,6 +1321,7 @@ fn send(samples: &[f32], rate: u32, now: f64) -> Option<u32> {
         return None;
     }
     IN_FLIGHT.with(|f| f.set(Some((req, now))));
+    REQ_WINDOW.with(|r| r.set(window.map(|w| (req, w))));
     RATE.with(|r| r.set(rate));
     LAST_SENT.with(|l| l.set(now));
     Some(req)
@@ -1098,6 +1335,8 @@ async fn run_loop(state: AppState, gen: u32) {
         }
         let now = now_ms();
         if !sound_on(state) {
+            stop_filling(state);
+            LAST_WINDOW.with(|w| w.set(None));
             // Nothing to read live: the paused reading instead.
             preview_tick(state, gen, now).await;
             continue;
@@ -1120,13 +1359,13 @@ async fn run_loop(state: AppState, gen: u32) {
         if !want_reading && !want_spectrum {
             continue;
         }
-        let Some((samples, rate)) = current_audio(state).await else {
-            continue;
-        };
-        if generation() != gen {
-            return;
-        }
         if want_spectrum {
+            let Some((samples, rate)) = current_audio(state).await else {
+                continue;
+            };
+            if generation() != gen {
+                return;
+            }
             LAST_SPECTRUM.with(|l| l.set(now));
             // The explorer's spectrum is of the last 3 s whichever model runs.
             let tail = &samples[samples.len().saturating_sub((rate as f64 * 3.0) as usize)..];
@@ -1141,8 +1380,31 @@ async fn run_loop(state: AppState, gen: u32) {
                 continue;
             }
         }
-        if send(&samples, rate, now).is_none() {
+        let next = next_reading(state).await;
+        if generation() != gen {
             return;
+        }
+        match next {
+            Some(Next::Audio {
+                samples,
+                rate,
+                at,
+                window,
+            }) => {
+                if send(&samples, rate, at, window, now).is_none() {
+                    return;
+                }
+                LAST_WINDOW.with(|w| w.set(window.map(|w| w.id())));
+            }
+            Some(Next::Stored { payload, window }) => {
+                // Shown at the pace the model would be asked, so the strip
+                // and the interval on the status line stay as they are.
+                LAST_SENT.with(|l| l.set(now));
+                LAST_WINDOW.with(|w| w.set(Some(window.id())));
+                RATE.with(|r| r.set(window.source_rate));
+                add_reading(state, payload, None);
+            }
+            Some(Next::Same) | None => {}
         }
     }
 }
@@ -1206,7 +1468,9 @@ fn flag_scores(state: AppState) -> Option<Arc<Vec<f32>>> {
     location::scores_at(state, flag_place(state)?)
 }
 
-fn add_reading(state: AppState, payload: Vec<f32>, model_ms: f64) {
+/// Add a reading to the history and draw it. `model_ms` is the model's time
+/// for it, `None` for a reading from the file's results.
+fn add_reading(state: AppState, payload: Vec<f32>, model_ms: Option<f64>) {
     let t = now_ms();
     let model = active();
     let (embedding, scores) = payload.split_at(model.embedding_len);
@@ -1280,7 +1544,13 @@ fn add_reading(state: AppState, payload: Vec<f32>, model_ms: f64) {
     let interval_ms = INTERVAL.with(|i| i.get());
     // Round so the status line changes rarely.
     let interval_ms = (interval_ms / 50.0).round() * 50.0;
-    let model_ms = (model_ms / 10.0).round() * 10.0;
+    let model_ms = match model_ms {
+        Some(ms) => (ms / 10.0).round() * 10.0,
+        None => match state.classifier.live().get_untracked() {
+            LiveStatus::Ready { model_ms, .. } => model_ms,
+            _ => 0.0,
+        },
+    };
     let status = LiveStatus::Ready {
         interval_ms,
         model_ms,

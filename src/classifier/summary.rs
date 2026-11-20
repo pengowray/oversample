@@ -167,7 +167,8 @@ pub struct Span {
 }
 
 /// One span per species window at or above the minimum, or, with `merge`, one
-/// per run of neighbouring windows with the same top species. Each span
+/// per run of neighbouring windows with the same top species and no gap
+/// between their cells. Each span
 /// covers its windows' cells, so spans never overlap, even when the windows
 /// do; for windows end to end the cells are the windows.
 pub fn spans(run: &ClassifierRun, min_confidence: f32, merge: bool) -> Vec<Span> {
@@ -180,9 +181,14 @@ pub fn spans(run: &ClassifierRun, min_confidence: f32, merge: bool) -> Vec<Span>
         }
         let top = w.top[0];
         let (start_s, end_s) = cells[i];
+        // Neighbours only: windows next to each other in the list whose cells
+        // touch. Readings made while parts of a file played can have long
+        // stretches with none between them.
         let joins = merge
             && last == Some(i.wrapping_sub(1))
-            && out.last().is_some_and(|s| s.class == top.class);
+            && out
+                .last()
+                .is_some_and(|s| s.class == top.class && start_s <= s.end_s + 1e-6);
         if joins {
             let s = out.last_mut().expect("checked above");
             s.end_s = end_s;
@@ -384,6 +390,7 @@ mod tests {
                     start_s: i as f64 * 0.5,
                     end_s: (i + 1) as f64 * 0.5,
                     slot: i as u32,
+                    live: false,
                     top: vec![Score { class, confidence }],
                 })
                 .collect(),
@@ -495,6 +502,36 @@ mod tests {
             })
             .collect();
         assert_eq!(times, vec![(0.0, 2.0), (2.0, 3.0), (3.0, 5.0)]);
+    }
+
+    /// Readings made while two stretches of a file played, every 0.25 s,
+    /// with a minute not played between them: no cell, span or count reaches
+    /// into the minute that was not played.
+    #[test]
+    fn played_stretches_keep_the_gap_between_them() {
+        let mut starts: Vec<f64> = (0..8).map(|k| 10.0 + k as f64 * 0.25).collect();
+        starts.extend((0..4).map(|k| 80.0 + k as f64 * 0.25));
+        let tops = vec![(0, 0.9); starts.len()];
+        let mut r = overlapping(&starts, &tops);
+        r.windows.iter_mut().for_each(|w| w.live = true);
+        let c = r.cells();
+        // Each cell lies inside its own window: never more than half a window
+        // past the window's middle.
+        for (w, (s, e)) in r.windows.iter().zip(&c) {
+            let mid = w.start_s + 1.5;
+            assert!(*s >= mid - 1.5 - 1e-9 && *e <= mid + 1.5 + 1e-9, "{c:?}");
+        }
+        // The first stretch ends with its last window (11.75 + 3 s), the
+        // second starts with its first.
+        assert_eq!(c[7].1, 14.75);
+        assert_eq!(c[8].0, 80.0);
+        let merged = spans(&r, 0.5, true);
+        let got: Vec<(f64, f64)> = merged.iter().map(|s| (s.start_s, s.end_s)).collect();
+        assert_eq!(got, vec![(10.0, 14.75), (80.0, 83.75)]);
+        // Time counted: the two stretches, nothing between.
+        let s = summarise(&r, 0.5);
+        assert!(s.overlapping);
+        assert!((s.species_secs - (4.75 + 3.75)).abs() < 1e-9);
     }
 
     #[test]

@@ -650,6 +650,7 @@ fn live_matches_the_run() {
             ToWorker::Live {
                 req: k as u32,
                 source_rate: rate,
+                at: None,
             },
             Attached {
                 samples: Some(samples[a..b].to_vec()),
@@ -673,6 +674,125 @@ fn live_matches_the_run() {
         assert_eq!(best, top[0].class as usize);
         assert!((score - top[0].confidence).abs() < 0.05);
     }
+}
+
+/// The live view's reading of a file window (`Live` with `at`, on a cut made
+/// by `live_cut`) is the run's window with the same start: the same top 10
+/// classes and confidences and the same embedding, to float rounding. For
+/// the windows end to end and those a 1 s step adds between them.
+fn kept_reading_matches(s: &mut Session, method: Method, samples: &[f32], rate: u32) -> usize {
+    use oversample_ipc::classifier::{live_cut, refine_passes};
+    let win = method.window_samples() as u32;
+    let mut run = new_out();
+    for pass in refine_passes(win, method.step_samples(1.0).unwrap()) {
+        let out = analyse_pass(s, method, samples, rate, pass.offsets);
+        run.windows.extend(out.windows);
+        run.embeddings.extend(out.embeddings);
+    }
+    let len = method.embedding_len();
+    let mut checked = 0;
+    for (k, (start, end, top)) in run.windows.iter().enumerate() {
+        if end - start < method.window_secs() - 1e-9 {
+            continue;
+        }
+        let cut = live_cut(method, rate, *start, samples.len() as u64).expect("inside");
+        assert_eq!(cut.start_s, *start);
+        let from = cut.from as usize;
+        let mut live = None;
+        let mut sink = |m: FromWorker, emb: Option<&[f32]>| {
+            if let FromWorker::Live { top, .. } = m {
+                live = Some((top, emb.unwrap().to_vec()));
+            }
+        };
+        s.handle(
+            ToWorker::Live {
+                req: k as u32,
+                source_rate: rate,
+                at: Some(cut.skip),
+            },
+            Attached {
+                samples: Some(samples[from..from + cut.len as usize].to_vec()),
+                ..Default::default()
+            },
+            &mut sink,
+            &|| 0.0,
+        );
+        let (live_top, payload) = live.expect("a Live answer");
+        let run_emb = &run.embeddings[k * len..(k + 1) * len];
+        let emb_diff = payload[..len]
+            .iter()
+            .zip(run_emb)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        let conf_diff = live_top
+            .iter()
+            .zip(top)
+            .map(|(a, b)| (a.confidence - b.confidence).abs())
+            .fold(0.0f32, f32::max);
+        eprintln!(
+            "{method:?} {start:>5.2} s: top {} {:.4}, largest difference: embedding {emb_diff:.1e}, confidence {conf_diff:.1e}",
+            top[0].class, top[0].confidence
+        );
+        let classes = |t: &[Score]| t.iter().map(|s| s.class).collect::<Vec<_>>();
+        assert_eq!(classes(&live_top), classes(top), "{method:?} at {start} s");
+        assert!(conf_diff < 1e-4, "{method:?} at {start} s: {conf_diff}");
+        assert!(emb_diff < 1e-3, "{method:?} at {start} s: {emb_diff}");
+        // The full scores sent with it agree with the top 10.
+        for t in &live_top {
+            assert!((payload[len + t.class as usize] - t.confidence).abs() < 1e-6);
+        }
+        checked += 1;
+    }
+    checked
+}
+
+#[test]
+fn birdnet_kept_reading_is_the_run_window() {
+    let Some(models) = models_dir() else {
+        eprintln!("BIRDNET_MODELS_DIR not set; skipped");
+        return;
+    };
+    let mut s = Session::new();
+    load_model(
+        &mut s,
+        false,
+        &models.join("birdnet-v2.4-embeddings-fp32.onnx"),
+    );
+    let (samples, rate) = load(
+        &sounds_dir()
+            .join("no-bat-sounds/sounds/XC1083752 - Pauraque - Nyctidromus albicollis.wav"),
+        12.0,
+    );
+    let checked = kept_reading_matches(&mut s, Method::BirdNet, &samples, rate);
+    eprintln!("{checked} windows at {rate} Hz");
+    assert!(checked >= 8);
+}
+
+#[test]
+fn perch_kept_reading_is_the_run_window() {
+    let Some(models) = perch_dir() else {
+        eprintln!("PERCH_MODELS_DIR not set; skipped");
+        return;
+    };
+    let mut s = Session::new();
+    load_part(
+        &mut s,
+        ModelPart::PerchEmbedding,
+        &models.join("perch_v2_embed.tract.onnx"),
+    );
+    load_part(
+        &mut s,
+        ModelPart::PerchClassifier,
+        &models.join("perch_v2_head.int8.bin"),
+    );
+    let (samples, rate) = load(
+        &sounds_dir()
+            .join("bat-demo-sounds/sounds/XC540767 - Gentoo Penguin - Pygoscelis papua.mp3"),
+        9.0,
+    );
+    let checked = kept_reading_matches(&mut s, Method::Perch, &samples, rate);
+    eprintln!("{checked} windows at {rate} Hz");
+    assert!(checked >= 4);
 }
 
 /// Perch's `Live` request on the 5 s of a run's window gives the same top
@@ -719,6 +839,7 @@ fn perch_live_matches_the_run() {
             ToWorker::Live {
                 req: k as u32,
                 source_rate: rate,
+                at: None,
             },
             Attached {
                 samples: Some(samples[a..b].to_vec()),

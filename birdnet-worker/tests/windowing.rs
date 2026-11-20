@@ -244,3 +244,85 @@ fn windows_end_to_end_follow_the_written_rule() {
         }
     }
 }
+
+/// Deterministic white noise in -1 to 1.
+fn noise(n: usize, seed: u64) -> Vec<f32> {
+    let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    (0..n)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 40) as f32 / (1u64 << 23) as f32 - 1.0
+        })
+        .collect()
+}
+
+/// A window cut out on its own (`live_cut`, `live_window_at`) holds the
+/// samples a run over the whole recording gives the window with the same
+/// start, to float rounding, at the usual rates and on both resamplers (FFT,
+/// and sinc for the odd rate 192,001 Hz), for windows every 0.25 s.
+#[test]
+fn a_cut_window_matches_the_run() {
+    use birdnet_worker::session::live_window_at;
+    use oversample_ipc::classifier::live_cut;
+    for (method, rate, step) in [
+        (Method::BirdNet, 22_050u32, 0.25),
+        (Method::BirdNet, 44_100, 0.25),
+        (Method::BirdNet, 48_000, 0.25),
+        (Method::BirdNet, 96_000, 0.25),
+        (Method::BirdNet, 192_000, 0.25),
+        (Method::BirdNet, 256_000, 0.25),
+        (Method::BirdNet, 384_000, 0.25),
+        (Method::BirdNet, 16_000, 0.25),
+        (Method::BirdNet, 8_000, 0.25),
+        (Method::BirdNet, 11_025, 0.25),
+        (Method::BirdNet, 250_000, 0.25),
+        (Method::BirdNet, 500_000, 0.25),
+        (Method::BirdNet, 192_001, 0.25),
+        (Method::Perch, 8_000, 0.25),
+        (Method::Perch, 44_100, 0.25),
+        (Method::Perch, 48_000, 0.25),
+        (Method::Perch, 22_050, 0.5),
+        (Method::Perch, 32_000, 0.25),
+    ] {
+        let secs = method.window_secs() + 4.3;
+        let total = (secs * rate as f64) as usize;
+        let audio = noise(total, rate as u64);
+        let win = method.window_samples() as u32;
+        let step = method.step_samples(step).unwrap();
+        let offsets: Vec<u32> = (0..win / step).map(|k| k * step).collect();
+        let mut w = Windower::with_offsets(method, rate, &offsets);
+        let mut windows = Vec::new();
+        for piece in audio.chunks(rate as usize / 3 + 17) {
+            windows.extend(w.push(piece));
+        }
+        windows.extend(w.finish());
+        let mut worst = 0.0f32;
+        let mut checked = 0;
+        for run in windows
+            .iter()
+            .filter(|w| w.end_s - w.start_s > method.window_secs() - 1e-9)
+        {
+            let cut = live_cut(method, rate, run.start_s, total as u64).expect("inside");
+            assert_eq!(cut.start_s, run.start_s, "{method:?} {rate} Hz");
+            let from = cut.from as usize;
+            let got = live_window_at(
+                &audio[from..from + cut.len as usize],
+                rate,
+                method,
+                cut.skip as usize,
+            );
+            let d = got
+                .iter()
+                .zip(&run.samples)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            worst = worst.max(d);
+            checked += 1;
+        }
+        eprintln!("{method:?} {rate} Hz: {checked} windows, largest difference {worst:.2e}");
+        assert!(checked >= 8);
+        assert!(worst < 1e-5, "{method:?} {rate} Hz: {worst}");
+    }
+}

@@ -406,42 +406,52 @@ impl Session {
                 }
                 out.send(FromWorker::Rescored { run, top }, None);
             }
-            ToWorker::Live { req, source_rate } => {
+            ToWorker::Live {
+                req,
+                source_rate,
+                at,
+            } => {
                 let t = now_ms();
                 if source_rate == 0 {
                     out.send(inference_error(req, "no sample rate".into()), None);
                     return;
                 }
                 let samples = att.samples.as_deref().unwrap_or_default();
+                let cut = |method| match at {
+                    Some(skip) => live_window_at(samples, source_rate, method, skip as usize),
+                    None => live_window(samples, source_rate, method),
+                };
                 // The model in the audio slot says which: BirdNET's backbone,
                 // BirdNET+ V3.0, or Perch's embedding model with its classifier.
+                // The top classes are worked out as `score_windows` does for a
+                // run's windows.
                 let payload = match (
                     self.audio.as_ref().map(|(_, m)| m),
                     self.head.as_ref().map(|(_, h)| h),
                 ) {
                     (Some(AudioModel::BirdNet(backbone)), _) => {
-                        let window = live_window(samples, source_rate, Method::BirdNet);
-                        backbone.run(&window).map(|b| {
+                        backbone.run(&cut(Method::BirdNet)).map(|b| {
+                            let top = top_scores(&b.logits);
                             let mut payload = b.embedding;
                             payload.extend(b.logits.iter().map(|&l| sigmoid(l)));
-                            payload
+                            (payload, top)
                         })
                     }
                     (Some(AudioModel::BirdNetV3(model)), _) => {
-                        let window = live_window(samples, source_rate, Method::BirdNetV3);
-                        model.run(&window).map(|o| {
+                        model.run(&cut(Method::BirdNetV3)).map(|o| {
+                            let top = top_confidences(&o.confidences);
                             let mut payload = o.embedding;
                             payload.extend(o.confidences);
-                            payload
+                            (payload, top)
                         })
                     }
                     (Some(AudioModel::Perch(embed)), Some(HeadModel::Perch(classifier))) => {
-                        let window = live_window(samples, source_rate, Method::Perch);
-                        embed.run(&window).map(|e| {
+                        embed.run(&cut(Method::Perch)).map(|e| {
                             let logits = classifier.scores(&e.spatial);
+                            let top = perch::top_scores(&logits);
                             let mut payload = e.embedding;
                             payload.extend(perch::softmax(&logits));
-                            payload
+                            (payload, top)
                         })
                     }
                     (Some(AudioModel::Perch(_)), _) => {
@@ -457,10 +467,11 @@ impl Session {
                     }
                 };
                 match payload {
-                    Ok(payload) => out.send(
+                    Ok((payload, top)) => out.send(
                         FromWorker::Live {
                             req,
                             ms: now_ms() - t,
+                            top,
                         },
                         Some(&payload),
                     ),
@@ -594,6 +605,23 @@ pub fn live_window(samples: &[f32], source_rate: u32, method: Method) -> Vec<f32
         w.extend(buf);
         w
     }
+}
+
+/// The window starting `skip` model-rate samples into `samples` (a cut out
+/// of a recording, `oversample_ipc::classifier::live_cut`) once resampled
+/// from `source_rate`, padded with zeros at the end when the audio stops
+/// short. On the cut's grid these are the samples a run over the whole
+/// recording gives the window.
+pub fn live_window_at(samples: &[f32], source_rate: u32, method: Method, skip: usize) -> Vec<f32> {
+    let len = method.window_samples();
+    let mut buf = Vec::with_capacity(skip + len + 1024);
+    let mut r = StreamResampler::new(source_rate, method.model_rate());
+    r.push(samples, &mut buf);
+    r.finish(&mut buf);
+    let mut w = buf.get(skip..).unwrap_or_default().to_vec();
+    w.truncate(len);
+    w.resize(len, 0.0);
+    w
 }
 
 /// A count of blocks for a progress message. A recording has fewer than
