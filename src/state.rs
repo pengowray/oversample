@@ -1833,6 +1833,9 @@ pub struct CallDetectionState {
     pub mark_unexpected: bool,
     /// BirdNET, BattyBirdNET and Perch: the window picked in the lists.
     pub selected_window: Option<usize>,
+    /// The "Annotate Calls and Trains" choice under the pointer or keyboard
+    /// focus. The spectrogram outlines the regions it would add.
+    pub preview: Option<crate::call_annotations::AnnotatePreview>,
 }
 
 /// The methods in the Call detection tab.
@@ -3074,6 +3077,7 @@ impl AppState {
                 perch_min_confidence: 0.3,
                 mark_unexpected: true,
                 selected_window: None,
+                preview: None,
             }),
 
             classifier: Store::new(ClassifierState::default()),

@@ -96,78 +96,75 @@ pub fn detector_tags_in(annotations: &[Annotation]) -> Vec<String> {
         .collect()
 }
 
-/// Build annotations for `calls` and `trains` (the trains' indices point
-/// into `calls`). With `bat_calls_only`, calls of other kinds are left out.
-/// `now` is the creation time to record; `new_id` makes each annotation's id.
-pub fn build_call_annotations(
+/// A choice in "Annotate Calls and Trains" that the pointer or keyboard focus
+/// is on. The spectrogram outlines the regions this choice would add.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AnnotatePreview {
+    pub what: AnnotateWhat,
+    pub bat_calls_only: bool,
+}
+
+/// Which detection a planned region comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegionSource {
+    /// Index into the calls.
+    Call(usize),
+    /// Index into the trains.
+    Train(usize),
+}
+
+/// One region that [`build_call_annotations`] turns into an annotation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlannedRegion {
+    pub source: RegionSource,
+    pub time_start: f64,
+    pub time_end: f64,
+    pub freq_low: f64,
+    pub freq_high: f64,
+    /// For a call inside a train: the train's index in the planned list.
+    pub parent: Option<usize>,
+    /// Position among the annotations with the same parent.
+    pub sort_order: usize,
+}
+
+/// The regions [`build_call_annotations`] makes for `calls` and `trains`, in
+/// the same order, without labels or ids. The Annotate preview draws these.
+/// With `bat_calls_only`, calls of other kinds are left out. Trains contain
+/// only bat calls, so the calls nested in a train are always kept.
+pub fn plan_call_regions(
     calls: &[DetectedCall],
     trains: &[CallTrain],
     what: AnnotateWhat,
     bat_calls_only: bool,
-    now: &str,
-    mut new_id: impl FnMut() -> AnnotationId,
-) -> BuiltAnnotations {
+) -> Vec<PlannedRegion> {
     let wanted = |c: &DetectedCall| !bat_calls_only || c.kind == CallKind::Bat;
-    let mut out = BuiltAnnotations {
-        annotations: Vec::new(),
-        calls: 0,
-        trains: 0,
-    };
-    let mut make = |kind: AnnotationKind,
-                    tag: &str,
-                    parent: Option<AnnotationId>,
-                    order: usize,
-                    out: &mut BuiltAnnotations| {
-        let id = new_id();
-        out.annotations.push(Annotation {
-            id: id.clone(),
-            kind,
-            created_at: now.to_string(),
-            modified_at: now.to_string(),
-            notes: None,
-            parent_id: parent,
-            sort_order: Some(order as f64),
-            tags: detector_tags(tag),
-            label_default: None,
-        });
-        id
-    };
-    let call_region = |c: &DetectedCall| {
-        AnnotationKind::Region(Region {
+    let call_region =
+        |i: usize, c: &DetectedCall, parent: Option<usize>, order: usize| PlannedRegion {
+            source: RegionSource::Call(i),
             time_start: c.start_s,
             time_end: c.end_s,
-            freq_low: Some(c.event.min_freq_hz as f64),
-            freq_high: Some(c.event.max_freq_hz as f64),
-            label: Some(call_label(c)),
-            color: None,
-            locked: None,
-        })
-    };
-
+            freq_low: c.event.min_freq_hz as f64,
+            freq_high: c.event.max_freq_hz as f64,
+            parent,
+            sort_order: order,
+        };
+    let mut out = Vec::new();
     if what != AnnotateWhat::Calls {
         for (t, train) in trains.iter().enumerate() {
-            let region = AnnotationKind::Region(Region {
+            let train_at = out.len();
+            out.push(PlannedRegion {
+                source: RegionSource::Train(t),
                 time_start: train.start_s,
                 time_end: train.end_s,
-                freq_low: Some(train.min_freq_hz as f64),
-                freq_high: Some(train.max_freq_hz as f64),
-                label: Some(train_label(train, calls)),
-                color: None,
-                locked: None,
+                freq_low: train.min_freq_hz as f64,
+                freq_high: train.max_freq_hz as f64,
+                parent: None,
+                sort_order: t,
             });
-            let train_id = make(region, TRAIN, None, t, &mut out);
-            out.trains += 1;
             if what == AnnotateWhat::TrainsWithCalls {
                 for (order, &i) in train.calls.iter().enumerate() {
                     let Some(c) = calls.get(i) else { continue };
-                    make(
-                        call_region(c),
-                        CALL,
-                        Some(train_id.clone()),
-                        order,
-                        &mut out,
-                    );
-                    out.calls += 1;
+                    out.push(call_region(i, c, Some(train_at), order));
                 }
             }
         }
@@ -186,10 +183,62 @@ pub fn build_call_annotations(
             .iter()
             .enumerate()
             .filter(|(i, c)| !in_train.contains(i) && wanted(c));
-        for (order, (_, c)) in loose.enumerate() {
-            make(call_region(c), CALL, None, base + order, &mut out);
-            out.calls += 1;
+        for (order, (i, c)) in loose.enumerate() {
+            out.push(call_region(i, c, None, base + order));
         }
+    }
+    out
+}
+
+/// Build annotations for `calls` and `trains` (the trains' indices point
+/// into `calls`), one per region from [`plan_call_regions`]. `now` is the
+/// creation time to record; `new_id` makes each annotation's id.
+pub fn build_call_annotations(
+    calls: &[DetectedCall],
+    trains: &[CallTrain],
+    what: AnnotateWhat,
+    bat_calls_only: bool,
+    now: &str,
+    mut new_id: impl FnMut() -> AnnotationId,
+) -> BuiltAnnotations {
+    let plan = plan_call_regions(calls, trains, what, bat_calls_only);
+    let mut out = BuiltAnnotations {
+        annotations: Vec::with_capacity(plan.len()),
+        calls: 0,
+        trains: 0,
+    };
+    for p in &plan {
+        let (label, tag) = match p.source {
+            RegionSource::Call(i) => {
+                out.calls += 1;
+                (call_label(&calls[i]), CALL)
+            }
+            RegionSource::Train(t) => {
+                out.trains += 1;
+                (train_label(&trains[t], calls), TRAIN)
+            }
+        };
+        // A parent is always planned before its children.
+        let parent_id = p.parent.map(|at| out.annotations[at].id.clone());
+        out.annotations.push(Annotation {
+            id: new_id(),
+            kind: AnnotationKind::Region(Region {
+                time_start: p.time_start,
+                time_end: p.time_end,
+                freq_low: Some(p.freq_low),
+                freq_high: Some(p.freq_high),
+                label: Some(label),
+                color: None,
+                locked: None,
+            }),
+            created_at: now.to_string(),
+            modified_at: now.to_string(),
+            notes: None,
+            parent_id,
+            sort_order: Some(p.sort_order as f64),
+            tags: detector_tags(tag),
+            label_default: None,
+        });
     }
     out
 }
@@ -202,23 +251,12 @@ pub fn count_call_annotations(
     what: AnnotateWhat,
     bat_calls_only: bool,
 ) -> (usize, usize) {
-    let wanted = |c: &DetectedCall| !bat_calls_only || c.kind == CallKind::Bat;
-    match what {
-        AnnotateWhat::Calls => (calls.iter().filter(|c| wanted(c)).count(), 0),
-        AnnotateWhat::Trains => (0, trains.len()),
-        AnnotateWhat::TrainsWithCalls => {
-            let in_train: std::collections::HashSet<usize> = trains
-                .iter()
-                .flat_map(|t| t.calls.iter().copied())
-                .collect();
-            let loose = calls
-                .iter()
-                .enumerate()
-                .filter(|(i, c)| !in_train.contains(i) && wanted(c))
-                .count();
-            (in_train.len() + loose, trains.len())
-        }
-    }
+    let plan = plan_call_regions(calls, trains, what, bat_calls_only);
+    let trains = plan
+        .iter()
+        .filter(|p| matches!(p.source, RegionSource::Train(_)))
+        .count();
+    (plan.len() - trains, trains)
 }
 
 /// How many annotations were made by this detector.
@@ -461,6 +499,91 @@ mod tests {
                 assert_eq!(b.annotations.len(), b.calls + b.trains);
             }
         }
+    }
+
+    #[test]
+    fn planned_regions_match_the_built_annotations() {
+        let (calls, trains) = sample();
+        for what in [
+            AnnotateWhat::Calls,
+            AnnotateWhat::Trains,
+            AnnotateWhat::TrainsWithCalls,
+        ] {
+            for bat_only in [true, false] {
+                let plan = plan_call_regions(&calls, &trains, what, bat_only);
+                let built = build_call_annotations(&calls, &trains, what, bat_only, "t", ids());
+                assert_eq!(plan.len(), built.annotations.len(), "{what:?} {bat_only}");
+                for (p, a) in plan.iter().zip(&built.annotations) {
+                    let AnnotationKind::Region(r) = &a.kind else {
+                        panic!("not a region")
+                    };
+                    assert_eq!(
+                        (r.time_start, r.time_end, r.freq_low, r.freq_high),
+                        (
+                            p.time_start,
+                            p.time_end,
+                            Some(p.freq_low),
+                            Some(p.freq_high)
+                        )
+                    );
+                    let parent_id = p.parent.map(|at| built.annotations[at].id.clone());
+                    assert_eq!(a.parent_id, parent_id);
+                    assert_eq!(a.sort_order, Some(p.sort_order as f64));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn planned_trains_with_calls_nest_the_calls_inside_their_train() {
+        let (calls, trains) = sample();
+        let plan = plan_call_regions(&calls, &trains, AnnotateWhat::TrainsWithCalls, true);
+        // Two trains of 3 calls, then the lone bat call; the tone is left out.
+        let sources: Vec<_> = plan.iter().map(|p| p.source).collect();
+        assert_eq!(
+            sources,
+            [
+                RegionSource::Train(0),
+                RegionSource::Call(0),
+                RegionSource::Call(1),
+                RegionSource::Call(2),
+                RegionSource::Train(1),
+                RegionSource::Call(4),
+                RegionSource::Call(5),
+                RegionSource::Call(6),
+                RegionSource::Call(7),
+            ]
+        );
+        for p in &plan {
+            let Some(at) = p.parent else { continue };
+            let train = &plan[at];
+            assert!(matches!(train.source, RegionSource::Train(_)));
+            assert!(train.time_start <= p.time_start && p.time_end <= train.time_end);
+            assert!(train.freq_low <= p.freq_low && p.freq_high <= train.freq_high);
+        }
+        assert_eq!(plan[8].parent, None);
+
+        // Without "Bat calls only", the tone is added at the top level too.
+        let all = plan_call_regions(&calls, &trains, AnnotateWhat::TrainsWithCalls, false);
+        assert_eq!(all.len(), 10);
+        assert!(all
+            .iter()
+            .any(|p| p.source == RegionSource::Call(3) && p.parent.is_none()));
+    }
+
+    #[test]
+    fn planned_calls_and_trains_have_no_parents() {
+        let (calls, trains) = sample();
+        let calls_only = plan_call_regions(&calls, &trains, AnnotateWhat::Calls, true);
+        assert_eq!(calls_only.len(), 7);
+        assert!(calls_only
+            .iter()
+            .all(|p| p.parent.is_none() && matches!(p.source, RegionSource::Call(_))));
+        let trains_only = plan_call_regions(&calls, &trains, AnnotateWhat::Trains, true);
+        assert_eq!(
+            trains_only.iter().map(|p| p.source).collect::<Vec<_>>(),
+            [RegionSource::Train(0), RegionSource::Train(1)]
+        );
     }
 
     #[test]

@@ -2110,6 +2110,73 @@ pub fn draw_annotations(
     }
 }
 
+/// Outline the regions an "Annotate Calls and Trains" choice would add, while
+/// the pointer is over that choice. White dashed boxes over a dark edge, so
+/// they read as not yet added: detections are green or dashed grey, the
+/// selection is dotted blue, and annotations are filled green. Trains get
+/// longer dashes than calls, and the calls nested in a train sit inside it.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_annotate_preview(
+    ctx: &CanvasRenderingContext2d,
+    regions: &[crate::call_annotations::PlannedRegion],
+    min_freq: f64,
+    max_freq: f64,
+    scroll_offset: f64,
+    time_resolution: f64,
+    zoom: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+) {
+    use crate::call_annotations::RegionSource;
+    if regions.is_empty() || max_freq <= min_freq {
+        return;
+    }
+    let visible_time = (canvas_width / zoom) * time_resolution;
+    let start_time = scroll_offset;
+    let end_time = start_time + visible_time;
+    let px_per_sec = canvas_width / visible_time;
+    let x_of = |t: f64| (t - start_time) * px_per_sec;
+    // Same as `draw_calls`: a 2 ms call is under a pixel wide when zoomed out.
+    const MIN_BOX_PX: f64 = 2.0;
+    let train_dashes = js_sys::Array::of2(&6.0.into(), &3.0.into());
+    let call_dashes = js_sys::Array::of2(&3.0.into(), &2.0.into());
+
+    ctx.save();
+    for r in regions {
+        if r.time_end < start_time || r.time_start > end_time {
+            continue;
+        }
+        let x0 = x_of(r.time_start).max(0.0);
+        let x1 = x_of(r.time_end).min(canvas_width).max(x0 + MIN_BOX_PX);
+        let y0 =
+            freq_to_y(r.freq_high, min_freq, max_freq, canvas_height).clamp(0.0, canvas_height);
+        let y1 = freq_to_y(r.freq_low, min_freq, max_freq, canvas_height).clamp(0.0, canvas_height);
+        if y1 <= y0 {
+            continue;
+        }
+        let is_train = matches!(r.source, RegionSource::Train(_));
+        if is_train {
+            ctx.set_fill_style_str("rgba(255, 255, 255, 0.07)");
+            ctx.fill_rect(x0, y0, x1 - x0, y1 - y0);
+        }
+        // A solid dark edge under the dashes, so the white shows on light
+        // colour maps and the gaps between dashes are not lost on dark ones.
+        let _ = ctx.set_line_dash(&js_sys::Array::new());
+        ctx.set_stroke_style_str("rgba(0, 0, 0, 0.55)");
+        ctx.set_line_width(3.0);
+        ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
+        let _ = ctx.set_line_dash(if is_train {
+            &train_dashes
+        } else {
+            &call_dashes
+        });
+        ctx.set_stroke_style_str("rgba(255, 255, 255, 0.95)");
+        ctx.set_line_width(if is_train { 1.5 } else { 1.0 });
+        ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
+    }
+    ctx.restore();
+}
+
 /// Style for a time-position marker drawn as a vertical line + optional label.
 #[derive(Clone, Copy, PartialEq)]
 pub enum TimeMarkerStyle {
