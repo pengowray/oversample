@@ -92,7 +92,7 @@ pub fn PrivacySettingsModal() -> impl IntoView {
                     .await
                     .is_ok();
             if !perm_ok {
-                state.show_info_toast("Location permission is needed to detect WiFi network");
+                state.show_info_toast("Location permission is needed to detect Wi-Fi network");
                 adding.set(false);
                 return;
             }
@@ -106,7 +106,7 @@ pub fn PrivacySettingsModal() -> impl IntoView {
             let ssid = match ssid_result {
                 Ok(r) => r.ssid,
                 Err(_) => {
-                    state.show_info_toast("Could not read WiFi network");
+                    state.show_info_toast("Could not read Wi-Fi network");
                     return;
                 }
             };
@@ -128,7 +128,7 @@ pub fn PrivacySettingsModal() -> impl IntoView {
                 // Refresh status after adding
                 check_zone_status(state, zone_status);
             } else {
-                state.show_info_toast("Not connected to WiFi");
+                state.show_info_toast("Not connected to Wi-Fi");
             }
         });
     };
@@ -184,10 +184,10 @@ pub fn PrivacySettingsModal() -> impl IntoView {
                                     <span style="color: #8c8;">"Not on a privacy zone network"</span>
                                 }.into_any(),
                                 ZoneStatus::NoWifi => view! {
-                                    <span style="color: #888;">"Not connected to WiFi"</span>
+                                    <span style="color: #888;">"Not connected to Wi-Fi"</span>
                                 }.into_any(),
                                 ZoneStatus::Unsupported => view! {
-                                    <span style="color: #888;">"This device has no WiFi. Privacy zones are not available."</span>
+                                    <span style="color: #888;">"This device has no Wi-Fi. Privacy zones are not available."</span>
                                 }.into_any(),
                             }}
                             <button
