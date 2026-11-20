@@ -15,8 +15,11 @@
 """
 
 import argparse
+import warnings
 
 import numpy as np
+
+warnings.filterwarnings("ignore", message="loadtxt: input contained no data")
 
 ap = argparse.ArgumentParser()
 ap.add_argument("what")
