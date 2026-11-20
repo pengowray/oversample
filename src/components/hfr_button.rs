@@ -10,13 +10,13 @@
 //     lowest bat frequency and up, Audible, None).
 //
 // Replaces the previous `HfrButton` combo, whose left half (the HFR
-// toggle) has moved to the BAND cell — see [BandHfrCell] in hearing_bar.rs.
+// toggle) is the top row of [HfrSwitch] below.
 
 use crate::components::layer_panel::toggle_panel;
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 
-use crate::components::popup::{Align, PopupPanel, Side};
+use crate::components::switch_button::SwitchButton;
 use crate::focus_stack::FocusRange;
 use crate::state::{ActiveFocus, AppState, LayerPanel};
 
@@ -209,8 +209,10 @@ fn band_selected(state: AppState, lo: f64, hi: f64) -> bool {
     (clo - lo).abs() < 50.0 && (chi - hi).abs() < 50.0
 }
 
+/// The HFR control at the start of the Hear bar. Top row: turns HFR on or
+/// off. Bottom row: the band HFR plays, and opens the Band presets menu.
 #[component]
-pub fn RangeButton() -> impl IntoView {
+pub fn HfrSwitch() -> impl IntoView {
     let state = expect_context::<AppState>();
 
     let is_open = Signal::derive(move || {
@@ -218,63 +220,35 @@ pub fn RangeButton() -> impl IntoView {
     });
     let no_file = move || state.no_recording_open();
 
-    let btn_class = Signal::derive(move || {
-        let mut s = String::from("layer-btn range-btn lock-grow");
-        if state.viewmode.hfr_enabled().get() {
-            s.push_str(" hfr-on");
-        } else {
-            s.push_str(" hfr-off");
-        }
-        if is_open.get() {
-            s.push_str(" open");
-        }
-        if no_file() {
-            s.push_str(" disabled");
-        }
-        s
-    });
-
-    let label = Signal::derive(move || {
-        if !state.viewmode.hfr_enabled().get() {
-            return "OFF".to_string();
-        }
+    // The band in use. While HFR is off it stays, dimmed, when a band is
+    // still set, so turning HFR on and off moves nothing.
+    let value = Signal::derive(move || {
         let lo = state.filter.band_ff_freq_lo().get();
         let hi = state.filter.band_ff_freq_hi().get();
         if hi > lo {
             format!("{}\u{2013}{} kHz", fmt_khz(lo), fmt_khz(hi))
         } else {
-            "\u{2014}".to_string() // em-dash placeholder
+            "Band presets".to_string()
         }
     });
 
-    let toggle = move |_: web_sys::MouseEvent| {
-        if no_file() {
-            return;
-        }
-        toggle_panel(&state, LayerPanel::BandPresets);
-    };
-
-    let row_ref = NodeRef::<leptos::html::Div>::new();
+    let toggle = Callback::new(move |()| state.toggle_hfr());
+    let toggle_menu = Callback::new(move |()| toggle_panel(&state, LayerPanel::BandPresets));
 
     view! {
-        <div node_ref=row_ref class="range-btn-row"
-            on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
-            on:touchstart=|ev: web_sys::TouchEvent| ev.stop_propagation()
-        >
-            <button class=move || btn_class.get()
-                title="Band range / presets"
-                on:click=toggle
-            >
-                <span class="range-btn-label">{move || label.get()}</span>
-                <span class="combo-btn-arrow">{"\u{25E2}"}</span>
-            </button>
-
-            <PopupPanel
+            <SwitchButton
+                name="HFR"
+                class="hfr-switch"
+                on=Signal::derive(move || state.viewmode.hfr_enabled().get())
+                toggle=toggle
+                value=value
                 is_open=is_open
-                anchor=row_ref
-                preferred_side=Side::Below
-                preferred_align=Align::Start
-                extra_style="min-width: 220px;"
+                toggle_menu=toggle_menu
+                disabled=Signal::derive(no_file)
+                width="108px"
+                switch_title="HFR (High Frequency Range): hear the band selected on the frequency strip at a lower pitch"
+                menu_title="Band presets"
+                panel_style="min-width: 220px;"
             >
                 <div class="layer-panel-title">"Band presets"</div>
 
@@ -426,7 +400,6 @@ pub fn RangeButton() -> impl IntoView {
                     disabled=move || !crate::components::hfr_tour::tour_available(state)
                     on:click=move |_| crate::components::hfr_tour::start_tour(state)
                 >{crate::components::hfr_tour::TOUR_NAME}</button>
-            </PopupPanel>
-        </div>
+            </SwitchButton>
     }
 }

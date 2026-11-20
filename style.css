@@ -3722,14 +3722,10 @@ a.open-link-btn {
     z-index: 6;
 }
 
-/* Hearing bar leaves its left edge flush so the BAND cell can sit
-   exactly above the band gutter column. Internal spacing is provided
-   by the bar-controls.
-   flex-wrap: wrap lets Gain/NR/Notch drop to a second row on narrow
+/* flex-wrap: wrap lets Gain/NR/Notch drop to a second row on narrow
    viewports rather than forcing the band-affected group to break up
    internally. */
 .hearing-bar {
-    padding-left: 0;
     gap: 0;
     align-items: stretch;
     min-height: 44px;
@@ -3769,83 +3765,9 @@ a.open-link-btn {
     padding: 0 4px 0 0;
 }
 
-/* The hearing bar's "HEAR" label sits over the top of the HFR cell instead
-   of in a column before it. In its own column it pushed the HFR cell 33px
-   to the right of the band gutter that the cell belongs above. */
+/* The hearing bar stretches its children, so centre the "HEAR" label. */
 .hearing-bar > .bar-label {
-    position: absolute;
-    left: 5px;
-    top: 3px;
-    padding: 0;
-    pointer-events: none;
-    z-index: 1;
-}
-
-/* ── BAND cell — leftmost column of the hearing bar ───────────────────
-   Width and right edge mirror the band-gutter column directly below
-   (44px + 3px margin + 2px border). The cell is now a clickable button
-   that toggles HFR; the label is the literal "HFR" with per-letter
-   brightness encoding HFR state (grey off, amber on, "H" dimmed when
-   the active band sits entirely below 24 kHz). */
-.band-cell {
-    /* The 9px top padding below is room for the "HEAR" label above "HFR". */
-    flex: 0 0 44px;
-    margin-right: 3px;
-    border-right: 2px solid #2a2a2a;
-    border-top: none;
-    border-bottom: none;
-    border-left: none;
-    background: #0d0d0d;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
-    user-select: none;
-    cursor: pointer;
-    padding: 9px 0 0;
-    font: inherit;
-    color: inherit;
-    transition: background 0.15s;
-}
-.band-cell:hover {
-    background: #141414;
-}
-.band-cell.disabled {
-    opacity: 0.35;
-    cursor: default;
-    pointer-events: none;
-}
-.band-cell-hfr-label {
-    /* 14px with 1px spacing: "HFR" fits the 42px cell with room each side. */
-    font-size: 14px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    /* Off state. #888: 5.6:1 on the cell (#555 was 2.6:1, under 4.5:1). */
-    color: #888;
-    transition: color 0.15s;
-}
-.band-cell.hfr-on .band-cell-hfr-label {
-    color: #f0c050;
-}
-/* "FR" stays bright but the leading "H" dims when the active band is
-   audible-only (entirely < 24 kHz) — same rule as the old HfrButton. */
-.band-cell.hfr-on.hfr-h-dim .band-cell-hfr-label::first-letter {
-    color: #888; /* the off colour */
-}
-
-/* On mobile the gutter widens to 64px — match it here too. */
-.app.mobile .band-cell {
-    flex: 0 0 64px;
-}
-@media (pointer: fine) {
-    .app.mobile .band-cell {
-        flex: 0 0 44px;
-    }
-}
-.app.mobile .band-cell-hfr-label {
-    font-size: 15px;
-    letter-spacing: 1.5px;
+    align-self: center;
 }
 
 /* Mute-blink: blinks the selected mode radio button's label when
@@ -3993,54 +3915,6 @@ a.open-link-btn {
     flex-shrink: 0;
 }
 
-/* ── Range dropdown — replaces the old HfrButton.
-   Sits to the right of the HFR cell. Shows "OFF" (dim) when HFR is off,
-   or the active band range (amber) when on. Click opens band-presets. */
-.range-btn-row {
-    display: flex;
-    position: relative;
-    flex-shrink: 0;
-}
-.range-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    padding: 4px 18px 5px 9px;
-    min-height: 32px;
-    color: #888;
-    position: relative;
-    font-variant-numeric: tabular-nums;
-}
-.range-btn-label {
-    font-weight: 500;
-    font-size: 12px;
-    white-space: nowrap;
-}
-.range-btn.hfr-off .range-btn-label {
-    color: #888;
-    letter-spacing: 0.6px;
-}
-.range-btn.hfr-on .range-btn-label {
-    color: #f0c050;
-}
-.range-btn.disabled {
-    opacity: 0.35;
-    cursor: default;
-    pointer-events: none;
-}
-.range-btn.open {
-    background: rgba(45, 45, 45, 0.95);
-    border-color: rgba(130, 130, 130, 0.6);
-}
-.range-btn .combo-btn-arrow {
-    position: absolute;
-    right: 1px;
-    bottom: -1px;
-    font-size: 10px;
-    opacity: 0.55;
-    line-height: 1;
-}
 
 /* ── Mode radio group — 5 joined buttons.
    The group is a single outlined container with thin internal dividers
@@ -4958,10 +4832,6 @@ a.open-link-btn {
     .bar-label {
         display: none;
     }
-    /* No "HEAR" label above it here, so no room is kept for one. */
-    .band-cell {
-        padding-top: 0;
-    }
     /* Tighten bar padding too — every pixel counts on phone screens. */
     .hearing-bar,
     .view-bar {
@@ -5027,7 +4897,6 @@ a.open-link-btn {
     .band-affected-row,
     .band-affected-controls,
     .mode-radio-group,
-    .range-btn-row,
     .hearing-bar .layer-btn,
     .hearing-bar .mode-radio-btn,
     .view-bar .bar-controls .layer-btn,
@@ -9924,21 +9793,23 @@ button.canvas-overflow-action-btn.disabled {
 .hfr-nudge-under-btn .hfr-nudge-close:hover {
     background: #354a85;
 }
-/* While the card says "press the HFR button", that button has a blue ring,
-   which pulses twice at the start. Inset, because the Hear bar scrolls
-   sideways on phones and would clip an outer ring. */
-body.hfr-nudge-on .band-cell-hfr {
-    box-shadow: inset 0 0 0 2px #7f9cf5;
+/* While the card says "press the HFR button", the HFR control has a blue
+   ring, which pulses twice at the start. Drawn inside the control's edge,
+   because the Hear bar scrolls sideways on phones and would clip a ring
+   outside it. */
+body.hfr-nudge-on .hfr-switch {
+    outline: 2px solid #7f9cf5;
+    outline-offset: -1px;
     animation: hfr-nudge-cell 0.9s ease-out 2;
 }
 @keyframes hfr-nudge-cell {
-    0% { box-shadow: inset 0 0 0 4px #7f9cf5; }
-    100% { box-shadow: inset 0 0 0 2px #7f9cf5; }
+    0% { outline-width: 4px; }
+    100% { outline-width: 2px; }
 }
 @media (prefers-reduced-motion: reduce) {
     .layer-panel.hfr-nudge,
     .hfr-nudge-body,
-    body.hfr-nudge-on .band-cell-hfr {
+    body.hfr-nudge-on .hfr-switch {
         animation: none;
     }
 }

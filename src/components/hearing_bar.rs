@@ -4,16 +4,11 @@
 // Layout:
 //
 //   ┌─── band-affected overline ─────────────────────────────────┐ │
-//   │ [HFR]  [Range ▼]  [1:1 HET TE PS ZC]  [PASS ▼]            │ │ [Gain] [Noise] [Denoised]
+//   │ [HFR ⬭ / band ▼]  [1:1 HET TE PS ZC]  [PASS ▼]             │ │ [Gain] [Noise] [Denoised]
 //   └────────────────────────────────────────────────────────────┘ │
-//        ^band-cell HFR toggle (above the band gutter)
 //
-// • The BAND cell (above the gutter) is the HFR on/off toggle, with
-//   per-letter brightness on "HFR": grey when off, amber when on, with
-//   the leading "H" dimmed when the active band sits entirely below
-//   24 kHz (audible-only filter).
-// • Range dropdown shows the current band range or "OFF"; it hosts the
-//   band-presets picker.
+// • HFR (HfrSwitch in hfr_button.rs): the top row turns HFR on or off, the
+//   bottom row shows the band and opens the Band presets menu.
 // • Mode radio group selects playback algorithm. Clicking the already-
 //   selected mode opens its settings panel (corner indicator).
 // • PASS (BandpassCombo) is part of the band-affected group; the overline
@@ -26,7 +21,7 @@ use crate::components::layer_panel::{layer_opt_class, toggle_panel};
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 
-use crate::components::hfr_button::RangeButton;
+use crate::components::hfr_button::HfrSwitch;
 use crate::components::mode_button::ModeRadioGroup;
 use crate::components::noise_button::NoiseButton;
 use crate::components::switch_button::SwitchButton;
@@ -561,55 +556,6 @@ pub(crate) fn DenoisedSwitch() -> impl IntoView {
 // reduction and the notch filter, with the Detect / Sensitivity / Bands /
 // Learn / Strength controls in its menu.
 
-/// The BAND cell that sits above the band gutter is now an HFR on/off
-/// toggle. The cell's label is the literal "HFR" with per-letter brightness
-/// driven by classes on the cell itself (formerly applied to a wrapper
-/// around the old HfrButton's left half).
-#[component]
-pub(crate) fn BandHfrCell() -> impl IntoView {
-    let state = expect_context::<AppState>();
-    let no_file = move || state.no_recording_open();
-
-    let cell_class = Signal::derive(move || {
-        let on = state.viewmode.hfr_enabled().get();
-        let h_dim = on && {
-            let lo = state.filter.band_ff_freq_lo().get();
-            let hi = state.filter.band_ff_freq_hi().get();
-            hi > lo && hi <= crate::dsp::ultrasonic::HEARING_LIMIT_HZ
-        };
-        let mut s = String::from("band-cell band-cell-hfr");
-        if on {
-            s.push_str(" hfr-on");
-        }
-        if h_dim {
-            s.push_str(" hfr-h-dim");
-        }
-        if no_file() {
-            s.push_str(" disabled");
-        }
-        s
-    });
-
-    let title = Signal::derive(move || {
-        if state.viewmode.hfr_enabled().get() {
-            "HFR (High Frequency Range) is on. Click to turn it off.".to_string()
-        } else {
-            "Turn on HFR (High Frequency Range): hear the band selected on the frequency strip at a lower pitch.".to_string()
-        }
-    });
-
-    view! {
-        <button class=move || cell_class.get()
-            title=move || title.get()
-            on:click=move |_: web_sys::MouseEvent| {
-                if !no_file() { state.toggle_hfr(); }
-            }
-        >
-            <span class="band-cell-hfr-label">"HFR"</span>
-        </button>
-    }
-}
-
 /// Whether the bandpass is currently "locked" (range is fixed regardless
 /// of the active HFR band). Drives the grey overline above PASS.
 fn pass_is_locked(state: AppState) -> bool {
@@ -656,9 +602,8 @@ pub fn HearingBar() -> impl IntoView {
                 on:wheel=move |ev| pan.on_wheel(ev)
             >
                 <div class=move || overline_class.get()>
-                    <BandHfrCell/>
                     <div class="bar-controls band-affected-controls">
-                        <RangeButton/>
+                        <HfrSwitch/>
                         <crate::components::hear_sheet::HearChip/>
                         <crate::components::output_range_button::OutputRangeCombo/>
                         <BandpassCombo/>
@@ -696,9 +641,8 @@ pub fn HearingBar() -> impl IntoView {
             <span class="bar-label">"HEAR"</span>
             // Band-affected group — overline border-top spans these four.
             <div class=move || overline_class.get()>
-                <BandHfrCell/>
                 <div class="bar-controls band-affected-controls">
-                    <RangeButton/>
+                    <HfrSwitch/>
                     <ModeRadioGroup/>
                     <crate::components::output_range_button::OutputRangeCombo/>
                     <BandpassCombo/>

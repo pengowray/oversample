@@ -51,6 +51,10 @@ pub fn SwitchButton(
     /// The bottom row still opens the menu.
     #[prop(optional, into)]
     switch_locked: Option<Signal<bool>>,
+    /// Extra class on the control, for a control that tests, the tutorial or
+    /// its own CSS need to find (the HFR switch).
+    #[prop(default = "")]
+    class: &'static str,
     /// CSS width of the control. Fixed so that a changing value moves nothing.
     width: &'static str,
     /// Tooltip for the top row.
@@ -83,7 +87,7 @@ pub fn SwitchButton(
     view! {
         <div
             node_ref=row_ref
-            class="switch-btn"
+            class=format!("switch-btn {class}")
             class:on=move || on.get()
             class:open=move || is_open.get()
             class:disabled=move || disabled.get()

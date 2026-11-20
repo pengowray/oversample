@@ -154,10 +154,9 @@ test.describe("Oversample web smoke", () => {
       timeout: 30_000,
     });
 
-    // The HFR on/off toggle is the BAND cell on the Hearing Bar:
-    // `button.band-cell-hfr` showing the literal "HFR" (hearing_bar.rs).
-    // (Was previously the left half of an HfrButton combo's .layer-btn-value.)
-    const hfr = page.locator("button.band-cell-hfr").first();
+    // The HFR on/off switch is the top row of the HFR control at the start
+    // of the Hear bar (HfrSwitch in hfr_button.rs).
+    const hfr = page.locator(".hearing-bar .hfr-switch .switch-btn-top").first();
     await expect(hfr).toBeVisible({ timeout: 5_000 });
     await hfr.click();
 

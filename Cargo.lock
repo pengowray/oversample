@@ -3824,7 +3824,7 @@ dependencies = [
 
 [[package]]
 name = "oversample"
-version = "0.5.233"
+version = "0.5.234"
 dependencies = [
  "base64 0.22.1",
  "blake3",
@@ -3871,7 +3871,7 @@ dependencies = [
 
 [[package]]
 name = "oversample-desktop"
-version = "0.5.233"
+version = "0.5.234"
 dependencies = [
  "base64 0.22.1",
  "chrono",

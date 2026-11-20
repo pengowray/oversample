@@ -63,7 +63,7 @@ async function dragOn(page: Page, selector: string, from: [number, number], to: 
 }
 
 const popoverTitle = (page: Page) => page.locator(".driver-popover-title");
-const hfrOn = (page: Page) => page.locator(".hearing-bar .band-cell-hfr.hfr-on");
+const hfrOn = (page: Page) => page.locator(".hearing-bar .hfr-switch.on");
 
 test.describe("HFR card and tutorial", () => {
   test("card shows once when an ultrasonic recording plays 1:1, and Turn on HFR works", async ({ page }) => {
@@ -81,14 +81,14 @@ test.describe("HFR card and tutorial", () => {
     await expect(card.getByRole("button", { name: "Turn on HFR" })).toHaveCount(0);
     // It has moved to just under the HFR button.
     await expect(card).toHaveClass(/hfr-nudge-under-btn/);
-    const btn = (await page.locator(".hearing-bar .band-cell-hfr").boundingBox())!;
+    const btn = (await page.locator(".hearing-bar .hfr-switch").boundingBox())!;
     await expect
       .poll(async () => (await card.boundingBox())!.y - (btn.y + btn.height))
       .toBeGreaterThanOrEqual(0);
     expect((await card.boundingBox())!.y - (btn.y + btn.height)).toBeLessThan(12);
 
     // Turning HFR off closes it. Once per session: play again shows nothing.
-    await page.locator(".hearing-bar .band-cell-hfr").click();
+    await page.locator(".hearing-bar .hfr-switch .switch-btn-top").click();
     await expect(card).toHaveCount(0);
     await page.locator(".play-main-btn").click(); // stop
     await page.locator(".play-main-btn").click(); // play
@@ -210,7 +210,7 @@ test.describe("HFR card and tutorial", () => {
     await page.locator(".hfr-nudge").getByRole("button", { name: "HFR tutorial" }).click();
 
     await expect(popoverTitle(page)).toHaveText("Turn on HFR", { timeout: 10_000 });
-    await page.locator(".hearing-bar .band-cell-hfr").click();
+    await page.locator(".hearing-bar .hfr-switch .switch-btn-top").click();
     await expect(hfrOn(page)).toHaveCount(1);
 
     await expect(popoverTitle(page)).toHaveText("Choose frequencies");
@@ -234,7 +234,7 @@ test.describe("HFR card and tutorial", () => {
 
   test("Escape closes the tutorial; Band presets starts it", async ({ page }) => {
     await openWav(page, 192_000);
-    await page.locator(".hearing-bar .range-btn").click();
+    await page.locator(".hearing-bar .hfr-switch .switch-btn-value").click();
     await page.getByRole("button", { name: "HFR tutorial" }).click();
     await expect(popoverTitle(page)).toHaveText("Turn on HFR", { timeout: 10_000 });
     await page.keyboard.press("Escape");

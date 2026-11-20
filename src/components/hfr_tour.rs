@@ -129,7 +129,7 @@ impl TourStep {
     fn spec(self) -> StepSpec {
         match self {
             TourStep::Hfr => StepSpec {
-                selector: ".hearing-bar .band-cell-hfr",
+                selector: ".hearing-bar .hfr-switch .switch-btn-top",
                 title: T_HFR,
                 description: D_HFR,
                 side: "bottom",
@@ -511,7 +511,7 @@ pub fn HfrNudge() -> impl IntoView {
             let win = web_sys::window()?;
             let el = win
                 .document()?
-                .query_selector(".hearing-bar .band-cell-hfr")
+                .query_selector(".hearing-bar .hfr-switch")
                 .ok()??;
             let r = el.get_bounding_client_rect();
             let v_w = win.inner_width().ok()?.as_f64()?;
