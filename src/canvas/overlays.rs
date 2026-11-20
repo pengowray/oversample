@@ -1322,7 +1322,7 @@ pub fn draw_score_strips(
     visible_time: f64,
     width: f64,
 ) {
-    use crate::classifier::strips::{fifth, species_alpha, ScoreRowKind};
+    use crate::classifier::strips::{column_max, fifth, species_alpha, ScoreRowKind};
     let height = strips.rows.len() as f64 * SCORE_ROW_H;
     ctx.set_fill_style_str("#0a0a0a");
     ctx.fill_rect(0.0, 0.0, width, height);
@@ -1336,6 +1336,11 @@ pub fn draw_score_strips(
     let first = strips.windows.partition_point(|&(_, e)| e <= scroll);
     let last = strips.windows.partition_point(|&(s, _)| s < end_time);
     let on_screen = first..last.max(first);
+    // Width of one window in pixels (the last window may be shorter).
+    let window_px = strips
+        .windows
+        .first()
+        .map_or(0.0, |&(s, e)| (e - s) * px_per_sec);
 
     for (r, row) in strips.rows.iter().enumerate() {
         let y0 = r as f64 * SCORE_ROW_H;
@@ -1344,7 +1349,25 @@ pub fn draw_score_strips(
         ctx.fill_rect(0.0, y0 + SCORE_ROW_H - 1.0, width, 1.0);
         let inner_h = SCORE_ROW_H - 1.0;
         match row.kind {
+            ScoreRowKind::Species if window_px < 2.0 => {
+                // Zoomed out: one cell per pixel column, the highest score.
+                let cols = column_max(
+                    &strips.windows[on_screen.clone()],
+                    row.cells.get(on_screen.clone()).unwrap_or(&[]),
+                    x_of,
+                    width.ceil() as usize,
+                );
+                for (x, score) in cols.into_iter().enumerate() {
+                    let Some(score) = score else { continue };
+                    let a = species_alpha(score, strips.min_confidence);
+                    ctx.set_fill_style_str(&format!("rgba(80, 220, 150, {a:.3})"));
+                    ctx.fill_rect(x as f64, y0 + 1.0, 1.0, inner_h - 1.0);
+                }
+            }
             ScoreRowKind::Species => {
+                // A pixel gap between windows so neighbours stay apart, once
+                // a window is wide enough to spare it.
+                let gap = if window_px >= 4.0 { 1.0 } else { 0.0 };
                 for i in on_screen.clone() {
                     let Some(score) = row.cells.get(i).copied().flatten() else {
                         continue;
@@ -1354,8 +1377,7 @@ pub fn draw_score_strips(
                     let x1 = x_of(e).min(width);
                     let a = species_alpha(score, strips.min_confidence);
                     ctx.set_fill_style_str(&format!("rgba(80, 220, 150, {a:.3})"));
-                    // A pixel gap between windows so neighbours stay apart.
-                    ctx.fill_rect(x0, y0 + 1.0, (x1 - x0 - 1.0).max(1.0), inner_h - 1.0);
+                    ctx.fill_rect(x0, y0 + 1.0, (x1 - x0 - gap).max(1.0), inner_h - 1.0);
                 }
             }
             ScoreRowKind::Component => {
@@ -1399,24 +1421,24 @@ pub fn draw_score_strips(
         }
     }
 
-    // Names over the left end of each row, with a dark shadow so they read
-    // over the cells.
-    ctx.save();
+    // Names over the left end of each row, on a dark box so they read over
+    // full-strength cells.
     ctx.set_font("11px sans-serif");
     ctx.set_text_baseline("middle");
-    ctx.set_shadow_color("#000000");
-    ctx.set_shadow_blur(3.0);
     for (r, row) in strips.rows.iter().enumerate() {
         let y0 = r as f64 * SCORE_ROW_H;
+        let flag_w = if row.unlikely { 10.0 } else { 0.0 };
+        let text_w = ctx.measure_text(&row.label).map_or(0.0, |m| m.width());
+        ctx.set_fill_style_str("rgba(10, 10, 10, 0.8)");
+        ctx.fill_rect(0.0, y0, 4.0 + flag_w + text_w + 4.0, SCORE_ROW_H - 1.0);
         let mut x = 4.0;
         if row.unlikely {
             draw_unlikely_flag(ctx, x, y0 + (SCORE_ROW_H - 1.0 - 10.0) / 2.0);
-            x += 10.0;
+            x += flag_w;
         }
         ctx.set_fill_style_str("rgba(240, 240, 245, 0.95)");
         let _ = ctx.fill_text(&row.label, x, y0 + (SCORE_ROW_H - 1.0) / 2.0 + 0.5);
     }
-    ctx.restore();
 }
 
 /// Draw BirdNET or BattyBirdNET results as a strip along the top of the

@@ -31,10 +31,10 @@ thread_local! {
     static LOADED: ArcTrigger = ArcTrigger::new();
 }
 
-/// BirdNET's principal components, the same file the live view uses
-/// (`birdnet-pc-rows.bin`, or `birdnet-pc.bin` with `?pc=rec`). The first
-/// call starts loading it and returns `None`; reactive callers run again once
-/// it is in. The number of components comes from the file.
+/// BirdNET's principal components: the components of its class rows
+/// (`birdnet-pc-rows.bin`), the live view's default. The first call starts
+/// loading the file and returns `None`; reactive callers run again once it is
+/// in. The number of components comes from the file.
 pub fn birdnet_components() -> Option<Arc<Components>> {
     LOADED.with(|t| t.track());
     if let Some(c) = COMPONENTS.with(|c| c.borrow().clone()) {
@@ -42,11 +42,7 @@ pub fn birdnet_components() -> Option<Arc<Components>> {
     }
     if !LOAD_STARTED.with(|s| s.replace(true)) {
         spawn_local(async {
-            let file = if crate::live_embedding::pc_rows() {
-                crate::live_embedding::PC_FILE_ROWS
-            } else {
-                crate::live_embedding::PC_FILE
-            };
+            let file = crate::live_embedding::PC_FILE_ROWS;
             match crate::components::file_sidebar::fetch_bytes(file).await {
                 Ok(bytes) => match Components::parse(&bytes) {
                     Some(c) => COMPONENTS.with(|p| *p.borrow_mut() = Some(Arc::new(c))),
@@ -151,8 +147,11 @@ fn hover_text(strips: &ScoreStrips, r: usize, i: usize) -> Option<(String, Strin
     let line = match (row.kind, cell) {
         (ScoreRowKind::Species, Some(v)) => format!("{}: confidence {v:.2}", row.label),
         (ScoreRowKind::Species, None) => match strips.floors.get(i).copied().flatten() {
-            Some(floor) => format!("{}: below {floor:.2} (not in the top 10)", row.label),
-            None => format!("{}: not in the top 10 species", row.label),
+            // Under 0.005 the bound would read "below 0.00".
+            Some(floor) if floor >= 0.005 => {
+                format!("{}: below {floor:.2} (not in the top 10)", row.label)
+            }
+            _ => format!("{}: not in the top 10 species", row.label),
         },
         (ScoreRowKind::Component, Some(p)) => format!(
             "{}: {} percentile",

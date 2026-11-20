@@ -140,6 +140,32 @@ pub fn window_at(windows: &[(f64, f64)], t: f64) -> Option<usize> {
     (t < windows[i].1).then_some(i)
 }
 
+/// When windows are narrower than a pixel or two, one value per pixel column
+/// instead of one per window: the highest value of the windows that touch the
+/// column. Drawing each window as its own translucent 1 px cell would stack
+/// neighbours' opacity, so faint scores would look like hits. `x_of` maps a
+/// time in seconds to a canvas x; columns run from 0 to `width`.
+pub fn column_max(
+    windows: &[(f64, f64)],
+    cells: &[Option<f32>],
+    x_of: impl Fn(f64) -> f64,
+    width: usize,
+) -> Vec<Option<f32>> {
+    let mut out: Vec<Option<f32>> = vec![None; width];
+    for (&(s, e), cell) in windows.iter().zip(cells) {
+        let Some(v) = *cell else { continue };
+        let x0 = x_of(s).floor().max(0.0);
+        let x1 = x_of(e).ceil().min(width as f64);
+        if x1 <= x0 {
+            continue;
+        }
+        for c in &mut out[x0 as usize..x1 as usize] {
+            *c = Some(c.map_or(v, |old| old.max(v)));
+        }
+    }
+    out
+}
+
 /// Opacity of a species cell: higher for higher scores, with a step at the
 /// minimum confidence so a hit stands out from a near miss. The live view's
 /// strip uses the same rule (`cellColor` in `live-embedding.js`).
@@ -273,6 +299,18 @@ mod tests {
             display_name(&SpeciesLabel::parse("Turdus philomelos_Song Thrush")),
             "Song Thrush"
         );
+    }
+
+    #[test]
+    fn columns_keep_the_highest() {
+        // Four 0.5 s windows at 1 px per second: two per column.
+        let w = [(0.0, 0.5), (0.5, 1.0), (1.0, 1.5), (1.5, 2.0)];
+        let cells = [Some(0.1), Some(0.8), None, Some(0.3)];
+        let cols = column_max(&w, &cells, |t| t, 3);
+        assert_eq!(cols, vec![Some(0.8), Some(0.3), None]);
+        // Scrolled 1 s to the right: the first two windows are off screen.
+        let cols = column_max(&w, &cells, |t| t - 1.0, 2);
+        assert_eq!(cols, vec![Some(0.3), None]);
     }
 
     #[test]
