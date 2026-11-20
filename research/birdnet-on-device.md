@@ -1,6 +1,6 @@
 # BirdNET on the device: feasibility
 
-Status: research, 2026-11-11. Nothing here is wired into the app.
+Status: research, 2026-11-11; [BirdNET+ V3.0](#birdnet-v30) section 2026-11-21.
 
 ## Recommendation
 
@@ -193,9 +193,10 @@ Not tested:
 | BirdNET V2.4 location model, "V2" FP16 | TFLite | 7.1 MB | BirdNET-Analyzer; `justinchuby/BirdNET-onnx` | CC BY-NC-SA 4.0 |
 | BirdNET V2.4 location model | ONNX | 14.1 MB | `justinchuby/BirdNET-onnx` | CC BY-NC-SA 4.0 |
 | BirdNET V2.4 location model | TF.js graph model | 7.1 MB | `birdnet-team/real-time-pwa` | the PWA says CC BY-SA 4.0 |
-| BirdNET+ V3.0 developer preview 3.1, 11,560 classes | ONNX / TFLite FP32 | 541 MB | Zenodo record 20703646 | CC BY-SA 4.0 + terms of use |
-| BirdNET+ V3.0 developer preview 3.1 | ONNX / TFLite FP16 | 271 MB | Zenodo record 20703646 | CC BY-SA 4.0 + terms of use |
-| BirdNET+ V3.0 developer preview 3.1, pruned | ONNX / TFLite FP16 | 71.5 MB | Zenodo record 20703646 | CC BY-SA 4.0 + terms of use |
+| BirdNET+ V3.0 Global 12K (release 3.0.1), 11,725 classes | ONNX FP32 | 345 MB | Zenodo record 24362980 | Apache 2.0 + acceptable-use policy |
+| BirdNET+ V3.0 Global 12K (3.0.1) | ONNX FP16 (mixed precision) | 174 MB | Zenodo record 24362980 | Apache 2.0 + acceptable-use policy |
+| BirdNET+ V3.0 Global 12K (3.0.1), pruned to one of three heads | ONNX FP16 | 72 MB | Zenodo record 24362980 | Apache 2.0 + acceptable-use policy |
+| BirdNET+ V3.0 Global 10K, the BirdNET Live app's model, 10,064 classes | ONNX FP16, inside a 70 MB zip with a 7 MB Geomodel | 68 MB | Zenodo record 24362980 | Apache 2.0 + acceptable-use policy |
 
 V2.4 input is 144,000 samples (3 s at 48 kHz, mono, float32). Output is 6,522 logits;
 apply a sigmoid for confidence. The model normalises the audio and computes its two mel
@@ -218,9 +219,9 @@ and similar), which is why tract and onnxruntime-web both load it. The INT8 file
 `DynamicQuantizeLinear` and `MatMulInteger`: tract runs it at 114 ms per window natively,
 four times slower than FP32, so INT8 only saves 20 MB of download.
 
-V3.0 is a developer preview whose terms say it is for research and evaluation, and that
-models, labels and code will change. It takes 32 kHz audio of any length. Even the pruned
-file is 71.5 MB, and it was not tested here.
+BirdNET+ V3.0 was released on 2026-11-13 (3.0.1 on 2026-11-19) and replaces the developer
+preview this page first described. It takes 32 kHz audio and was tested in tract; see
+[BirdNET+ V3.0](#birdnet-v30).
 
 ## 2. Browser options
 
@@ -325,6 +326,42 @@ difference 0.04).
 BatDetect2 on the Phase 3 server is still an option for bats, but BattyBirdNET on the
 device should be tried first, because it reuses everything BirdNET needs.
 
+## BirdNET+ V3.0
+
+Tested 2026-11-20 and 21; details, commands and the integration plan are in
+[birdnet-v3-bench/README.md](birdnet-v3-bench/README.md). The app is to offer V3.0 next
+to V2.4, not in its place: BattyBirdNET's heads need V2.4's 1,024-value embedding, and
+V2.4 is the fast option.
+
+- **Release:** "BirdNET+ V3.0 Global 12K", release 3.0.1 (2026-11-19), Zenodo record
+  24362980, Apache 2.0 with an acceptable-use policy. 11,725 classes: 9,788 birds, 802
+  insects, 649 amphibians, 419 mammals (including Human), 35 fish, 15 reptiles, 1
+  arachnid and 16 non-animal sounds. Input is 32 kHz mono of any length (3 s windows of
+  96,000 samples are the default); outputs are scores already through a sigmoid
+  (`predictions`) and a 1,280-value embedding (`embeddings`). The spectrogram is inside
+  the model, built from MatMuls (no STFT operator).
+- **tract:** tract 0.23.10 runs every file after three in-memory changes to the graph:
+  float16 weights to float32, Cast(to=float16) to Cast(to=float32), and an explicit
+  float32 value for one `ConstantOfShape` (tract makes float64 zeros there, and the run
+  then fails at the final Sigmoid). With them, the official float16 files download
+  unchanged and match onnxruntime to 0.0002.
+- **Recommended file:** the pruned one (72 MB, one of the three classifier heads). Its
+  embedding is identical to the full model's, it needs 373 MB of WASM memory against
+  970 MB for the full file (174 MB), and its scores were up to 0.16 lower than the full
+  model's on 18 test windows (top class the same on 17).
+- **Speed (estimated for a quiet machine from runs on a busy one):** about 355 to 380 ms
+  per 3 s window in tract WASM in node, about 320 to 345 ms in a browser, so about 8
+  times faster than real time. That is about 5 times V2.4's 64 to 74 ms. Measured under
+  load: 382 to 408 ms in WASM, 128 to 157 ms natively.
+- **Silence:** the pruned file scores up to 0.25 on digital silence (all zeros), so the
+  app must skip all-zero windows. Low noise is fine.
+- **The BirdNET Live model** in the same record is the pruned network with 1,661 fewer
+  classes, so it is no faster.
+- **Location list:** the Geomodel V3.0.5 in the record has the same weights as the
+  v3.0.4 file the app already uses (scores within 6e-7). V3.0's classes join to it by
+  `birdnet_id` (10,926 of 11,709 animal classes) or to the app's v3.0.4 labels by
+  scientific name (10,874).
+
 ## 5. Licence
 
 - **Three statements for the same V2.4 weights:**
@@ -337,13 +374,18 @@ device should be tried first, because it reuses everything BirdNET needs.
 
   The PWA's model is V2.4: its TF.js model has 6,522 output units, and its shard sizes
   match the Zenodo TF.js zip. Until the BirdNET team says which applies, follow the
-  strictest, CC BY-NC-SA 4.0. The contact address is in the V3.0 terms of use on Zenodo.
+  strictest, CC BY-NC-SA 4.0. The contact address (ccb-birdnet@cornell.edu) is in the
+  V3.0 acceptable-use policy on Zenodo.
 - **Required credit:** the tphakala ONNX conversions require "Powered by BirdNET
   (https://birdnet.cornell.edu/)" wherever the model is used.
-- **V3.0 preview licence:** CC BY-SA 4.0, which allows commercial use, plus terms that
-  forbid poaching and any military use. Its terms also say "Provided solely for research
-  and evaluation". Revisit V3.0 when it is released, because without the NC clause a paid
-  tier could include it.
+- **V3.0 licence:** the released V3.0 weights and labels (3.0.1) are Apache 2.0, with no
+  non-commercial clause, so unlike V2.4 they could be part of a paid tier. The
+  acceptable-use policy that comes with them rules out uses that harm wildlife or people
+  (poaching, military targeting, covert surveillance of people) and asks that derived
+  apps and copies not use the BirdNET names or branding in a way that implies the
+  BirdNET team endorses them. It replaces the developer preview's CC BY-SA 4.0 terms,
+  which limited it to research and evaluation. Cite Lasseck, Eibl, Klinck and Kahl
+  (2026), BirdNET+ V3.0 model files (Version 3.0.1), doi 10.5281/zenodo.24362980.
 - **Free app:** non-commercial use is allowed. BirdNET's README says educational and
   research use counts as non-commercial. Keep BirdNET out of any paid tier and out of
   anything sold.
@@ -387,7 +429,8 @@ This is a reading of the licences, not legal advice.
 - BirdNET Live PWA: github.com/birdnet-team/real-time-pwa
 - birdnet-web (TF.js port): github.com/georg95/birdnet-web
 - ONNX conversions: huggingface.co/tphakala/BirdNET-v2.4, huggingface.co/justinchuby/BirdNET-onnx
-- BirdNET+ V3.0 preview: zenodo.org/records/20703646 (`TERMS_OF_USE.txt`)
+- BirdNET+ V3.0 (release 3.0.1): zenodo.org/records/24362980 (`MODEL_LICENSE.txt`,
+  `ACCEPTABLE_USE.txt`); github.com/birdnet-team/birdnet-V3.0-dev (README, `docs/model.md`)
 - BattyBirdNET: github.com/rdz-oss/BattyBirdNET-Analyzer, huggingface.co/tphakala/BattyBirdNET-onnx
 - BSG-BAT: huggingface.co/tphakala/BSG-BAT, doi.org/10.5281/zenodo.15495676
 - BatDetect2: github.com/macaodha/batdetect2 (`LICENSE.md`)

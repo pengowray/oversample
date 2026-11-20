@@ -1,0 +1,14 @@
+## round 1, load average 9.77 10.66 12.04
+V2.4 native: tract native plain: load 362 ms, 60 windows, median 63.3 ms, min 57.4 ms, peak RSS 266 MB
+V2.4 wasm:   load 591 ms, 60 windows, median 187.6 ms, WASM memory 204 MB
+Perch embedding native: tract native plain: load 635 ms, 36 windows, median 139.8 ms, min 123.1 ms, peak RSS 189 MB
+Perch embedding wasm:   load 1496 ms, 36 windows, median 236.7 ms, WASM memory 143 MB
+BirdNET+_V3.0_Global_12K_FP16_pruned.onnx native: tract native, 11725 classes: load 1101 ms, per 3 s window median 138.8 ms, min 131.0 ms, first 131.3 ms 60 windows in 8.41 s (21x real time), peak RSS 454 MB 
+BirdNET+_V3.0_Global_12K_FP16_pruned.onnx wasm:   tract wasm32-unknown-unknown (wasm-bindgen), 11725 classes: load 1852 ms, per 3 s window median 408.3 ms, first 449 ms, 60 windows in 26.17 s (7x real time), WASM memory 373 MB, process RSS 631 MB
+## round 2, load average 10.52 10.69 11.95
+V2.4 native: tract native plain: load 375 ms, 60 windows, median 62.0 ms, min 53.8 ms, peak RSS 266 MB
+V2.4 wasm:   load 575 ms, 60 windows, median 181.3 ms, WASM memory 204 MB
+Perch embedding native: tract native plain: load 593 ms, 36 windows, median 132.2 ms, min 121.5 ms, peak RSS 182 MB
+Perch embedding wasm:   load 1386 ms, 36 windows, median 224.0 ms, WASM memory 143 MB
+BirdNET+_V3.0_Global_12K_FP16_pruned.onnx native: tract native, 11725 classes: load 1128 ms, per 3 s window median 138.2 ms, min 127.0 ms, first 135.6 ms 60 windows in 8.27 s (22x real time), peak RSS 457 MB 
+BirdNET+_V3.0_Global_12K_FP16_pruned.onnx wasm:   tract wasm32-unknown-unknown (wasm-bindgen), 11725 classes: load 1817 ms, per 3 s window median 389.3 ms, first 483 ms, 60 windows in 23.59 s (8x real time), WASM memory 373 MB, process RSS 630 MB

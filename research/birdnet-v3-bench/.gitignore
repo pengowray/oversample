@@ -1,0 +1,8 @@
+# Build output, model files, audio windows and results stay out of the repository.
+/target/
+/pkg*/
+/out/
+*.onnx
+*.f32
+*.list
+*.zip
