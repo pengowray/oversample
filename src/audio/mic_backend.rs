@@ -423,6 +423,51 @@ fn apply_live_filter(
     }
 }
 
+/// Pitch shift one chunk of live audio by `factor`, continuing from the
+/// chunks before it (kept in `dsp_state`). Used by PS, and by HET when "Then
+/// pitch shift" is set.
+fn listen_pitch_shift(
+    dsp_state: &mut ListenDspState,
+    new_samples: &[f32],
+    factor: crate::dsp::pitch_shift::PitchFactor,
+) -> Vec<f32> {
+    // The pitch shifter's cost grows with the audio it is given and
+    // it needs only a few grains before the new samples, so it gets
+    // the new samples and PS_LISTEN_WARMUP before them.
+    dsp_state.context.extend_from_slice(new_samples);
+    let needed = new_samples.len() + PS_LISTEN_WARMUP;
+    if dsp_state.context.len() > needed {
+        let excess = dsp_state.context.len() - needed;
+        dsp_state.context.drain(..excess);
+    }
+    let full_output = pitch_shift_realtime(&dsp_state.context, factor);
+
+    // Keep the output for the new samples
+    let chunk_len = new_samples.len();
+    let extracted = if full_output.len() >= chunk_len {
+        &full_output[full_output.len() - chunk_len..]
+    } else {
+        &full_output[..]
+    };
+    let mut result = extracted.to_vec();
+
+    // Crossfade start of this chunk with end of previous chunk
+    let fade = LISTEN_CROSSFADE
+        .min(result.len())
+        .min(dsp_state.prev_tail.len());
+    for i in 0..fade {
+        let t = i as f32 / fade as f32; // 0→1
+        result[i] = dsp_state.prev_tail[i] * (1.0 - t) + result[i] * t;
+    }
+
+    // Save tail of current result for next crossfade
+    dsp_state.prev_tail.clear();
+    let tail_start = result.len().saturating_sub(LISTEN_CROSSFADE);
+    dsp_state.prev_tail.extend_from_slice(&result[tail_start..]);
+
+    result
+}
+
 /// Apply the live DSP pipeline: bandpass/EQ filter → playback-mode transform.
 ///
 /// Reads everything from the unified HFR signals via `params`. `mute_output`
@@ -448,8 +493,6 @@ fn process_live_audio(
 
     let mut result = match params.mode {
         PlaybackMode::Heterodyne => {
-            dsp_state.context.clear();
-            dsp_state.prev_tail.clear();
             let carriers = crate::audio::streaming_playback::het_carriers(
                 params.het_freq,
                 params.het_comb_spacing,
@@ -463,45 +506,18 @@ fn process_live_audio(
                 &carriers,
                 params.het_cutoff,
             );
-            out
-        }
-        PlaybackMode::PitchShift => {
-            // The pitch shifter's cost grows with the audio it is given and
-            // it needs only a few grains before the new samples, so it gets
-            // the new samples and PS_LISTEN_WARMUP before them.
-            dsp_state.context.extend_from_slice(&filtered);
-            let needed = input.len() + PS_LISTEN_WARMUP;
-            if dsp_state.context.len() > needed {
-                let excess = dsp_state.context.len() - needed;
-                dsp_state.context.drain(..excess);
-            }
-            let full_output = pitch_shift_realtime(&dsp_state.context, params.ps_factor);
-
-            // Keep the output for the new samples
-            let chunk_len = input.len();
-            let extracted = if full_output.len() >= chunk_len {
-                &full_output[full_output.len() - chunk_len..]
+            // "Then pitch shift": the HET output divided again, as file
+            // playback does (`het_post_pitch_shift`).
+            if params.het_ps_factor.is_finite() && params.het_ps_factor > 1.0 {
+                let factor = crate::dsp::pitch_shift::PitchFactor::down(params.het_ps_factor);
+                listen_pitch_shift(dsp_state, &out, factor)
             } else {
-                &full_output[..]
-            };
-            let mut result = extracted.to_vec();
-
-            // Crossfade start of this chunk with end of previous chunk
-            let fade = LISTEN_CROSSFADE
-                .min(result.len())
-                .min(dsp_state.prev_tail.len());
-            for i in 0..fade {
-                let t = i as f32 / fade as f32; // 0→1
-                result[i] = dsp_state.prev_tail[i] * (1.0 - t) + result[i] * t;
+                dsp_state.context.clear();
+                dsp_state.prev_tail.clear();
+                out
             }
-
-            // Save tail of current result for next crossfade
-            dsp_state.prev_tail.clear();
-            let tail_start = result.len().saturating_sub(LISTEN_CROSSFADE);
-            dsp_state.prev_tail.extend_from_slice(&result[tail_start..]);
-
-            result
         }
+        PlaybackMode::PitchShift => listen_pitch_shift(dsp_state, &filtered, params.ps_factor),
         PlaybackMode::ZeroCrossing => {
             dsp_state.context.clear();
             dsp_state.prev_tail.clear();
@@ -2190,6 +2206,36 @@ mod tests {
                 process_live_channels(&inputs, SAMPLE_RATE, &mut dsp, &params, false).remove(0)
             })
             .collect()
+    }
+
+    /// Live HET at 40 kHz turns a 48 kHz tone into 8 kHz; "Then pitch shift"
+    /// at 2 brings it to 4 kHz.
+    #[test]
+    fn live_het_output_can_be_pitch_shifted() {
+        let heard_hz = |post: f64| {
+            let params = PlaybackParams {
+                het_ps_factor: post,
+                ..params(PlaybackMode::Heterodyne)
+            };
+            let mut dsp = new_live_dsp();
+            let mut out = Vec::new();
+            for c in 0..12 {
+                let input = tone(48_000.0, c * CHUNK, CHUNK);
+                let inputs: [&[f32]; 1] = [&input];
+                out.extend(
+                    process_live_channels(&inputs, SAMPLE_RATE, &mut dsp, &params, false).remove(0),
+                );
+            }
+            // Frequency from the zero crossings, after the first chunks.
+            let rest = &out[CHUNK * 4..];
+            let crossings = rest
+                .windows(2)
+                .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+                .count();
+            crossings as f64 / 2.0 / (rest.len() as f64 / SAMPLE_RATE as f64)
+        };
+        assert!((heard_hz(1.0) - 8_000.0).abs() < 200.0, "{}", heard_hz(1.0));
+        assert!((heard_hz(2.0) - 4_000.0).abs() < 300.0, "{}", heard_hz(2.0));
     }
 
     /// Runs two different tones through left and right. Each channel must come out
