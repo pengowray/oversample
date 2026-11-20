@@ -1,0 +1,27 @@
+# Timing, 2026-11-21, Ryzen 5 3600, one thread. Native: `native detect` (thin LTO, 16 codegen
+# units: the memory rule of this session; fat LTO was not built). WASM: bench-bindgen.mjs in
+# node 24 (wasm32-unknown-unknown, wasm-bindgen, +simd128, thin LTO).
+
+## Quieter machine (load average 4.2 to 4.5 on 12 threads), soundscape (120 s, 79 windows)
+native, release fp16:    load 364 ms; per window: spectrogram 1.44 ms, floor 4.49 ms, image 0.59 ms, network 58.9 ms, NMS 0.006 ms; fusion 0.14 ms per file; 5.16 s for 120 s (23x real time); peak RSS 146 MB
+native, demo-graph cut:  load 375 ms; per window: spectrogram 1.42 ms, floor 4.56 ms, image 0.57 ms, network 57.0 ms, NMS 0.006 ms; fusion 0.13 ms per file; 5.06 s for 120 s (24x real time); peak RSS 146 MB
+wasm, release fp16:      load 795 ms; per window: spectrogram 3.20 ms, floor+image 6.59 ms, network 176.1 ms (first 210 ms), NMS 0.025 ms; fusion 1.93 ms per file; 14.85 s for 120 s (8x real time); WASM memory 122 MB
+wasm, demo-graph cut:    load 844 ms; per window: spectrogram 3.21 ms, floor+image 6.80 ms, network 172.2 ms (first 209 ms), NMS 0.025 ms; fusion 1.79 ms per file; 14.84 s for 120 s (8x real time); WASM memory 126 MB
+
+## Busy machine (load average about 34), all files, native, release fp16, with --images (keeps every image in memory, so RSS grows with the file)
+bat.wav:        4 windows,   0 window boxes,   0 merged; network median 60.6 ms, floor 0.50 ms, image 0.59 ms, spectrogram 1.73 ms per window
+canary.wav:    10 windows,  39 window boxes,   3 merged; network median 56.4 ms, floor 0.89 ms
+gentoo.wav:    31 windows,  76 window boxes,  27 merged; network median 59.9 ms, floor 2.10 ms
+pauraque.wav:  17 windows,  40 window boxes,  15 merged; network median 57.6 ms, floor 1.34 ms
+rain.wav:      22 windows,  11 window boxes,   2 merged; network median 55.8 ms, floor 1.53 ms
+soundscape.wav:79 windows, 243 window boxes,  56 merged; network median 58.3 ms, floor 4.50 ms
+speech.wav:    19 windows,  21 window boxes,   9 merged; network median 60.8 ms, floor 1.46 ms
+hawaii.wav:   199 windows, 411 window boxes, 127 merged; network median 57.2 ms, floor 4.74 ms; 13.0 s for 300 s (23x real time)
+
+## Network alone (`native net`, busy machine)
+release fp16 patched: 55.8 to 57.2 ms per image, load 339 to 384 ms, peak RSS 137 MB (10 images)
+release int8:         90.6 ms per image, load 757 ms, peak RSS 109 MB (and wrong output, see compare.txt)
+
+## References, for scale (busy machine)
+BirdBox demo graph in onnxruntime 1.27, one thread, whole pipeline: 40.7 s for hawaii (300 s), 15.5 s for soundscape (120 s)
+BirdBox CLI (detect_birds.py, matplotlib PNGs + onnxruntime): about 12 s for canary (16 s)

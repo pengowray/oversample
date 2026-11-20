@@ -1,0 +1,111 @@
+# BirdBox Just-Bird spike: comparisons. Reference = BirdBox CLI v2.1.0 with the release
+# Just-Bird_fp16.onnx in onnxruntime 1.27, conf 0.15, NMS IoU 0.7, window fusion, phrase gap 0.05 s.
+
+## 0. The reference against itself: demo graph (onnxruntime) vs CLI
+### window boxes
+reference 839, this 839; matched at IoU 0.5: 839 (missed 0, extra 0); at 0.75: 838; mean IoU 0.9993, lowest 0.7082; confidence difference mean 0.00004, largest 0.00147
+### merged boxes
+reference 239, this 239; matched at IoU 0.5: 239 (missed 0, extra 0); at 0.75: 239; mean IoU 0.9993, lowest 0.8856; confidence difference mean 0.00004, largest 0.00147
+
+## 1. Image: CLI PNG (cv2, RGB, /255) vs Rust
+| Recording | Windows | Pixels that differ | Largest difference | Windows with a difference |
+|---|---|---|---|---|
+| bat | 4 | 9 of 262144 (3.43e-05) | 0.0118 | 2 |
+| canary | 10 | 27 of 655360 (4.12e-05) | 0.0157 | 9 |
+| gentoo | 31 | 48 of 2031616 (2.36e-05) | 0.0157 | 22 |
+| pauraque | 17 | 40 of 1114112 (3.59e-05) | 0.0118 | 12 |
+| rain | 22 | 44 of 1441792 (3.05e-05) | 0.0118 | 17 |
+| soundscape | 79 | 129 of 5177344 (2.49e-05) | 0.0118 | 66 |
+| speech | 19 | 33 of 1245184 (2.65e-05) | 0.0118 | 18 |
+| hawaii | 199 | 293 of 13041664 (2.25e-05) | 0.0118 | 149 |
+
+## 2. Network alone, on the CLI's images
+### tract (release fp16, float32 in memory) vs onnxruntime on a float32 copy
+| Recording | Windows | Largest score difference | Largest box difference (px), anchors above conf | Anchors above conf in only one |
+|---|---|---|---|---|
+| bat | 4 | 0.00000 | 0.000 | 0 of 0 |
+| canary | 10 | 0.00001 | 0.000 | 0 of 281 |
+| gentoo | 31 | 0.00001 | 0.000 | 0 of 551 |
+| pauraque | 17 | 0.00001 | 0.000 | 0 of 384 |
+| rain | 22 | 0.00000 | 0.000 | 0 of 46 |
+| soundscape | 79 | 0.00001 | 0.000 | 0 of 1880 |
+| speech | 19 | 0.00001 | 0.000 | 0 of 102 |
+| hawaii | 199 | 0.00004 | 0.000 | 0 of 2136 |
+### tract vs onnxruntime on the release fp16 file (what the CLI runs)
+| Recording | Windows | Largest score difference | Largest box difference (px), anchors above conf | Anchors above conf in only one |
+|---|---|---|---|---|
+| bat | 4 | 0.00015 | 0.000 | 0 of 0 |
+| canary | 10 | 0.00071 | 0.129 | 0 of 281 |
+| gentoo | 31 | 0.00244 | 0.192 | 1 of 552 |
+| pauraque | 17 | 0.00369 | 0.085 | 0 of 384 |
+| rain | 22 | 0.00137 | 0.068 | 1 of 47 |
+| soundscape | 79 | 0.00314 | 0.327 | 0 of 1880 |
+| speech | 19 | 0.00080 | 0.142 | 0 of 102 |
+| hawaii | 199 | 0.00401 | 0.122 | 2 of 2137 |
+### tract, network cut from the demo graph in memory, vs tract, release file
+| Recording | Windows | Largest score difference | Largest box difference (px), anchors above conf | Anchors above conf in only one |
+|---|---|---|---|---|
+| canary | 10 | 0.00001 | 0.000 | 0 of 281 |
+### tract int8 vs onnxruntime int8
+| Recording | Windows | Largest score difference | Largest box difference (px), anchors above conf | Anchors above conf in only one |
+|---|---|---|---|---|
+| canary | 10 | 0.71704 | 128.740 | 410 of 466 |
+### onnxruntime int8 vs onnxruntime fp16
+| Recording | Windows | Largest score difference | Largest box difference (px), anchors above conf | Anchors above conf in only one |
+|---|---|---|---|---|
+| canary | 10 | 0.14808 | 13.042 | 18 of 288 |
+| gentoo | 31 | 0.72423 | 24.124 | 87 of 601 |
+| soundscape | 79 | 0.22985 | 58.573 | 104 of 1920 |
+
+## 3. Rust NMS on onnxruntime's fp16 heads vs CLI window boxes
+reference 839, this 839; matched at IoU 0.5: 839 (missed 0, extra 0); at 0.75: 838; mean IoU 0.9996, lowest 0.7082; confidence difference mean 0.00000, largest 0.00000
+
+## 4. Rust fusion (gap 0.05) on the CLI's window boxes vs CLI merged boxes
+reference 239, this 239; matched at IoU 0.5: 239 (missed 0, extra 0); at 0.75: 239; mean IoU 1.0000, lowest 1.0000; confidence difference mean 0.00000, largest 0.00000
+
+## 5. End to end: Rust image + tract + Rust NMS and fusion vs CLI
+### effect of the image differences: tract on Rust images vs tract on CLI images
+| Recording | Windows | Largest score difference | Largest box difference (px), anchors above conf | Anchors above conf in only one |
+|---|---|---|---|---|
+| bat | 4 | 0.00003 | 0.000 | 0 of 0 |
+| canary | 10 | 0.00008 | 0.006 | 0 of 281 |
+| gentoo | 31 | 0.00012 | 0.007 | 0 of 551 |
+| pauraque | 17 | 0.00074 | 0.004 | 0 of 384 |
+| rain | 22 | 0.00009 | 0.005 | 0 of 46 |
+| soundscape | 79 | 0.00037 | 0.028 | 0 of 1880 |
+| speech | 19 | 0.00006 | 0.005 | 0 of 102 |
+| hawaii | 199 | 0.00064 | 0.050 | 0 of 2136 |
+### window boxes
+| Recording | Reference | This | Matched at 0.5 | Matched at 0.75 |
+|---|---|---|---|---|
+| bat | 0 | 0 | 0 | 0 |
+| canary | 39 | 39 | 39 | 39 |
+| gentoo | 76 | 76 | 76 | 76 |
+| pauraque | 40 | 40 | 40 | 40 |
+| rain | 11 | 11 | 11 | 11 |
+| soundscape | 243 | 243 | 243 | 243 |
+| speech | 21 | 21 | 21 | 21 |
+| hawaii | 409 | 411 | 408 | 407 |
+reference 839, this 841; matched at IoU 0.5: 838 (missed 1, extra 3); at 0.75: 837; mean IoU 0.9966, lowest 0.7081; confidence difference mean 0.00018, largest 0.04658
+### merged boxes, phrase gap 0.05 (default)
+| Recording | Reference | This | Matched at 0.5 | Matched at 0.75 |
+|---|---|---|---|---|
+| bat | 0 | 0 | 0 | 0 |
+| canary | 3 | 3 | 3 | 3 |
+| gentoo | 27 | 27 | 27 | 27 |
+| pauraque | 15 | 15 | 15 | 15 |
+| rain | 2 | 2 | 2 | 2 |
+| soundscape | 56 | 56 | 56 | 56 |
+| speech | 9 | 9 | 9 | 9 |
+| hawaii | 127 | 127 | 127 | 127 |
+reference 239, this 239; matched at IoU 0.5: 239 (missed 0, extra 0); at 0.75: 239; mean IoU 0.9966, lowest 0.8857; confidence difference mean 0.00012, largest 0.00065
+### merged boxes, phrase gap 0 (call level), vs the demo graph at gap 0
+reference 246, this 246; matched at IoU 0.5: 246 (missed 0, extra 0); at 0.75: 246; mean IoU 0.9970, lowest 0.8960; confidence difference mean 0.00014, largest 0.00198
+
+## 6. soundscape only, merged boxes vs CLI: WASM in node, and the demo-graph cut (native and WASM)
+### wasm
+reference 56, this 56; matched at IoU 0.5: 56 (missed 0, extra 0); at 0.75: 56; mean IoU 0.9975, lowest 0.9751; confidence difference mean 0.00014, largest 0.00040
+### wasmcut
+reference 56, this 56; matched at IoU 0.5: 56 (missed 0, extra 0); at 0.75: 56; mean IoU 0.9975, lowest 0.9751; confidence difference mean 0.00014, largest 0.00040
+### cut
+reference 56, this 56; matched at IoU 0.5: 56 (missed 0, extra 0); at 0.75: 56; mean IoU 0.9975, lowest 0.9751; confidence difference mean 0.00014, largest 0.00040
