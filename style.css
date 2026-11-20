@@ -10684,3 +10684,13 @@ body.hfr-nudge-on .hfr-switch {
 .annotation-storage-toggle input {
     margin: 0;
 }
+
+/* The Show checkbox's cell: the whole cell is the tap target. */
+.detection-strip-hit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    min-height: 24px;
+    cursor: pointer;
+}

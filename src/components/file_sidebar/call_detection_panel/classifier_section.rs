@@ -124,13 +124,15 @@ fn strip_cell(state: AppState, method: Method, scientific: String, name: String)
     let sci = scientific.clone();
     view! {
         <td class="detection-col-strip" on:click=|ev| ev.stop_propagation()>
-            <input
-                type="checkbox"
-                aria-label=format!("Show {name} scores above the spectrogram")
-                title=format!("Show {name} scores above the spectrogram")
-                prop:checked=move || strip_picked(state, method, &sci)
-                on:change=move |_| toggle_strip(state, method, scientific.clone())
-            />
+            // The label fills the cell, so a tap anywhere in it ticks the box.
+            <label class="detection-strip-hit" title=format!("Show {name} scores above the spectrogram")>
+                <input
+                    type="checkbox"
+                    aria-label=format!("Show {name} scores above the spectrogram")
+                    prop:checked=move || strip_picked(state, method, &sci)
+                    on:change=move |_| toggle_strip(state, method, scientific.clone())
+                />
+            </label>
         </td>
     }
 }
