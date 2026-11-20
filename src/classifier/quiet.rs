@@ -53,10 +53,10 @@ use crate::classifier::Method;
 pub const FRAMES_PER_WINDOW: usize = 150;
 /// The loudest frame at least this far over the floor, in any part of the
 /// band: a call shorter than 3 frames.
-pub const CLICK_DB: f32 = 9.0;
+pub const CLICK_DB: f32 = 8.0;
 /// The 3rd loudest frame at least this far over the floor, in any part of
 /// the band: a short call.
-pub const SHORT_CALL_DB: f32 = 7.0;
+pub const SHORT_CALL_DB: f32 = 6.0;
 /// The 95th percentile frame at least this far over the floor, in any part
 /// of the band: a faint call that lasts at least 5% of the window (150 ms of
 /// 3 s).
@@ -631,6 +631,35 @@ mod tests {
             if t < 0.48 || t > 0.77 {
                 assert!(v < -60.0, "{t} {v}");
             }
+        }
+    }
+
+    #[test]
+    fn white_noise_fills_each_part_by_its_width() {
+        // At 384 kHz the lowest bins of BattyBirdNET's band are scaled up
+        // by over 60 dB to undo the differencing; each part still reads
+        // white noise at its share of the noise power.
+        let rate = 384_000u32;
+        let mut rng = SplitMix64::new(15);
+        let rms = db_to_amp(-40.0);
+        let a = rms * 3f32.sqrt();
+        let x: Vec<f32> = (0..rate as usize)
+            .map(|_| (rng.next_f64() as f32 * 2.0 - 1.0) * a)
+            .collect();
+        let mut m = LevelMeter::new(rate, 0.5625 / FRAMES_PER_WINDOW as f64, (1_333.0, 80_000.0));
+        m.push(&x);
+        let l = m.finish();
+        for (b, &(lo, hi)) in l.bands().iter().enumerate() {
+            let mean: f64 = (0..l.db.len())
+                .map(|i| 10f64.powf(f64::from(l.band_db(i, b)) / 10.0))
+                .sum::<f64>()
+                / l.db.len() as f64;
+            let got = 10.0 * mean.log10();
+            let want = -40.0 + 10.0 * f64::from((hi - lo) / (rate as f32 / 2.0)).log10();
+            assert!(
+                (got - want).abs() < 1.0,
+                "{lo}-{hi} Hz: {got:.1} dB, want {want:.1}"
+            );
         }
     }
 
