@@ -777,14 +777,10 @@ fn ModeSettingsBody() -> impl IntoView {
         }
     }
 
-    let preset_values: [(f64, &str); 6] = [
-        (-2.0, "\u{00f7}2x"),
-        (2.0, "2x"),
-        (4.0, "4x"),
-        (8.0, "8x"),
-        (10.0, "10x"),
-        (16.0, "16x"),
-    ];
+    // Three presets (were six: the owner found the rows of factor buttons
+    // too much, 2026-11-20). Other factors come from the slider, the typed
+    // field and "Fine output adjustment".
+    let preset_values: [(f64, &str); 3] = [(4.0, "4x"), (10.0, "10x"), (16.0, "16x")];
 
     fn set_output_highlight<F, V>(
         state: AppState,
@@ -932,7 +928,7 @@ fn ModeSettingsBody() -> impl IntoView {
                                 }
                             }).collect::<Vec<_>>()}
                         </div>
-                        <Show when=move || state.band_ff_range().is_some()>
+                        <Show when=move || state.band_ff_range().is_some() && !state.viewmode.fine_output_open().get()>
                             <div class="freq-summary">
                                 <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.filter.band_ff_freq_lo().get()), format_freq_khz(state.filter.band_ff_freq_hi().get()))}</div>
                                 <div class="freq-summary-output"
@@ -986,7 +982,7 @@ fn ModeSettingsBody() -> impl IntoView {
                                     }
                                 }).collect::<Vec<_>>()}
                             </div>
-                            <Show when=move || state.band_ff_range().is_some()>
+                            <Show when=move || state.band_ff_range().is_some() && !state.viewmode.fine_output_open().get()>
                                 <div class="freq-summary">
                                     <div>"Input: "{move || format!("{}\u{2013}{}", format_freq_khz(state.filter.band_ff_freq_lo().get()), format_freq_khz(state.filter.band_ff_freq_hi().get()))}</div>
                                     <div class="freq-summary-output"

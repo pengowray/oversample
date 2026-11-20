@@ -204,7 +204,7 @@ test("a saved copy opened beside its original pairs with it by name", async ({ p
   await expect(page.locator(".chart-stage canvas").first()).toBeVisible({ timeout: 30_000 });
   await expect(denoisedSwitch(page)).toHaveCount(0);
   // Set a frequency focus (the "All" band preset), a view and a gain on the copy.
-  await page.locator('button[title="Band range / presets"]').click();
+  await page.locator(".hearing-bar .hfr-switch .switch-btn-value").click();
   await page.getByRole("button", { name: "All", exact: true }).click();
   await pinch(page, "x", 60, 300);
   await pinch(page, "y", 120, 280);

@@ -329,7 +329,7 @@ test.describe("Band presets on a file below the species' range", () => {
     // Opening the bat book selects the recording's species on its current page.
     await page.getByText("Bat book", { exact: true }).first().click();
     await expect(page.locator(".bat-book-chip.selected")).toContainText("Fringed Long-footed");
-    await page.locator('button[title="Band range / presets"]').filter({ visible: true }).click();
+    await page.locator(".hearing-bar .hfr-switch .switch-btn-value").filter({ visible: true }).click();
     const preset = page.locator(".layer-panel button", { hasText: "Bat book: current page" });
     await expect(preset).toContainText("(35–80 kHz)");
     await preset.click();

@@ -244,10 +244,27 @@ fn read_mapping(state: &AppState, mode: PlaybackMode, band_lo: f64, tracked: boo
         }
     };
     match mode {
-        PlaybackMode::TimeExpansion => Mapping {
-            scale: from_signed(read!(state.transform.te_factor())),
-            shift: 0.0,
-        },
+        // The factor playback applies, which is smaller than the one set
+        // when the output rate would leave 8 to 384 kHz.
+        PlaybackMode::TimeExpansion => {
+            let set = read!(state.transform.te_factor());
+            let idx = read!(state.library.current_index());
+            let rate_of = |files: &Vec<crate::state::LoadedFile>| {
+                idx.and_then(|i| files.get(i)).map(|f| f.audio.sample_rate)
+            };
+            let rate = if tracked {
+                state.library.files().with(rate_of)
+            } else {
+                state.library.files().with_untracked(rate_of)
+            };
+            let applied = rate.map_or(set, |rate| {
+                crate::audio::streaming_playback::te_applied_factor(rate, set)
+            });
+            Mapping {
+                scale: from_signed(applied),
+                shift: 0.0,
+            }
+        }
         PlaybackMode::ZeroCrossing => Mapping {
             scale: 1.0 / read!(state.transform.zc_factor()).max(1.0),
             shift: 0.0,
