@@ -1938,7 +1938,7 @@ pub struct DriveState {
     /// Goes up by one each time a project arrives from Drive, so that an
     /// open project list loads again.
     pub projects_changed: u32,
-    /// Drive copies are off here (the desktop and Android apps for now):
+    /// Drive copies are off here (the desktop app for now):
     /// once signed in, only the read-only check runs.
     pub check_only: bool,
     /// The sign-in is kept after the app closes. False on a desktop with no
@@ -1952,8 +1952,8 @@ pub struct DriveState {
     pub read_only_check: Option<DriveCheck>,
 }
 
-/// What the read-only check of Google Drive found (desktop and Android apps,
-/// while they make no copies): whether this app's client can see the
+/// What the read-only check of Google Drive found (the desktop app, while
+/// it makes no copies): whether this app's client can see the
 /// "Oversample" folder and the files the web app made (all under
 /// `drive.file`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

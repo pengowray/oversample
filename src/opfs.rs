@@ -417,8 +417,10 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
     let drive_text = crate::cloud::rules::drive_text(&set);
     let audio_name = set.file_identity.filename.clone();
     let seq = crate::cloud::sync::next_save_seq();
-    if state.is_tauri {
-        // Tauri: always save to central annotations directory
+    // The Android app saves like the browser (its device store is its own
+    // annotations folder; see `cloud::store`).
+    if state.is_tauri && !crate::cloud::store::android_app() {
+        // Desktop: always save to central annotations directory
         wasm_bindgen_futures::spawn_local(async move {
             if let Err(e) = tauri_save_central(&key, &yaml).await {
                 log::warn!("Tauri central save error: {e}");
@@ -867,7 +869,8 @@ pub fn load_annotations(
     if crate::file_identity::spot_hash_pending(file_id) {
         return;
     }
-    if state.is_tauri {
+    // The Android app loads like the browser (see `cloud::store`).
+    if state.is_tauri && !crate::cloud::store::android_app() {
         load_annotations_tauri(state, file_id, identity);
     } else {
         load_annotations_opfs(state, file_id, identity);
@@ -945,7 +948,7 @@ fn load_annotations_opfs(
         let dir = home.annotations_dir();
 
         for (i, try_key) in keys_to_try.iter().enumerate() {
-            match opfs_load_in(&dir, try_key).await {
+            match store::read_result(&dir, try_key).await {
                 Ok(Some(yaml)) => {
                     match yaml_serde::from_str::<crate::annotations::AnnotationSet>(&yaml) {
                         Ok(loaded) => {
@@ -1190,6 +1193,20 @@ pub(crate) async fn tauri_save_central(file_key: &str, yaml: &str) -> Result<(),
             file_key: Some(file_key),
             path: None,
             yaml: Some(yaml),
+        },
+    )
+    .await
+}
+
+/// Delete a set from the Tauri central annotations directory (no error when
+/// it is not there).
+pub(crate) async fn tauri_delete_central(file_key: &str) -> Result<(), String> {
+    crate::tauri_bridge::tauri_invoke_args(
+        "delete_central_annotations",
+        &AnnotationArgs {
+            file_key: Some(file_key),
+            path: None,
+            yaml: None,
         },
     )
     .await

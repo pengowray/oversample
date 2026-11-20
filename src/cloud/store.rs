@@ -19,6 +19,11 @@
 //! (`epoch`) lets a save that was queued before a deletion or a reload skip
 //! its write.
 //!
+//! The Android app uses this too, with one difference: its device store's
+//! annotation sets stay in the app's own annotations folder (Tauri
+//! commands), where they were before Google sign-in existed. Account caches
+//! are in the webview's OPFS, as in the browser.
+//!
 //! The desktop app does not use this yet: there the active store is always
 //! the device store (its own annotations folder).
 
@@ -224,20 +229,76 @@ pub async fn with_lock<T: 'static>(
 
 // ── Files in a store ───────────────────────────────────────────────────
 
+thread_local! {
+    static ANDROID_APP: bool = crate::tauri_bridge::get_tauri_internals().is_some()
+        && crate::tauri_bridge::is_android();
+}
+
+/// Running in the Android app, which keeps annotation sets in these stores
+/// (the desktop app does not yet).
+pub fn android_app() -> bool {
+    ANDROID_APP.with(|a| *a)
+}
+
+/// Where these stores are, in user text: "in this browser", or "on this
+/// device" in the Android app (matching its "Saved on this device").
+pub fn here() -> &'static str {
+    if android_app() {
+        "on this device"
+    } else {
+        "in this browser"
+    }
+}
+
+/// "this browser's", or "this device's" in the Android app.
+pub fn heres() -> &'static str {
+    if android_app() {
+        "this device's"
+    } else {
+        "this browser's"
+    }
+}
+
+/// `dir` is the Android app's device store of annotation sets, which is
+/// the app's own annotations folder rather than OPFS.
+fn in_app_folder(dir: &str) -> bool {
+    dir == DEVICE_ANNOTATIONS && android_app()
+}
+
 pub async fn read(dir: &str, key: &str) -> Option<String> {
-    crate::opfs::opfs_load_in(dir, key).await.ok().flatten()
+    read_result(dir, key).await.ok().flatten()
+}
+
+/// Like `read`, but a failed read is an error, not a missing file.
+pub async fn read_result(dir: &str, key: &str) -> Result<Option<String>, String> {
+    if in_app_folder(dir) {
+        return crate::opfs::tauri_load_central(key).await;
+    }
+    crate::opfs::opfs_load_in(dir, key).await
 }
 
 pub async fn write(dir: &str, key: &str, text: &str) -> Result<(), String> {
+    if in_app_folder(dir) {
+        return crate::opfs::tauri_save_central(key, text).await;
+    }
     crate::opfs::opfs_save_in(dir, key, text).await
 }
 
 pub async fn remove(dir: &str, key: &str) -> Result<(), String> {
+    if in_app_folder(dir) {
+        return crate::opfs::tauri_delete_central(key).await;
+    }
     crate::opfs::opfs_remove_in(dir, key).await
 }
 
 pub async fn keys(dir: &str, extension: &str) -> Vec<String> {
-    let mut names = crate::opfs::list_names_in(dir).await.unwrap_or_default();
+    let mut names = if in_app_folder(dir) {
+        crate::tauri_bridge::tauri_invoke_typed_no_args::<Vec<String>>("list_central_annotations")
+            .await
+            .unwrap_or_default()
+    } else {
+        crate::opfs::list_names_in(dir).await.unwrap_or_default()
+    };
     names.retain(|n| n.ends_with(extension));
     names
 }

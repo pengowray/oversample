@@ -114,6 +114,23 @@ pub fn write_central_annotations(
     Ok(())
 }
 
+/// Delete a set from the central folder. Not there is not an error.
+#[tauri::command]
+pub fn delete_central_annotations(app: tauri::AppHandle, file_key: String) -> Result<(), String> {
+    check_key(&file_key)?;
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("annotations")
+        .join(format!("{}.batm", file_key));
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Failed to delete annotations: {e}")),
+    }
+}
+
 /// Show a native save dialog and export annotations to the chosen path.
 /// Returns the saved path, or empty string if cancelled.
 #[cfg(not(target_os = "android"))]

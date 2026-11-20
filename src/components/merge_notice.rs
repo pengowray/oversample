@@ -18,8 +18,13 @@ use leptos::prelude::*;
 const HEADING: &str = "Merged with the Google Drive copy";
 const DISMISS: &str = "Dismiss";
 /// Followed by " from <time>" when known.
-const BEFORE_IN_HISTORY: &str =
-    "This browser's annotations from before the merge are saved in Google Drive as an earlier version";
+fn before_in_history() -> &'static str {
+    if crate::cloud::store::android_app() {
+        "This device's annotations from before the merge are saved in Google Drive as an earlier version"
+    } else {
+        "This browser's annotations from before the merge are saved in Google Drive as an earlier version"
+    }
+}
 /// How to reach Drive's version history. The link opens the file's page in
 /// Drive.
 const OPEN_IN_DRIVE: &str = "Open in Google Drive";
@@ -89,28 +94,30 @@ fn local_time(iso: &str) -> String {
 
 /// One conflict row, and whether it is a loss here (amber).
 fn row_text(c: &NoticeConflict) -> (String, bool) {
+    let here = crate::cloud::store::here();
+    let here_s = crate::cloud::store::heres();
     let whose = if c.kept_here {
-        "this browser's"
+        here_s
     } else {
         "Google Drive's"
     };
     let text = match c.what {
         ConflictWhat::BothChanged => format!("{}: changed in both. Kept {whose} change", c.name),
         ConflictWhat::ChangedAndDeleted if c.kept_here => format!(
-            "{}: deleted in Google Drive but changed in this browser, so it was kept",
+            "{}: deleted in Google Drive but changed {here}, so it was kept",
             c.name
         ),
         ConflictWhat::ChangedAndDeleted => format!(
-            "{}: deleted in this browser but changed in Google Drive, so it was kept",
+            "{}: deleted {here} but changed in Google Drive, so it was kept",
             c.name
         ),
         ConflictWhat::RunTwice if c.kept_here => format!(
-            "{}: run in both. Kept this browser's results; removed Google Drive's {} annotations",
+            "{}: run in both. Kept {here_s} results; removed Google Drive's {} annotations",
             run_name(&c.name),
             c.count
         ),
         ConflictWhat::RunTwice => format!(
-            "{}: run in both. Kept Google Drive's results; removed this browser's {} annotations",
+            "{}: run in both. Kept Google Drive's results; removed {here_s} {} annotations",
             run_name(&c.name),
             c.count
         ),
@@ -180,7 +187,7 @@ pub fn MergeNoticeView() -> impl IntoView {
                 })}
                 {notice.before_in_history.then(|| view! {
                     <div>
-                        {BEFORE_IN_HISTORY}{before_at}". "
+                        {before_in_history()}{before_at}". "
                         {match link {
                             Some(href) => view! {
                                 <a href=href target="_blank" rel="noopener noreferrer">{OPEN_IN_DRIVE}</a>

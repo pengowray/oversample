@@ -4,6 +4,7 @@
 //! the phone has Google Play services.
 
 use crate::cloud::google_auth::{self, Provider};
+use crate::cloud::store;
 use crate::cloud::sync;
 use crate::state::store_fields::*;
 use crate::state::{AppState, DriveCheck, DriveProblem, DriveSignInProblem};
@@ -19,26 +20,9 @@ const SIGN_IN_FAILED: &str = "Sign-in failed.";
 const CHECK_RUNNING: &str = "Looking for the Oversample folder in Google Drive\u{2026}";
 const CHECK_FAILED: &str = "Couldn't check Google Drive.";
 
-fn android() -> bool {
-    google_auth::provider() == Provider::Android
-}
-
-/// Desktop and Android, while they make no Drive copies (see `cloud::sync`).
-fn not_saving_text() -> &'static str {
-    if android() {
-        "The Android app does not save to Google Drive yet."
-    } else {
-        "The desktop app does not save to Google Drive yet."
-    }
-}
-
-fn check_not_found_text() -> &'static str {
-    if android() {
-        "No Oversample folder is visible to the Android app."
-    } else {
-        "No Oversample folder is visible to the desktop app."
-    }
-}
+/// Desktop, while it makes no Drive copies (see `cloud::sync`).
+const DESKTOP_NOT_SAVING: &str = "The desktop app does not save to Google Drive yet.";
+const CHECK_NOT_FOUND: &str = "No Oversample folder is visible to the desktop app.";
 
 fn count(n: usize, one: &str, many: &str) -> String {
     if n == 1 {
@@ -48,7 +32,7 @@ fn count(n: usize, one: &str, many: &str) -> String {
     }
 }
 
-/// The result of the desktop or Android app's read-only check of Google Drive.
+/// The result of the desktop app's read-only check of Google Drive.
 fn check_text(c: DriveCheck) -> String {
     match c {
         DriveCheck::Checking => CHECK_RUNNING.to_string(),
@@ -60,7 +44,7 @@ fn check_text(c: DriveCheck) -> String {
             count(annotations, "annotation file", "annotation files"),
             count(projects, "project", "projects")
         ),
-        DriveCheck::NotFound => check_not_found_text().to_string(),
+        DriveCheck::NotFound => CHECK_NOT_FOUND.to_string(),
         DriveCheck::Failed => CHECK_FAILED.to_string(),
     }
 }
@@ -76,19 +60,22 @@ const FULL: &str =
 const REFUSED: &str =
     "Google Drive rejected a change. Changes are saved on this device and will upload later.";
 
-/// Drive no longer shows the Oversample folder (see `DriveProblem`).
-const FOLDER_MISSING: &str =
-    "Can't find the Oversample folder in Google Drive. Copying to Drive is paused. Everything is still saved in this browser. If you deleted the folder, it may be in Drive's trash.";
 
 fn problem_text(p: DriveProblem) -> String {
     match p {
         DriveProblem::Unreachable => UNREACHABLE.to_string(),
         DriveProblem::Full => FULL.to_string(),
         DriveProblem::Refused => REFUSED.to_string(),
-        DriveProblem::FolderMissing => FOLDER_MISSING.to_string(),
+        // Drive no longer shows the Oversample folder (see `DriveProblem`).
+        DriveProblem::FolderMissing => format!(
+            "Can't find the Oversample folder in Google Drive. Copying to Drive is paused. \
+             Everything is still saved {}. If you deleted the folder, it may be in Drive's trash.",
+            store::here()
+        ),
         DriveProblem::FilesMissing(n) => format!(
-            "{n} files are missing from the Oversample folder in Google Drive. They are still saved in \
-             this browser. If you didn't delete them, check Drive's trash."
+            "{n} files are missing from the Oversample folder in Google Drive. They are still saved \
+             {}. If you didn't delete them, check Drive's trash.",
+            store::here()
         ),
     }
 }
@@ -242,7 +229,7 @@ pub(super) fn DriveSettings() -> impl IntoView {
                         };
                         view! { <div class=class>{check_text(c)}</div> }
                     })}
-                    <div class="drive-note">{not_saving_text()}</div>
+                    <div class="drive-note">{DESKTOP_NOT_SAVING}</div>
                     <div class="setting-row">
                         {(check == Some(DriveCheck::Failed)).then(|| view! {
                             <button

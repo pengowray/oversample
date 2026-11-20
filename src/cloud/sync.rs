@@ -235,12 +235,16 @@ fn app_state() -> Option<AppState> {
     with(|s| s.state)
 }
 
-/// Whether Drive copies are made here. Off in the desktop and Android apps
-/// until the account-home model lands: there, sign-in works and a read-only check of
+/// Whether Drive copies are made here: in the browser and the Android app
+/// (which keeps its sets like the browser, see `store`). Off in the desktop
+/// app until the account-home model lands there: sign-in works and a read-only check of
 /// the account's Drive runs (`read_only_check`), but nothing is compared,
 /// uploaded, downloaded or created.
 fn copies_enabled() -> bool {
-    google_auth::provider() == google_auth::Provider::Web
+    matches!(
+        google_auth::provider(),
+        google_auth::Provider::Web | google_auth::Provider::Android
+    )
 }
 
 fn generation() -> u64 {
@@ -1074,7 +1078,7 @@ fn switch_open_files(state: AppState) {
     });
 }
 
-/// Desktop and Android, while they make no copies: look, read-only, for the
+/// Desktop, while it makes no copies: look, read-only, for the
 /// "Oversample" folder and the app's files that this client can see, and
 /// show the result. Creates and changes nothing.
 async fn read_only_check(gen: u64) {
@@ -1725,9 +1729,8 @@ fn drop_pending(sync_key: &str, seq: u64) {
 
 /// Where annotation sets are kept on this device: the browser's private
 /// folder (OPFS), or on the desktop the app's own annotations folder
-/// (Tauri commands). Projects are in OPFS on both. Android makes no copies
-/// yet, so nothing here runs there; where its account's sets will live is
-/// still to be decided.
+/// (Tauri commands). Projects are in OPFS on both. The Android app counts as
+/// the browser here: its signed-in account's sets are in OPFS.
 pub(crate) mod local {
     use super::google_auth::{self, Provider};
 
