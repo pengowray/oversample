@@ -79,7 +79,8 @@ fn build(state: AppState) -> Option<ScoreStrips> {
     } else {
         Vec::new()
     };
-    if species.is_empty() && picked_pcs.is_empty() {
+    let groups_on = state.call_detection.sound_groups().get();
+    if species.is_empty() && picked_pcs.is_empty() && !groups_on {
         return None;
     }
     let min = classifier::min_confidence(state, method);
@@ -124,11 +125,21 @@ fn build(state: AppState) -> Option<ScoreStrips> {
                 });
             }
         }
+        let mut group_names = Vec::new();
+        if groups_on {
+            if let Some((row, names)) =
+                crate::components::sound_groups::row(state, file, method, run)
+            {
+                rows.push(row);
+                group_names = names;
+            }
+        }
         (!rows.is_empty()).then(|| ScoreStrips {
             windows: run.windows.iter().map(|w| (w.start_s, w.end_s)).collect(),
             rows,
             floors: window_floors(run),
             min_confidence: min,
+            group_names,
         })
     })
 }
@@ -159,6 +170,8 @@ fn hover_text(strips: &ScoreStrips, r: usize, i: usize) -> Option<(String, Strin
             ordinal((p * 100.0).round() as u32)
         ),
         (ScoreRowKind::Component, None) => format!("{}: not analysed yet", row.label),
+        (ScoreRowKind::Groups, Some(g)) => strips.group_names.get(g as usize)?.clone(),
+        (ScoreRowKind::Groups, None) => format!("{}: not grouped yet", row.label),
     };
     Some((line, window))
 }
@@ -170,6 +183,7 @@ pub fn ScoreStripsRow() -> impl IntoView {
     let state = expect_context::<AppState>();
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
     let strips = Memo::new(move |_| build(state));
+    crate::components::sound_groups::drive(state);
     let row_count = move || strips.with(|s| s.as_ref().map_or(0, |s| s.rows.len()));
     // Hover: x in the row's pixels, and the two lines of text.
     let hover: RwSignal<Option<(f64, String, String)>> = RwSignal::new(None);

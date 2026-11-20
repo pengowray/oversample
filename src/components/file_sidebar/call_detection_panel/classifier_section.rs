@@ -110,11 +110,16 @@ fn toggle_strip(state: AppState, method: Method, scientific: String) {
     save_strips(state);
 }
 
-/// Save the picked rows (species and components) for the next session.
+/// Save the picked rows (species, components and sound groups) for the next
+/// session.
 fn save_strips(state: AppState) {
-    let species = state.call_detection.strip_species().get_untracked();
-    let components = state.call_detection.strip_components().get_untracked();
-    crate::settings::set_score_strips(&species, &components);
+    let cd = state.call_detection;
+    crate::settings::set_score_strips(&classifier::strips::StripPicks {
+        species: cd.strip_species().get_untracked(),
+        components: cd.strip_components().get_untracked(),
+        sound_groups: cd.sound_groups().get_untracked(),
+        groups: cd.sound_group_count().get_untracked(),
+    });
 }
 
 /// The cell with a species' "Show" checkbox: adds or removes its row above
@@ -1412,6 +1417,7 @@ fn strips_group(state: AppState, method: Method, current_file: Memo<Option<u64>>
             {picked}
             {strip_search(state, method, current_file)}
             {components}
+            {crate::components::sound_groups::controls(state, method, current_file, save_strips)}
         </div>
     }
 }

@@ -32,6 +32,9 @@ pub enum ScoreRowKind {
     /// The window's percentile (0 to 1) on a principal component, among the
     /// reference recordings (`live_embedding::Components::percentiles`).
     Component,
+    /// The window's sound group (`super::sound_groups`): the cell holds the
+    /// group's index as a float, 0.0 for Group 1.
+    Groups,
 }
 
 /// One strip row: its label and one cell per window of the run.
@@ -62,6 +65,9 @@ pub struct ScoreStrips {
     /// The minimum confidence: species cells at or above it are drawn
     /// stronger, as in the live view's strip.
     pub min_confidence: f32,
+    /// For the sound groups row, each group's name and hint as hovered,
+    /// Group 1 first: "Group 2: mostly Gentoo Penguin". Empty without the row.
+    pub group_names: Vec<String>,
 }
 
 /// The class of `run` with this scientific name.
@@ -168,6 +174,24 @@ pub fn column_max(
     out
 }
 
+/// When windows are narrower than a pixel or two, one value per pixel column:
+/// the value of the window under the column's centre. For rows whose values
+/// are categories (sound groups), which must not be mixed or ranked. `t_of`
+/// maps a canvas x to a time in seconds; columns run from 0 to `width`.
+pub fn column_centre(
+    windows: &[(f64, f64)],
+    cells: &[Option<f32>],
+    t_of: impl Fn(f64) -> f64,
+    width: usize,
+) -> Vec<Option<f32>> {
+    (0..width)
+        .map(|x| {
+            window_at(windows, t_of(x as f64 + 0.5))
+                .and_then(|i| cells.get(i).copied().flatten())
+        })
+        .collect()
+}
+
 /// Opacity of a species cell: higher for higher scores, with a step at the
 /// minimum confidence so a hit stands out from a near miss. The live view's
 /// strip uses the same rule (`cellColor` in `live-embedding.js`).
@@ -235,23 +259,55 @@ fn method_from_key(key: &str) -> Option<Method> {
     }
 }
 
+/// The rows picked to show above the spectrogram.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StripPicks {
+    pub species: Vec<StripSpecies>,
+    /// BirdNET principal components, 0 for PC1.
+    pub components: Vec<usize>,
+    /// The "Sound groups" row is on.
+    pub sound_groups: bool,
+    /// Number of sound groups, one of `sound_groups::GROUP_CHOICES`.
+    pub groups: usize,
+}
+
+impl Default for StripPicks {
+    fn default() -> Self {
+        Self {
+            species: Vec::new(),
+            components: Vec::new(),
+            sound_groups: false,
+            groups: super::sound_groups::DEFAULT_GROUPS,
+        }
+    }
+}
+
 /// The picks as saved in `settings::keys::SCORE_STRIPS`:
-/// `{"species":[{"method":"birdnet","scientific":"Turdus merula"}],"components":[0,2]}`.
-pub fn to_stored(species: &[StripSpecies], components: &[usize]) -> String {
-    let species: Vec<serde_json::Value> = species
+/// `{"species":[{"method":"birdnet","scientific":"Turdus merula"}],"components":[0,2],"sound_groups":true,"groups":3}`.
+pub fn to_stored(picks: &StripPicks) -> String {
+    let species: Vec<serde_json::Value> = picks
+        .species
         .iter()
         .map(|s| serde_json::json!({ "method": method_key(s.method), "scientific": s.scientific }))
         .collect();
-    serde_json::json!({ "species": species, "components": components }).to_string()
+    serde_json::json!({
+        "species": species,
+        "components": picks.components,
+        "sound_groups": picks.sound_groups,
+        "groups": picks.groups,
+    })
+    .to_string()
 }
 
 /// The picks from a saved value. Anything unreadable is skipped: a value that
 /// is not JSON gives no picks, and an entry with an unknown method, a missing
 /// name or a component that is not a small whole number is dropped while the
-/// rest are kept. Repeats are dropped too.
-pub fn from_stored(raw: &str) -> (Vec<StripSpecies>, Vec<usize>) {
+/// rest are kept. Repeats are dropped too. Values saved before the sound
+/// groups row existed have no `sound_groups` or `groups`: the row is off,
+/// with the default number of groups, as is a number of groups not offered.
+pub fn from_stored(raw: &str) -> StripPicks {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
-        return (Vec::new(), Vec::new());
+        return StripPicks::default();
     };
     let mut species: Vec<StripSpecies> = Vec::new();
     for entry in value["species"].as_array().into_iter().flatten() {
@@ -277,7 +333,17 @@ pub fn from_stored(raw: &str) -> (Vec<StripSpecies>, Vec<usize>) {
             components.push(k);
         }
     }
-    (species, components)
+    let groups = value["groups"]
+        .as_u64()
+        .and_then(|g| usize::try_from(g).ok())
+        .filter(|g| super::sound_groups::GROUP_CHOICES.contains(g))
+        .unwrap_or(super::sound_groups::DEFAULT_GROUPS);
+    StripPicks {
+        species,
+        components,
+        sound_groups: value["sound_groups"].as_bool().unwrap_or(false),
+        groups,
+    }
 }
 
 // ── Species search ──────────────────────────────────────────────────────────
@@ -516,16 +582,51 @@ mod tests {
                 scientific: "Erithacus rubecula".into(),
             },
         ];
-        let components = vec![2, 0];
-        let raw = to_stored(&species, &components);
-        assert_eq!(from_stored(&raw), (species, components));
-        assert_eq!(from_stored(&to_stored(&[], &[])), (vec![], vec![]));
+        let picks = StripPicks {
+            species,
+            components: vec![2, 0],
+            sound_groups: true,
+            groups: 3,
+        };
+        assert_eq!(from_stored(&to_stored(&picks)), picks);
+        let picks = StripPicks::default();
+        assert_eq!(from_stored(&to_stored(&picks)), picks);
+        for groups in crate::classifier::sound_groups::GROUP_CHOICES {
+            let picks = StripPicks {
+                sound_groups: groups % 2 == 0,
+                groups,
+                ..StripPicks::default()
+            };
+            assert_eq!(from_stored(&to_stored(&picks)), picks);
+        }
+    }
+
+    #[test]
+    fn picks_saved_before_sound_groups_load() {
+        let old = r#"{"species":[{"method":"birdnet","scientific":"Turdus merula"}],"components":[0,2]}"#;
+        let picks = from_stored(old);
+        assert_eq!(picks.species.len(), 1);
+        assert_eq!(picks.components, vec![0, 2]);
+        assert!(!picks.sound_groups);
+        assert_eq!(picks.groups, crate::classifier::sound_groups::DEFAULT_GROUPS);
+        // A number of groups not offered, or not a number: the default.
+        for raw in [
+            r#"{"sound_groups":true,"groups":7}"#,
+            r#"{"sound_groups":true,"groups":1}"#,
+            r#"{"sound_groups":true,"groups":"3"}"#,
+            r#"{"sound_groups":true,"groups":2.5}"#,
+        ] {
+            let p = from_stored(raw);
+            assert!(p.sound_groups, "{raw}");
+            assert_eq!(p.groups, crate::classifier::sound_groups::DEFAULT_GROUPS, "{raw}");
+        }
+        assert!(!from_stored(r#"{"sound_groups":"yes"}"#).sound_groups);
     }
 
     #[test]
     fn bad_saved_picks_are_skipped() {
         for raw in ["", "not json", "null", "[]", "42", r#"{"species":"x"}"#] {
-            assert_eq!(from_stored(raw), (vec![], vec![]), "{raw}");
+            assert_eq!(from_stored(raw), StripPicks::default(), "{raw}");
         }
         let raw = r#"{
             "species": [
@@ -540,7 +641,11 @@ mod tests {
             ],
             "components": [1, -1, 1.5, "2", 1, 9999, 3]
         }"#;
-        let (species, components) = from_stored(raw);
+        let StripPicks {
+            species,
+            components,
+            ..
+        } = from_stored(raw);
         assert_eq!(
             species,
             vec![
@@ -556,7 +661,26 @@ mod tests {
         );
         assert_eq!(components, vec![1, 3]);
         // Only one of the two parts present.
-        assert_eq!(from_stored(r#"{"components":[4]}"#), (vec![], vec![4]));
+        assert_eq!(
+            from_stored(r#"{"components":[4]}"#),
+            StripPicks {
+                components: vec![4],
+                ..StripPicks::default()
+            }
+        );
+    }
+
+    #[test]
+    fn group_columns_take_the_centre_window() {
+        // Four 0.5 s windows at 1 px per second: column 0 is centred at 0.5 s
+        // (window 1), column 1 at 1.5 s (window 3).
+        let w = [(0.0, 0.5), (0.5, 1.0), (1.0, 1.5), (1.5, 2.0)];
+        let cells = [Some(0.0), Some(1.0), Some(2.0), None];
+        assert_eq!(column_centre(&w, &cells, |x| x, 3), vec![Some(1.0), None, None]);
+        assert_eq!(
+            column_centre(&w, &cells, |x| x * 0.25, 8),
+            vec![Some(0.0), Some(0.0), Some(1.0), Some(1.0), Some(2.0), Some(2.0), None, None]
+        );
     }
 
     fn labels(lines: &[&str]) -> Vec<SpeciesLabel> {

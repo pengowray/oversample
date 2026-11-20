@@ -1405,6 +1405,15 @@ pub fn draw_score_strips(
                     prev = Some(y);
                 }
             }
+            ScoreRowKind::Groups => draw_group_row(
+                ctx,
+                strips,
+                row,
+                on_screen.clone(),
+                (scroll, px_per_sec, width),
+                y0,
+                window_px,
+            ),
         }
     }
 
@@ -1440,6 +1449,56 @@ pub fn draw_score_strips(
         let _ = ctx.stroke_text(&row.label, x, y);
         ctx.set_fill_style_str("rgba(240, 240, 245, 0.95)");
         let _ = ctx.fill_text(&row.label, x, y);
+    }
+}
+
+/// The "Sound groups" row: each window filled with its group's colour
+/// (`sound_groups::GROUP_COLOURS`); a window not grouped yet stays empty.
+/// When windows are under 2 px wide, each pixel column takes the group of
+/// the window under its centre, so colours are never mixed.
+fn draw_group_row(
+    ctx: &CanvasRenderingContext2d,
+    strips: &crate::classifier::strips::ScoreStrips,
+    row: &crate::classifier::strips::ScoreRow,
+    on_screen: std::ops::Range<usize>,
+    (scroll, px_per_sec, width): (f64, f64, f64),
+    y0: f64,
+    window_px: f64,
+) {
+    use crate::classifier::sound_groups::GROUP_COLOURS;
+    let colour = |g: f32| GROUP_COLOURS[(g.max(0.0) as usize).min(GROUP_COLOURS.len() - 1)];
+    let inner_h = SCORE_ROW_H - 1.0;
+    if window_px < 2.0 {
+        let cols = crate::classifier::strips::column_centre(
+            &strips.windows,
+            &row.cells,
+            |x| scroll + x / px_per_sec,
+            width.ceil() as usize,
+        );
+        // Runs of one group as one rectangle.
+        let mut x = 0;
+        while x < cols.len() {
+            let start = x;
+            while x < cols.len() && cols[x] == cols[start] {
+                x += 1;
+            }
+            if let Some(g) = cols[start] {
+                ctx.set_fill_style_str(colour(g));
+                ctx.fill_rect(start as f64, y0 + 1.0, (x - start) as f64, inner_h - 1.0);
+            }
+        }
+        return;
+    }
+    let gap = if window_px >= 4.0 { 1.0 } else { 0.0 };
+    for i in on_screen {
+        let Some(g) = row.cells.get(i).copied().flatten() else {
+            continue;
+        };
+        let (s, e) = strips.windows[i];
+        let x0 = ((s - scroll) * px_per_sec).max(0.0);
+        let x1 = ((e - scroll) * px_per_sec).min(width);
+        ctx.set_fill_style_str(colour(g));
+        ctx.fill_rect(x0, y0 + 1.0, (x1 - x0 - gap).max(1.0), inner_h - 1.0);
     }
 }
 
