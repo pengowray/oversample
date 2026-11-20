@@ -2019,6 +2019,7 @@ pub fn Spectrogram() -> impl IntoView {
                 }
             }
         >
+            <crate::components::score_strips::ScoreStripsRow/>
             <div class="chart-row">
             <BandGutter/>
             <div class="chart-stage">

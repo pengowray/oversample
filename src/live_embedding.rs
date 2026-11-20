@@ -158,10 +158,10 @@ pub struct SessionPoint {
 
 /// The component maps' data: PCA of recordings' embeddings, made by
 /// `research/live-embedding/pc_rec.py`.
-const PC_FILE: &str = "birdnet-pc.bin";
+pub const PC_FILE: &str = "birdnet-pc.bin";
 /// The first version, PCA of the class rows (`pc_bands.py`), shown with
 /// `?pc=rows` in the address.
-const PC_FILE_ROWS: &str = "birdnet-pc-rows.bin";
+pub const PC_FILE_ROWS: &str = "birdnet-pc-rows.bin";
 /// Readings averaged for the component graphs: 4 at 0.25 s apart, so a line
 /// settles within about a second.
 const PC_SMOOTH: usize = 4;
@@ -178,7 +178,7 @@ const PLACE_RADIUS_UMAP: f32 = PLACE_RADIUS * 0.73;
 /// True for the components of BirdNET's class rows, the default. False when
 /// the address asks for the components of recordings' embeddings
 /// (`?pc=rec`).
-fn pc_rows() -> bool {
+pub fn pc_rows() -> bool {
     !web_sys::window()
         .and_then(|w| w.location().search().ok())
         .is_some_and(|s| s.contains("pc=rec"))

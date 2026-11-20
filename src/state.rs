@@ -1833,6 +1833,11 @@ pub struct CallDetectionState {
     pub mark_unexpected: bool,
     /// BirdNET, BattyBirdNET and Perch: the window picked in the lists.
     pub selected_window: Option<usize>,
+    /// Score strips above the spectrogram (`crate::classifier::strips`): the
+    /// species picked, each with its method, in the order picked.
+    pub strip_species: Vec<crate::classifier::strips::StripSpecies>,
+    /// The BirdNET principal components picked for strips, 0 for PC1.
+    pub strip_components: Vec<usize>,
 }
 
 /// The methods in the Call detection tab.
@@ -3074,6 +3079,8 @@ impl AppState {
                 perch_min_confidence: 0.3,
                 mark_unexpected: true,
                 selected_window: None,
+                strip_species: Vec::new(),
+                strip_components: Vec::new(),
             }),
 
             classifier: Store::new(ClassifierState::default()),
