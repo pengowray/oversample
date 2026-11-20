@@ -2011,8 +2011,6 @@ pub struct TimelineState {
 pub struct SpectSize {
     pub w: f64,
     pub h: f64,
-    /// Height it would have without the species panel under it.
-    pub room_h: f64,
 }
 
 /// Bat Book reference subsystem state.
@@ -2040,8 +2038,12 @@ pub struct BatBookState {
     pub shown_id: Option<String>,
     /// The spectrogram's size, measured by the species panel's drawing.
     /// Decides whether the species text fits in a column over the drawn
-    /// calls or goes under the spectrogram (`species_panel::text_below`).
+    /// calls or goes in the species card (`species_panel::text_below`).
     pub spect_size: SpectSize,
+    /// The species card (the shown species' facts, description and a large
+    /// drawing of its calls) is open. Opened from the bat book's More info
+    /// button when the text has no column over the spectrogram.
+    pub info_open: bool,
     /// Why the drawn calls can't be seen at this zoom, if they can't. Set
     /// by the drawing, shown by whichever panel holds the text.
     pub panel_warning: Option<String>,
@@ -3157,6 +3159,7 @@ impl AppState {
                 shown_id: None,
                 spect_size: SpectSize::default(),
                 panel_warning: None,
+                info_open: false,
                 sketch_cover_px: 0.0,
                 last_clicked_id: None,
                 auto_focus: true,

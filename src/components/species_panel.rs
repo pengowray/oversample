@@ -8,8 +8,9 @@
 //! enough, the species text sits in a column over the drawing, with a clear
 //! window over the drawn calls: the drawing stays put and the text scrolls
 //! over it, so scrolling the text covers the calls and scrolling back to the
-//! top shows them again. On a small spectrogram (phones held upright) the
-//! text sits in a panel under the spectrogram instead.
+//! top shows them again. On a small spectrogram (phones) the drawing is
+//! narrower and has no text; the text is in the species card, a sheet opened
+//! from the bat book's More info button, with the calls drawn large.
 //!
 //! The drawing uses a different colour scheme from the recording (greyscale,
 //! or cividis when the recording itself is greyscale) so it is never read as
@@ -20,7 +21,9 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
 use crate::bat_book::auto_resolve;
-use crate::bat_book::call_sketch::{self, CallSketch, Form, FormKind, Range, SketchCall};
+use crate::bat_book::call_sketch::{
+    self, CallSketch, Form, FormKind, Range, SketchCall, StripLayout, StripWidth, STRIP_PAD,
+};
 use crate::bat_book::data::get_manifest;
 use crate::bat_book::types::BatBookEntry;
 use crate::canvas::spectrogram_renderer::{freq_to_y, Colormap};
@@ -36,14 +39,24 @@ const COLUMN_WIDTH: f64 = 270.0;
 const TOP_BLOCK_GUESS_PX: f64 = 70.0;
 /// Clear space above and below the drawn calls in the window, CSS px.
 const WINDOW_MARGIN: f64 = 12.0;
-/// Below this spectrogram size the text goes in a panel under the
-/// spectrogram: the column would cover too much of the recording.
+/// Below this spectrogram size the text goes in the species card: the
+/// column would cover too much of the recording.
 const COLUMN_MIN_VIEW_W: f64 = 2.0 * COLUMN_WIDTH;
 const COLUMN_MIN_VIEW_H: f64 = 230.0;
-/// The panel under the spectrogram takes at most this fraction of the
-/// spectrogram's room, but never less than the navigation and name rows.
-const PANEL_BELOW_MAX_FRACTION: f64 = 0.5;
-const PANEL_BELOW_MIN_PX: f64 = 56.0;
+/// Without the column (phones), the drawing is at least this wide, CSS px:
+/// half the column-less width it had before 0.5.156, which was mostly empty.
+const NARROW_MIN_WIDTH: f64 = 75.0;
+/// Without the column, more calls of the train are drawn only while they fit
+/// in this fraction of the spectrogram's width (or `NARROW_MIN_WIDTH`).
+const NARROW_FIT_FRACTION: f64 = 0.2;
+/// The card's drawing: height, the left margin for kHz labels, and the
+/// bottom margin for the time scale, CSS px.
+const CARD_SKETCH_H: f64 = 150.0;
+const CARD_AXIS_W: f64 = 52.0;
+const CARD_SCALE_H: f64 = 18.0;
+/// The card stretches time so the calls fill its width, but keeps each call
+/// at least this wide, CSS px, by drawing fewer calls of the train.
+const CARD_MIN_CALL_PX: f64 = 10.0;
 
 /// The main view's scale, which the drawing copies.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -101,13 +114,22 @@ fn panel_open(state: AppState) -> bool {
         && !state.viewmode.clean_view().get()
 }
 
-/// The species text goes in a panel under the spectrogram instead of a column
-/// over the drawn calls: the column would cover too much of the recording.
-/// Judged on the room the spectrogram would have without the panel below,
-/// or the panel would keep itself open by shrinking it.
+/// The species text goes in the species card instead of a column over the
+/// drawn calls: the column would cover too much of the recording.
 pub fn text_below(state: AppState) -> bool {
     let v = state.bat_book.spect_size().get();
-    panel_open(state) && v.w > 0.0 && (v.w < COLUMN_MIN_VIEW_W || v.room_h < COLUMN_MIN_VIEW_H)
+    panel_open(state) && v.w > 0.0 && (v.w < COLUMN_MIN_VIEW_W || v.h < COLUMN_MIN_VIEW_H)
+}
+
+/// The bat book shows its More info button: a species is shown and its text
+/// has no column over the spectrogram (a small spectrogram, another view, or
+/// no recording open).
+pub fn info_button_shown(state: AppState) -> bool {
+    let column =
+        panel_open(state) && state.bat_book.spect_size().get().w > 0.0 && !text_below(state);
+    state.bat_book.ref_open().get()
+        && !state.bat_book.selected_ids().with(|ids| ids.is_empty())
+        && !column
 }
 
 fn entry_for(state: AppState, id: &str) -> Option<BatBookEntry> {
@@ -399,8 +421,8 @@ fn step(state: AppState, delta: i32) {
 }
 
 /// "‹ Europe 12 / 38 › ×": where the shown species is, the step buttons and
-/// the close button.
-fn nav_row(state: AppState) -> impl IntoView {
+/// the close button, which calls `close`.
+fn nav_row(state: AppState, close: impl Fn() + 'static) -> impl IntoView {
     let position = move || {
         let ids = state.bat_book.selected_ids().get();
         if ids.len() > 1 {
@@ -435,7 +457,7 @@ fn nav_row(state: AppState) -> impl IntoView {
             <button class="species-step" title="Next species" aria-label="Next species"
                 on:click=move |ev| { ev.stop_propagation(); step(state, 1); }>"\u{203a}"</button>
             <button class="species-close" title="Close (Esc)" aria-label="Close"
-                on:click=move |ev| { ev.stop_propagation(); state.bat_book.ref_open().set(false); }>
+                on:click=move |ev| { ev.stop_propagation(); close(); }>
                 "\u{00d7}"
             </button>
         </div>
@@ -499,16 +521,12 @@ fn forms_row(
 
 /// Everything below the name and kinds of call: the shown kind's facts,
 /// warnings, the description, and sources.
-/// `compact` (the panel under a phone's spectrogram) puts the description,
-/// sources and draft note behind "More", so the spectrogram keeps its room.
 fn body(
     shown: Memo<Option<Shown>>,
     form: Memo<Option<Form<'static>>>,
     warning: Signal<Option<String>>,
-    compact: bool,
 ) -> impl IntoView {
     let details_open = RwSignal::new(false);
-    let more_open = RwSignal::new(!compact);
     let facts = move || {
         let Some(s) = shown.get() else { return None };
         let Some(f) = form.get() else {
@@ -592,25 +610,89 @@ fn body(
             })}
         })
     };
-    let toggle_more = move |ev: web_sys::MouseEvent| {
-        ev.stop_propagation();
-        more_open.update(|v| *v = !*v);
-    };
     view! {
         {facts}
         {move || warning.get().map(|w| view! { <div class="species-warn">{w}</div> })}
-        {compact.then(|| view! {
-            <button class="species-details-btn" on:click=toggle_more
-                aria-expanded=move || more_open.get().to_string()>
-                {move || if more_open.get() { "\u{25be} Less" } else { "\u{25b8} More" }}
-            </button>
-        })}
-        {move || more_open.get().then(|| view! {
-            {about}
-            {sources}
-            <div class="species-muted species-draft">"Draft. May contain errors."</div>
-        })}
+        {about}
+        {sources}
+        <div class="species-muted species-draft">"Draft. May contain errors."</div>
     }
+}
+
+/// Draws the calls of `lay` with a soft glow, harmonics fainter by their
+/// level. `y_of` maps kHz to a y position, CSS px.
+fn draw_calls(
+    ctx: &web_sys::CanvasRenderingContext2d,
+    lay: &StripLayout<'_>,
+    y_of: impl Fn(f64) -> f64,
+    line: [u8; 3],
+) {
+    ctx.set_line_cap("round");
+    ctx.set_line_join("round");
+    for placed in &lay.calls {
+        if lay.too_small {
+            // Too small to draw the shape: mark where each call is, so the
+            // spacing of the train still shows.
+            let (lo, hi) = (0..=8).fold((f64::MAX, f64::MIN), |(lo, hi), i| {
+                let k = placed.khz_at(i as f64 / 8.0);
+                (lo.min(k), hi.max(k))
+            });
+            ctx.set_stroke_style_str(&rgba(line, 0.9));
+            ctx.set_line_width(1.5);
+            ctx.begin_path();
+            ctx.move_to(placed.x, y_of(hi));
+            ctx.line_to(placed.x, y_of(lo));
+            ctx.stroke();
+            continue;
+        }
+        let n = ((placed.width * 2.0).ceil() as usize).clamp(12, 400);
+        let mut layers: Vec<(f64, f64)> = vec![(1.0, 1.0)];
+        for h in &placed.call.harmonics {
+            layers.push((
+                h.multiple,
+                10f64.powf(h.relative_db / 20.0).clamp(0.05, 1.0),
+            ));
+        }
+        for (mult, gain) in layers {
+            ctx.set_shadow_color(&rgba(line, 0.6 * gain));
+            ctx.set_shadow_blur(6.0);
+            ctx.set_line_width(2.5);
+            for i in 0..n {
+                let t0 = i as f64 / n as f64;
+                let t1 = (i + 1) as f64 / n as f64;
+                // Softer at both ends of the call, as a call fades in and out.
+                let mid = (t0 + t1) / 2.0;
+                let env = (std::f64::consts::PI * mid).sin().powf(0.6).max(0.25);
+                ctx.set_stroke_style_str(&rgba(line, env * gain));
+                ctx.begin_path();
+                ctx.move_to(placed.x + t0 * placed.width, y_of(placed.khz_at(t0) * mult));
+                ctx.line_to(placed.x + t1 * placed.width, y_of(placed.khz_at(t1) * mult));
+                ctx.stroke();
+            }
+        }
+        ctx.set_shadow_blur(0.0);
+    }
+}
+
+/// A canvas's 2D context, scaled for the device's pixel ratio, after sizing
+/// the canvas to `w` by `h` CSS px.
+fn sized_context(
+    el: &web_sys::HtmlCanvasElement,
+    w: f64,
+    h: f64,
+) -> Option<web_sys::CanvasRenderingContext2d> {
+    let dpr = web_sys::window()
+        .map(|w| w.device_pixel_ratio())
+        .unwrap_or(1.0);
+    el.set_width((w * dpr).round() as u32);
+    el.set_height((h * dpr).round() as u32);
+    let ctx = el
+        .get_context("2d")
+        .ok()
+        .flatten()
+        .and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok())?;
+    let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
+    Some(ctx)
 }
 
 /// Drawn calls at the spectrogram's left edge, with the species text in a
@@ -635,31 +717,17 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
     });
     let form = Memo::new(move |_| shown.get()?.sketch.map(|s| chosen_form(s, state)));
 
-    // The spectrogram's size, CSS px, and the height it would have without
-    // the species panel under it. Its height changes without any signal (the
-    // bat book strip or the panel below opening shrinks it), so watch it.
-    // Both heights are read in one go from the same layout: measured at
-    // different times, the panel's height could be counted while the
-    // spectrogram hadn't shrunk yet, and the panel would close and reopen
-    // every frame.
+    // The spectrogram's size, CSS px. Its height changes without any signal
+    // (the bat book strip opening shrinks it), so watch it.
     let view_size = state.bat_book.spect_size();
     Effect::new(move |_| {
         let Some(el) = canvas_ref.get() else { return };
         let canvas: &web_sys::HtmlCanvasElement = el.as_ref();
         let read = {
             let canvas = canvas.clone();
-            move || {
-                let h = canvas.client_height() as f64;
-                let panel_h = web_sys::window()
-                    .and_then(|w| w.document())
-                    .and_then(|d| d.query_selector(".species-panel-below").ok().flatten())
-                    .and_then(|p| p.dyn_into::<web_sys::HtmlElement>().ok())
-                    .map_or(0.0, |p| p.offset_height() as f64);
-                SpectSize {
-                    w: canvas.client_width() as f64,
-                    h,
-                    room_h: h + panel_h,
-                }
+            move || SpectSize {
+                w: canvas.client_width() as f64,
+                h: canvas.client_height() as f64,
             }
         };
         view_size.set(read());
@@ -720,9 +788,17 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
             return None;
         }
         let sc = scale.get()?;
-        let max_w =
-            (sc.css_w * MAX_WIDTH_FRACTION).max(if below.get() { 0.0 } else { COLUMN_WIDTH });
-        Some(call_sketch::layout(f, sc.px_per_s, max_w))
+        let cap = sc.css_w * MAX_WIDTH_FRACTION;
+        let size = if below.get() {
+            StripWidth {
+                fit: (sc.css_w * NARROW_FIT_FRACTION).max(NARROW_MIN_WIDTH),
+                min: NARROW_MIN_WIDTH,
+                cap: cap.max(NARROW_MIN_WIDTH),
+            }
+        } else {
+            StripWidth::up_to(cap.max(COLUMN_WIDTH))
+        };
+        Some(call_sketch::layout_in(f, sc.px_per_s, size))
     });
 
     // Width of the whole thing: the drawing alone, or the text column (which
@@ -864,72 +940,18 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
             return;
         };
         let el: &web_sys::HtmlCanvasElement = canvas.as_ref();
-        let dpr = web_sys::window()
-            .map(|w| w.device_pixel_ratio())
-            .unwrap_or(1.0);
-        el.set_width((w * dpr).round() as u32);
-        el.set_height((css_h * dpr).round() as u32);
-        let Some(ctx) = el
-            .get_context("2d")
-            .ok()
-            .flatten()
-            .and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok())
-        else {
+        let Some(ctx) = sized_context(el, w, css_h) else {
             return;
         };
-        let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
         ctx.set_fill_style_str(&rgba(cmap.apply(16), 1.0));
         ctx.fill_rect(0.0, 0.0, w, css_h);
         let Some(lay) = lay else { return };
-
-        let y_of = |khz: f64| freq_to_y(khz * 1000.0, min_f, max_f, css_h);
-        let line = cmap.apply(240);
-        ctx.set_line_cap("round");
-        ctx.set_line_join("round");
-
-        for placed in &lay.calls {
-            if lay.too_small {
-                // Too small to draw the shape: mark where each call is, so the
-                // spacing of the train still shows.
-                let (lo, hi) = (0..=8).fold((f64::MAX, f64::MIN), |(lo, hi), i| {
-                    let k = placed.khz_at(i as f64 / 8.0);
-                    (lo.min(k), hi.max(k))
-                });
-                ctx.set_stroke_style_str(&rgba(line, 0.9));
-                ctx.set_line_width(1.5);
-                ctx.begin_path();
-                ctx.move_to(placed.x, y_of(hi));
-                ctx.line_to(placed.x, y_of(lo));
-                ctx.stroke();
-                continue;
-            }
-            let n = ((placed.width * 2.0).ceil() as usize).clamp(12, 400);
-            let mut layers: Vec<(f64, f64)> = vec![(1.0, 1.0)];
-            for h in &placed.call.harmonics {
-                layers.push((
-                    h.multiple,
-                    10f64.powf(h.relative_db / 20.0).clamp(0.05, 1.0),
-                ));
-            }
-            for (mult, gain) in layers {
-                ctx.set_shadow_color(&rgba(line, 0.6 * gain));
-                ctx.set_shadow_blur(6.0);
-                ctx.set_line_width(2.5);
-                for i in 0..n {
-                    let t0 = i as f64 / n as f64;
-                    let t1 = (i + 1) as f64 / n as f64;
-                    // Softer at both ends of the call, as a call fades in and out.
-                    let mid = (t0 + t1) / 2.0;
-                    let env = (std::f64::consts::PI * mid).sin().powf(0.6).max(0.25);
-                    ctx.set_stroke_style_str(&rgba(line, env * gain));
-                    ctx.begin_path();
-                    ctx.move_to(placed.x + t0 * placed.width, y_of(placed.khz_at(t0) * mult));
-                    ctx.line_to(placed.x + t1 * placed.width, y_of(placed.khz_at(t1) * mult));
-                    ctx.stroke();
-                }
-            }
-            ctx.set_shadow_blur(0.0);
-        }
+        draw_calls(
+            &ctx,
+            &lay,
+            |khz| freq_to_y(khz * 1000.0, min_f, max_f, css_h),
+            cmap.apply(240),
+        );
     });
 
     // The name block's height, measured: it grows with a long name that
@@ -982,7 +1004,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
             view! { <div class="species-spacer" style:height=format!("{spacer}px")></div> };
         let top_block = view! {
             <div class="species-top species-text" node_ref=top_ref>
-                {nav_row(state)}
+                {nav_row(state, move || state.bat_book.ref_open().set(false))}
                 {name_block(shown)}
                 {forms_row(state, shown, form)}
             </div>
@@ -995,7 +1017,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
                 view! { {spacer_div} {window_div} {top_block} }.into_any()
             }}
             <div class="species-bottom species-text">
-                {body(shown, form, warning, false)}
+                {body(shown, form, warning)}
             </div>
         }
     };
@@ -1020,11 +1042,130 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
     }
 }
 
-/// The species panel under the spectrogram, for a spectrogram too small for
-/// the column (phones held upright).
+/// The calls of `form` stretched in time to fill `w` CSS px, and the scale
+/// that takes, CSS px per second. A train whose calls would be under
+/// `CARD_MIN_CALL_PX` wide shows fewer calls instead.
+fn card_layout(form: Form<'static>, w: f64) -> Option<(StripLayout<'static>, f64)> {
+    let unbounded = StripWidth {
+        fit: f64::INFINITY,
+        min: 0.0,
+        cap: f64::INFINITY,
+    };
+    // At 1000 px per second, 1 px is 1 ms.
+    let probe = call_sketch::layout_in(form, 1000.0, unbounded);
+    let last = probe.calls.last()?;
+    let span_s = (last.x + last.width - STRIP_PAD) / 1000.0;
+    if span_s <= 0.0 || w <= 2.0 * STRIP_PAD {
+        return None;
+    }
+    let narrowest_s = probe
+        .calls
+        .iter()
+        .map(|c| c.width)
+        .fold(f64::INFINITY, f64::min)
+        / 1000.0;
+    let mut px_per_s = (w - 2.0 * STRIP_PAD) / span_s;
+    if narrowest_s > 0.0 && narrowest_s * px_per_s < CARD_MIN_CALL_PX {
+        px_per_s = CARD_MIN_CALL_PX / narrowest_s;
+    }
+    // Half a pixel spare, so rounding doesn't drop the last call.
+    let size = StripWidth {
+        fit: w + 0.5,
+        min: 0.0,
+        cap: w,
+    };
+    Some((call_sketch::layout_in(form, px_per_s, size), px_per_s))
+}
+
+/// Gap between kHz gridlines: the smallest round step that gives at most
+/// `max_lines` lines over `range_khz`.
+fn khz_step(range_khz: f64, max_lines: f64) -> f64 {
+    [1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
+        .into_iter()
+        .find(|s| range_khz / s <= max_lines)
+        .unwrap_or(200.0)
+}
+
+/// Length of the time scale bar, ms: the longest round length up to a third
+/// of `span_ms`.
+fn scale_bar_ms(span_ms: f64) -> f64 {
+    [
+        1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0,
+    ]
+    .into_iter()
+    .rev()
+    .find(|ms| *ms <= span_ms / 3.0)
+    .unwrap_or(1.0)
+}
+
+/// Draws `form` large in the species card: frequency gridlines with kHz
+/// labels on the left, the calls stretched in time to fill the width, and a
+/// time scale bar, since the time scale isn't the recording's.
+fn draw_card_sketch(el: &web_sys::HtmlCanvasElement, form: Form<'static>, w: f64, cmap: Colormap) {
+    let h = CARD_SKETCH_H;
+    let Some(ctx) = sized_context(el, w, h) else {
+        return;
+    };
+    let plot_w = w - CARD_AXIS_W;
+    let Some((lay, px_per_s)) = card_layout(form, plot_w) else {
+        return;
+    };
+    let Some((lo, hi)) = drawn_khz_extent(form) else {
+        return;
+    };
+    let pad = ((hi - lo) * 0.15).max(3.0);
+    let (lo, hi) = ((lo - pad).max(0.0), hi + pad);
+    let (top, bottom) = (8.0, h - CARD_SCALE_H);
+    let y_of = move |khz: f64| bottom - (khz - lo) / (hi - lo) * (bottom - top);
+
+    ctx.set_fill_style_str(&rgba(cmap.apply(16), 1.0));
+    ctx.fill_rect(CARD_AXIS_W, 0.0, plot_w, h);
+
+    // Frequency gridlines and their labels.
+    ctx.set_font("11px sans-serif");
+    ctx.set_text_align("right");
+    ctx.set_text_baseline("middle");
+    ctx.set_line_width(1.0);
+    let step = khz_step(hi - lo, 4.0);
+    let mut k = (lo / step).ceil() * step;
+    while k <= hi {
+        let y = y_of(k).round() + 0.5;
+        ctx.set_stroke_style_str("rgba(255,255,255,0.14)");
+        ctx.begin_path();
+        ctx.move_to(CARD_AXIS_W, y);
+        ctx.line_to(w, y);
+        ctx.stroke();
+        ctx.set_fill_style_str("#9a9a9a");
+        let _ = ctx.fill_text(&format!("{} kHz", fmt(k)), CARD_AXIS_W - 6.0, y);
+        k += step;
+    }
+
+    let _ = ctx.translate(CARD_AXIS_W, 0.0);
+    draw_calls(&ctx, &lay, y_of, cmap.apply(240));
+
+    // Time scale bar at the bottom right, with its length.
+    let span_ms = (plot_w - 2.0 * STRIP_PAD) / px_per_s * 1000.0;
+    let bar_ms = scale_bar_ms(span_ms);
+    let bar_px = bar_ms / 1000.0 * px_per_s;
+    let x1 = plot_w - STRIP_PAD;
+    let y = h - CARD_SCALE_H / 2.0;
+    ctx.set_stroke_style_str("#bbb");
+    ctx.set_line_width(2.0);
+    ctx.begin_path();
+    ctx.move_to(x1 - bar_px, y);
+    ctx.line_to(x1, y);
+    ctx.stroke();
+    ctx.set_fill_style_str("#bbb");
+    let _ = ctx.fill_text(&duration_text(bar_ms / 1000.0), x1 - bar_px - 6.0, y);
+}
+
+/// The species card: a sheet with the shown species' facts, description,
+/// sources and its calls drawn large. Opened from the bat book's More info
+/// button when the spectrogram has no room for the text column (phones).
 #[component]
-pub fn SpeciesPanelBelow() -> impl IntoView {
+pub fn SpeciesInfoCard() -> impl IntoView {
     let state = expect_context::<AppState>();
+    let open = state.bat_book.info_open();
     let shown = Memo::new(move |_| {
         if !state.bat_book.ref_open().get() {
             return None;
@@ -1038,35 +1179,76 @@ pub fn SpeciesPanelBelow() -> impl IntoView {
     });
     let form = Memo::new(move |_| shown.get()?.sketch.map(|s| chosen_form(s, state)));
     let warning = Signal::derive(move || state.bat_book.panel_warning().get());
-    // At most half the spectrogram's room, so a short window still shows
-    // the recording; the rest of the text scrolls. The room is measured
-    // without this panel, so its height can't change the cap.
-    let max_height = move || {
-        let room = state.bat_book.spect_size().get().room_h;
-        if room > 0.0 {
-            format!(
-                "min(24vh, {}px)",
-                (room * PANEL_BELOW_MAX_FRACTION)
-                    .max(PANEL_BELOW_MIN_PX)
-                    .round()
-            )
-        } else {
-            "24vh".to_string()
+    let has_species = Memo::new(move |_| shown.get().is_some());
+    let drawable = Memo::new(move |_| form.get().is_some_and(|f| f.drawable()));
+
+    // Close when there's nothing to show, or the text column has room again.
+    Effect::new(move |_| {
+        if open.get() && !info_button_shown(state) {
+            open.set(false);
         }
-    };
-    move || {
-        shown.get()?;
-        Some(view! {
-            <div class="species-panel-below species-text" style:max-height=max_height>
-                // Pinned: which species and which kind of call stay in view
-                // while the facts below scroll.
-                <div class="species-head">
-                    {nav_row(state)}
+    });
+
+    let close = move || open.set(false);
+
+    // The drawing fills the card's width; follow it.
+    let sketch_ref = NodeRef::<leptos::html::Canvas>::new();
+    let sketch_w = RwSignal::new(0.0);
+    Effect::new(move |_| {
+        let Some(el) = sketch_ref.get() else { return };
+        let canvas: web_sys::HtmlCanvasElement = el.into();
+        let read = {
+            let canvas = canvas.clone();
+            move || {
+                let w = canvas.client_width() as f64;
+                // try_*: the observer may fire after this component is gone.
+                if sketch_w.try_get_untracked().is_some_and(|old| old != w) {
+                    sketch_w.try_set(w);
+                }
+            }
+        };
+        read();
+        let cb = wasm_bindgen::closure::Closure::<dyn Fn(js_sys::Array)>::new(
+            move |_e: js_sys::Array| read(),
+        );
+        if let Ok(obs) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
+            obs.observe(&canvas);
+            on_cleanup(move || obs.disconnect());
+        }
+        cb.forget();
+    });
+    Effect::new(move |_| {
+        let w = sketch_w.get();
+        let (Some(f), Some(el)) = (form.get(), sketch_ref.get()) else {
+            return;
+        };
+        if w > 0.0 && f.drawable() {
+            draw_card_sketch(el.as_ref(), f, w, sketch_colormap(state));
+        }
+    });
+
+    view! {
+        <div
+            class=move || if open.get() { "species-card-backdrop open" } else { "species-card-backdrop" }
+            on:click=move |_| close()
+        ></div>
+        <div
+            class=move || if open.get() { "species-card species-text open" } else { "species-card species-text" }
+            role="dialog"
+            aria-label="Species"
+            inert=move || !open.get()
+        >
+            {move || has_species.get().then(|| view! {
+                <div class="species-card-head">
+                    {nav_row(state, close)}
                     {name_block(shown)}
                     {forms_row(state, shown, form)}
                 </div>
-                {body(shown, form, warning, true)}
-            </div>
-        })
+                {move || drawable.get().then(|| view! {
+                    <canvas class="species-card-sketch" node_ref=sketch_ref></canvas>
+                })}
+                {body(shown, form, warning)}
+            })}
+        </div>
     }
 }

@@ -12,7 +12,7 @@ use crate::components::overflow_menu::CanvasOverflowMenus;
 use crate::components::overview::{OverviewPanel, OverviewToolbar};
 use crate::components::play_controls::{BookmarkPopup, ToastDisplay};
 use crate::components::right_sidebar::RightSidebar;
-use crate::components::species_panel::SpeciesPanelBelow;
+use crate::components::species_panel::SpeciesInfoCard;
 use crate::components::spectrogram::Spectrogram;
 use crate::components::toolbar::Toolbar;
 use crate::components::view_bar::ViewBar;
@@ -1326,6 +1326,10 @@ pub fn App() -> impl IntoView {
                     state_kb.panels.layer_panel_open().set(None);
                     return;
                 }
+                if state_kb.bat_book.info_open().get_untracked() {
+                    state_kb.bat_book.info_open().set(false);
+                    return;
+                }
                 if state_kb.bat_book.ref_open().get_untracked() {
                     state_kb.bat_book.ref_open().set(false);
                     return;
@@ -1673,7 +1677,15 @@ pub fn App() -> impl IntoView {
                 if !state_back.status.is_mobile().get_untracked() {
                     return;
                 }
-                if !state_back.panels.right_collapsed().get_untracked() {
+                if state_back.bat_book.info_open().get_untracked() {
+                    // The species card is on top of everything else.
+                    state_back.bat_book.info_open().set(false);
+                    let _ = web_sys::window()
+                        .unwrap()
+                        .history()
+                        .unwrap()
+                        .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", None);
+                } else if !state_back.panels.right_collapsed().get_untracked() {
                     state_back.panels.right_collapsed().set(true);
                     let _ = web_sys::window()
                         .unwrap()
@@ -1964,15 +1976,6 @@ fn MainArea() -> impl IntoView {
 
                         </div>
 
-                        // Species panel under the spectrogram when the
-                        // spectrogram is too small for its text column.
-                        // Memo: only a change of answer remounts the panel.
-                        // A bare closure re-ran on every size change of the
-                        // spectrogram and rebuilt it, closing "More".
-                        {
-                            let below = Memo::new(move |_| crate::components::species_panel::text_below(state));
-                            move || below.get().then(|| view! { <SpeciesPanelBelow /> })
-                        }
                         // Bat book strip (between main view and bottom toolbar)
                         {move || state.bat_book.open().get().then(|| view! { <BatBookStrip /> })}
 
@@ -1997,12 +2000,13 @@ fn MainArea() -> impl IntoView {
                         <div class="empty-state">
                             {empty_msg}
                         </div>
-                        {move || state.bat_book.open().get().then(|| view! { <SpeciesPanelBelow /> })}
                         {move || state.bat_book.open().get().then(|| view! { <BatBookStrip /> })}
                     }.into_any()
                 }
             }}
             <BottomToolbar />
+            // Species card: the bat book's More info sheet.
+            <SpeciesInfoCard />
 
             // Zoom-out button — appears when mobile viewport is pinch-zoomed in.
             // Uses absolute positioning relative to the visual viewport (not

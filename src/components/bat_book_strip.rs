@@ -219,6 +219,28 @@ pub fn BatBookStrip() -> impl IntoView {
                     </Show>
                 </div>
                 <div style="flex:1"></div>
+                // The shown species' text, when the spectrogram has no room
+                // for it. Marked amber when the drawn calls can't be seen.
+                // Memo: the spectrogram's size changes often; the answer rarely.
+                {let info_shown = Memo::new(move |_| crate::components::species_panel::info_button_shown(state));
+                move || info_shown.get().then(|| {
+                    let warn = move || state.bat_book.panel_warning().get();
+                    view! {
+                        <button
+                            class="bat-book-info-btn"
+                            class:warn=move || warn().is_some()
+                            aria-haspopup="dialog"
+                            title=move || warn().unwrap_or_default()
+                            on:click=move |ev: web_sys::MouseEvent| {
+                                ev.stop_propagation();
+                                state.bat_book.info_open().set(true);
+                            }
+                        >
+                            {move || warn().is_some().then(|| view! { <span class="bat-book-info-warn">"!"</span> })}
+                            "More info"
+                        </button>
+                    }
+                })}
                 <button
                     class="bat-book-close-btn"
                     on:click=on_close

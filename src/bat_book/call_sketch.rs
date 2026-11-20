@@ -419,6 +419,29 @@ pub struct StripLayout<'a> {
 pub const STRIP_PAD: f64 = 12.0;
 /// Narrowest strip, CSS px: room for its heading.
 pub const STRIP_MIN_WIDTH: f64 = 150.0;
+
+/// Width limits for a strip of drawn calls, CSS px.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StripWidth {
+    /// Calls after the first are drawn only while they fit in this width.
+    pub fit: f64,
+    /// Narrowest the strip gets.
+    pub min: f64,
+    /// Widest the strip gets. The first call is always drawn, and a first
+    /// call wider than `fit` widens the strip up to this.
+    pub cap: f64,
+}
+
+impl StripWidth {
+    /// At most `max` wide, and at least [`STRIP_MIN_WIDTH`].
+    pub fn up_to(max: f64) -> Self {
+        Self {
+            fit: max,
+            min: STRIP_MIN_WIDTH,
+            cap: max.max(STRIP_MIN_WIDTH),
+        }
+    }
+}
 /// Search and social calls: a few calls show the spacing of the train.
 const MAX_REPEATS: usize = 4;
 /// Approach and buzz: every call of the sequence, up to this many.
@@ -429,6 +452,11 @@ fn ms_s(r: Option<&Range>) -> Option<f64> {
 }
 
 pub fn layout<'a>(form: Form<'a>, px_per_s: f64, max_width: f64) -> StripLayout<'a> {
+    layout_in(form, px_per_s, StripWidth::up_to(max_width))
+}
+
+pub fn layout_in<'a>(form: Form<'a>, px_per_s: f64, size: StripWidth) -> StripLayout<'a> {
+    let max_width = size.fit;
     let seq = form.sequence();
     let dur = |c: &SketchCall| ms_s(c.duration_ms.as_ref()).unwrap_or(0.0);
     let inner_max = (max_width - 2.0 * STRIP_PAD).max(0.0);
@@ -512,9 +540,7 @@ pub fn layout<'a>(form: Form<'a>, px_per_s: f64, max_width: f64) -> StripLayout<
     let right = calls.last().map(|c| c.x + c.width).unwrap_or(STRIP_PAD) + STRIP_PAD;
     StripLayout {
         calls,
-        width: right
-            .max(STRIP_MIN_WIDTH)
-            .min(max_width.max(STRIP_MIN_WIDTH)),
+        width: right.max(size.min).min(size.cap.max(size.min)),
         too_small,
         cut_off,
     }
