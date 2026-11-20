@@ -100,7 +100,8 @@ const SILENT_CDB: i16 = i16::MIN;
 ///   no spectrogram of their own.
 pub fn model_band(method: Method) -> (f32, f32) {
     match method {
-        Method::BirdNet => (250.0, 15_000.0),
+        // BirdNET+ V3.0's mel bands also stop near 15 kHz (its docs/model.md).
+        Method::BirdNet | Method::BirdNetV3 => (250.0, 15_000.0),
         Method::Perch => (250.0, 16_000.0),
         Method::Bats => {
             let scale = method.model_rate() as f32 / 48_000.0;

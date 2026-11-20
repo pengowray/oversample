@@ -28,6 +28,9 @@ fn parse_choice(s: &str) -> Option<ModelChoice> {
     if s.eq_ignore_ascii_case("perch") {
         return Some(ModelChoice::Perch);
     }
+    if s.eq_ignore_ascii_case("birdnet-v3") {
+        return Some(ModelChoice::BirdNetV3);
+    }
     let r = s.strip_prefix("bats:")?;
     parse_region(r).map(ModelChoice::Bats)
 }
@@ -37,6 +40,7 @@ fn method_name(m: Method) -> &'static str {
         Method::BirdNet => "BirdNet",
         Method::Bats => "Bats",
         Method::Perch => "Perch",
+        Method::BirdNetV3 => "BirdNetV3",
     }
 }
 

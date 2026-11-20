@@ -205,7 +205,8 @@ pub fn row(
 
 /// The band the quiet check measures in, in Hz: the part of the spectrum
 /// the model looks at, less rumble under 250 Hz. BirdNET looks at 0 to
-/// 15 kHz of its 48 kHz input; BattyBirdNET is BirdNET on audio slowed from
+/// 15 kHz of its 48 kHz input, and BirdNET+ V3.0's mel bands also stop near
+/// 15 kHz; BattyBirdNET is BirdNET on audio slowed from
 /// 256 kHz, so its band is 256 / 48 times higher.
 fn band(method: Method) -> (f32, f32) {
     crate::classifier::quiet::model_band(method)

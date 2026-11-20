@@ -164,13 +164,15 @@ pub fn spans(run: &ClassifierRun, min_confidence: f32, merge: bool) -> Vec<Span>
     out
 }
 
-/// The `auto` tag value on annotations from this run: `birdnet`, `perch2`, or
+/// The `auto` tag value on annotations from this run: `birdnet` (V2.4),
+/// `birdnet-v3`, `perch2`, or
 /// `battybirdnet-uk` (one per region and `battybirdnet-all` for all regions,
 /// so adding another region's results keeps the first region's annotations).
 pub fn auto_tag_value(run: &ClassifierRun) -> String {
     match (run.method, run.region) {
         (Method::BirdNet, _) => "birdnet".to_string(),
         (Method::Perch, _) => "perch2".to_string(),
+        (Method::BirdNetV3, _) => "birdnet-v3".to_string(),
         (Method::Bats, Some(r)) => format!("battybirdnet-{}", r.stem().to_lowercase()),
         (Method::Bats, None) => "battybirdnet".to_string(),
     }
@@ -302,5 +304,23 @@ mod tests {
         assert!(annotation_tags::has_flag(&a[0].tags, UNLIKELY_HERE));
         assert!(has_auto_tag(&a[0], "battybirdnet-uk"));
         assert_eq!(a[0].notes.as_deref(), Some("Pipistrellus pygmaeus"));
+    }
+
+    /// BirdNET+ V3.0 gives a window of digital silence no scores: it counts
+    /// as below the minimum and splits a span, and its annotations get their
+    /// own tag, so they never replace BirdNET V2.4's.
+    #[test]
+    fn unscored_windows_count_as_below() {
+        let mut r = run(&[(0, 0.9), (0, 0.8), (0, 0.9)]);
+        r.method = Method::BirdNetV3;
+        r.region = None;
+        r.windows[1].top.clear();
+        assert_eq!(window_kind(&r, 1, 0.0), WindowKind::Below);
+        let s = summarise(&r, 0.25);
+        assert_eq!((s.species_windows, s.below_windows), (2, 1));
+        assert_eq!(spans(&r, 0.25, true).len(), 2);
+        assert_eq!(auto_tag_value(&r), "birdnet-v3");
+        r.method = Method::BirdNet;
+        assert_eq!(auto_tag_value(&r), "birdnet");
     }
 }

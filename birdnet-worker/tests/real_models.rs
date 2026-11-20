@@ -7,13 +7,17 @@
 //!   `bat-demo-sounds/sounds` (the batchi-extras checkout). Defaults to
 //!   `../../batchi-extras` from this crate.
 //!
+//! - `BIRDNET_V3_MODEL`: `BirdNET+_V3.0_Global_12K_FP16_pruned.onnx` from
+//!   Zenodo record 24362980, for the BirdNET+ V3.0 test. Its labels are the
+//!   app's trimmed copy in `research/birdnet-v3-bench`.
+//!
 //! Debug builds of tract are very slow; run with
 //! `BIRDNET_MODELS_DIR=... cargo test -p birdnet-worker --release --test real_models`.
 
 use birdnet_worker::session::{Attached, Session};
 use oversample_ipc::classifier::{
     FromWorker, Method, ModelPart, Score, ToWorker, EMBEDDING_LEN, PERCH_CLASSES,
-    PERCH_EMBEDDING_LEN,
+    PERCH_EMBEDDING_LEN, V3_CLASSES, V3_EMBEDDING_LEN,
 };
 use std::path::{Path, PathBuf};
 
@@ -673,4 +677,79 @@ fn perch_live_matches_the_run() {
         checked += 1;
     }
     assert!(checked > 0, "no whole 5 s window to check");
+}
+
+/// BirdNET+ V3.0 (the official pruned float16 file, patched to float32 as it
+/// loads) names the Gentoo Penguin in each of the 6 windows that
+/// `research/birdnet-v3-bench/results/ref-pruned.txt` lists for onnxruntime,
+/// at about the same confidence (the reference used Python's decoder and
+/// resampler, so the scores differ a little). The confidences are the model's
+/// own: a second sigmoid would turn 0.90 into 0.71. Windows of digital silence
+/// get no scores and an embedding of zeros.
+#[test]
+fn birdnet_v3_finds_gentoo_penguin_and_skips_digital_silence() {
+    let Some(model) = std::env::var_os("BIRDNET_V3_MODEL").map(PathBuf::from) else {
+        eprintln!("BIRDNET_V3_MODEL not set; skipped");
+        return;
+    };
+    let names: Vec<String> = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../research/birdnet-v3-bench/birdnet-v3-labels.tsv"),
+    )
+    .unwrap()
+    .lines()
+    .map(|l| l.split('\t').nth(1).unwrap().to_string())
+    .collect();
+    assert_eq!(names.len(), V3_CLASSES);
+    let mut s = Session::new();
+    let t = std::time::Instant::now();
+    load_part(&mut s, ModelPart::BirdNetV3, &model);
+    eprintln!("loaded in {:.1} s", t.elapsed().as_secs_f64());
+    let (mut samples, rate) = load(
+        &sounds_dir()
+            .join("bat-demo-sounds/sounds/XC540767 - Gentoo Penguin - Pygoscelis papua.mp3"),
+        18.0,
+    );
+    // 9 s of digital silence after the 6 windows of the recording.
+    samples.resize(samples.len() + 9 * rate as usize, 0.0);
+    let t = std::time::Instant::now();
+    let out = analyse(&mut s, Method::BirdNetV3, &samples, rate);
+    eprintln!(
+        "{} windows at {rate} Hz in {:.1} s",
+        out.windows.len(),
+        t.elapsed().as_secs_f64()
+    );
+    assert_eq!(out.windows.len(), 9);
+    assert_eq!(out.embeddings.len(), 9 * V3_EMBEDDING_LEN);
+    assert_eq!(out.windows[0].1, 3.0);
+    // onnxruntime, ref-pruned.txt windows 0 to 5.
+    let reference = [0.725, 0.871, 0.902, 0.772, 0.461, 0.869];
+    for (i, (w, want)) in out.windows.iter().zip(reference).enumerate() {
+        let top = w.2[0];
+        eprintln!(
+            "window {i}: {} {:.3} (reference {want:.3})",
+            names[top.class as usize], top.confidence
+        );
+        assert_eq!(names[top.class as usize], "Pygoscelis papua");
+        assert!(
+            (top.confidence - want).abs() < 0.15,
+            "window {i}: {:.3}, reference {want:.3}",
+            top.confidence
+        );
+        assert!(w.2.windows(2).all(|p| p[0].confidence >= p[1].confidence));
+    }
+    // Window 6 starts where the silence does; the resampler's filter may
+    // leave the recording's last echo in its first samples.
+    if let Some(top) = out.windows[6].2.first() {
+        eprintln!(
+            "window 6 (starts at the silence): {} {:.3}",
+            names[top.class as usize], top.confidence
+        );
+    }
+    for i in 7..9 {
+        assert!(out.windows[i].2.is_empty(), "window {i} was scored");
+        let e = &out.embeddings[i * V3_EMBEDDING_LEN..(i + 1) * V3_EMBEDDING_LEN];
+        assert!(e.iter().all(|&v| v == 0.0));
+    }
+    assert!(out.embeddings[..V3_EMBEDDING_LEN].iter().any(|&v| v != 0.0));
 }

@@ -1,5 +1,6 @@
 //! The models, through tract: the BirdNET V2.4 backbone with its embeddings
-//! output, and the BattyBirdNET regional heads.
+//! output, and the BattyBirdNET regional heads. Also the top-k ranking that
+//! BirdNET+ V3.0 (`crate::v3`) shares.
 
 use oversample_ipc::classifier::{
     merge_bat_logits, BatHeadPart, Score, EMBEDDING_LEN, TOP_K, WINDOW_SAMPLES,
@@ -165,20 +166,31 @@ pub fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
 
-/// The `TOP_K` highest logits as confidences, highest first.
+/// The `TOP_K` highest logits as confidences (their sigmoid), highest first.
 pub fn top_scores(logits: &[f32]) -> Vec<Score> {
-    let mut idx: Vec<usize> = (0..logits.len()).collect();
+    top_k(logits, sigmoid)
+}
+
+/// The `TOP_K` highest of values that are confidences already (BirdNET+
+/// V3.0's outputs), highest first, unchanged.
+pub fn top_confidences(confidences: &[f32]) -> Vec<Score> {
+    top_k(confidences, |c| c)
+}
+
+/// The `TOP_K` highest values, highest first, each through `confidence`.
+fn top_k(values: &[f32], confidence: impl Fn(f32) -> f32) -> Vec<Score> {
+    let mut idx: Vec<usize> = (0..values.len()).collect();
     let k = TOP_K.min(idx.len());
     if k == 0 {
         return Vec::new();
     }
-    idx.select_nth_unstable_by(k - 1, |&a, &b| logits[b].total_cmp(&logits[a]));
+    idx.select_nth_unstable_by(k - 1, |&a, &b| values[b].total_cmp(&values[a]));
     idx.truncate(k);
-    idx.sort_by(|&a, &b| logits[b].total_cmp(&logits[a]));
+    idx.sort_by(|&a, &b| values[b].total_cmp(&values[a]));
     idx.into_iter()
         .map(|i| Score {
             class: i as u16,
-            confidence: sigmoid(logits[i]),
+            confidence: confidence(values[i]),
         })
         .collect()
 }
@@ -201,6 +213,20 @@ mod tests {
             .0;
         assert_eq!(top[0].class as usize, best);
         assert!((sigmoid(0.0) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn confidences_are_ranked_without_another_sigmoid() {
+        let probs = [0.05, 0.902, 0.3, 0.0, 0.71];
+        let top = top_confidences(&probs);
+        assert_eq!(
+            top.iter().map(|s| s.class).collect::<Vec<_>>(),
+            vec![1, 4, 2, 0, 3]
+        );
+        // As given: a second sigmoid would turn 0.902 into about 0.71.
+        assert_eq!(top[0].confidence, 0.902);
+        assert_eq!(top[4].confidence, 0.0);
+        assert!((top_scores(&probs)[0].confidence - sigmoid(0.902)).abs() < 1e-6);
     }
 
     #[test]

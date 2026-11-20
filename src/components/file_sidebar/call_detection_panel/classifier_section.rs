@@ -1,4 +1,5 @@
-//! The BirdNET, BattyBirdNET and Perch part of the Call detection tab: download
+//! The BirdNET, BattyBirdNET, Perch and BirdNET+ V3.0 part of the Call
+//! detection tab: download
 //! the model, analyse the current file, list the species found, and add them as
 //! annotations. The calls it makes are in `crate::classifier`.
 //!
@@ -197,11 +198,13 @@ fn analyse(state: AppState, file_id: u64, choice: ModelChoice) {
 
 /// The large files the panel's download button and "Delete model" stand for:
 /// BirdNET's backbone (shared by BirdNET and BattyBirdNET; labels and regional
-/// classifiers are small and download on Analyse), or all of Perch's files.
+/// classifiers are small and download on Analyse), all of Perch's files, or
+/// BirdNET+ V3.0's one file.
 fn model_files(method: Method) -> Vec<&'static catalog::ModelFile> {
     match method {
         Method::BirdNet | Method::Bats => vec![&catalog::BACKBONE],
         Method::Perch => catalog::PERCH_FILES.to_vec(),
+        Method::BirdNetV3 => vec![&catalog::BIRDNET_V3],
     }
 }
 
@@ -210,6 +213,7 @@ fn deletable_files(method: Method) -> Vec<&'static catalog::ModelFile> {
     match method {
         Method::BirdNet | Method::Bats => catalog::birdnet_files().collect(),
         Method::Perch => catalog::PERCH_FILES.to_vec(),
+        Method::BirdNetV3 => vec![&catalog::BIRDNET_V3],
     }
 }
 
@@ -321,6 +325,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         Method::BirdNet => ModelChoice::BirdNet,
         Method::Bats => ModelChoice::Bats(bat_scope.get()),
         Method::Perch => ModelChoice::Perch,
+        Method::BirdNetV3 => ModelChoice::BirdNetV3,
     };
 
     // Which model files are on this device; checked once per opening.
@@ -523,6 +528,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             ModelChoice::BirdNet => "Analyse with BirdNET V2.4".to_string(),
             ModelChoice::Bats(r) => format!("Analyse with BattyBirdNET ({})", r.label()),
             ModelChoice::Perch => "Analyse with Perch 2.0".to_string(),
+            ModelChoice::BirdNetV3 => "Analyse with BirdNET+ V3.0".to_string(),
         };
         let error = match run_status() {
             RunStatus::Failed {
@@ -830,6 +836,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 "BirdNET and BattyBirdNET",
             ),
             Method::Perch => ("Perch 2.0 by Google DeepMind.", "", "Perch"),
+            Method::BirdNetV3 => ("Powered by BirdNET+ V3.0.", "", "BirdNET+ V3.0"),
         };
         // The link text is the site, e.g. "birdnet.cornell.edu".
         let site = a

@@ -253,6 +253,7 @@ fn method_key(method: Method) -> &'static str {
         Method::BirdNet => "birdnet",
         Method::Bats => "bats",
         Method::Perch => "perch",
+        Method::BirdNetV3 => "birdnet-v3",
     }
 }
 
@@ -261,6 +262,7 @@ fn method_from_key(key: &str) -> Option<Method> {
         "birdnet" => Some(Method::BirdNet),
         "bats" => Some(Method::Bats),
         "perch" => Some(Method::Perch),
+        "birdnet-v3" => Some(Method::BirdNetV3),
         _ => None,
     }
 }
@@ -586,6 +588,10 @@ mod tests {
             StripSpecies {
                 method: Method::Perch,
                 scientific: "Erithacus rubecula".into(),
+            },
+            StripSpecies {
+                method: Method::BirdNetV3,
+                scientific: "Pygoscelis papua".into(),
             },
         ];
         let picks = StripPicks {

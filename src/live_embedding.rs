@@ -234,11 +234,12 @@ pub const PERCH: LiveModel = LiveModel {
 /// `research/live-embedding/perch_live_data.txt`).
 const PERCH_UMAP_RADIUS: f32 = PERCH_MAP.radius * 0.67;
 
-/// The live view's model for `method`: Perch for Perch, else BirdNET.
+/// The live view's model for `method`: Perch for Perch, else BirdNET V2.4
+/// (BirdNET+ V3.0 has no live view yet; the tab does not offer one).
 pub fn model_for(method: Method) -> &'static LiveModel {
     match method {
         Method::Perch => &PERCH,
-        Method::BirdNet | Method::Bats => &BIRDNET,
+        Method::BirdNet | Method::Bats | Method::BirdNetV3 => &BIRDNET,
     }
 }
 
@@ -680,7 +681,9 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
     let fail = |e: String| LiveStatus::Failed(e);
     let labels = match model.method {
         Method::Perch => classifier::perch_labels(state).await,
-        Method::BirdNet | Method::Bats => classifier::birdnet_labels(state).await,
+        Method::BirdNet | Method::Bats | Method::BirdNetV3 => {
+            classifier::birdnet_labels(state).await
+        }
     }
     .map_err(|e| fail(e.to_string()))?;
     if stale() {
