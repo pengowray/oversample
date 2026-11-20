@@ -198,7 +198,13 @@ With BirdNET+ V3.0 picked as the method, the view runs V3.0 (added
   (`src/classifier/played.rs`): the cut from `live_cut` lines up with
   Analyse's 32 kHz windows. Checked by `birdnet_v3_kept_reading_is_the_run_window`
   and `birdnet_v3_live_matches_the_run` in `birdnet-worker/tests/real_models.rs`
-  (`BIRDNET_V3_MODEL` set to the pruned file).
+  (`BIRDNET_V3_MODEL` set to the pruned file). On 2026-11-21: on the
+  Pauraque recording a live reading had the run's top class, the same
+  confidence to within 0.002 and embedding cosine 0.9997 or more, 134 to
+  138 ms per reading natively (release build); a kept reading of the
+  Gentoo Penguin file matched the run's window with the same start on all
+  7 windows (embedding to 2e-6, confidence to 1.2e-6); 3 s of zeros gave no
+  scores and an embedding of zeros. The browser was not checked.
 - **Rows above the spectrogram:** the principal-component rows work for V3.0
   too, from `birdnet-v3-pc-rows.bin` (`components_for` in
   `src/components/score_strips.rs`).
