@@ -308,6 +308,33 @@ test.describe("Find recordings", () => {
     await expect(page.locator(".xc-error")).toHaveCount(0);
   });
 
+  test("no recordings under a filter: Clear filters lists them again", async ({ page }) => {
+    await stubSearch(page, { modern: true });
+    // Registered after stubSearch, so it answers first: nothing at a set sample rate.
+    await page.route("**/search/recordings**", (route) => {
+      if (!new URL(route.request().url()).searchParams.has("min_smp")) return route.fallback();
+      return json(route, {
+        total: 0,
+        total_exact: true,
+        by_source: {},
+        cursor: null,
+        truncated: false,
+        items: [],
+        status: { xc: "ready" },
+      });
+    });
+    await openDialog(page);
+    const rate = page.locator("label", { hasText: "Sample rate" }).locator("select");
+    await page.locator(".find-fixed-row", { hasText: "All recordings" }).click();
+    await expect(page.locator(".find-rec-row")).toHaveCount(50);
+    await rate.selectOption("96000");
+    await expect(page.locator(".find-empty")).toContainText("No recordings match the filters above.");
+    await page.locator(".find-empty button", { hasText: "Clear filters" }).click();
+    await expect(rate).toHaveValue("");
+    await expect(page.locator(".find-rec-row")).toHaveCount(50);
+    await expect(page.locator(".find-empty")).toHaveCount(0);
+  });
+
   test("preview plays audible recordings and leaves out ultrasonic ones", async ({ page }) => {
     await stubSearch(page, { modern: true });
     const items = [

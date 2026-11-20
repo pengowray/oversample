@@ -53,6 +53,7 @@ const INDEXING: &str =
 const NO_SPECIES_MATCH: &str = "No species match \u{201C}{query}\u{201D}.";
 const NO_RECORDINGS_SPECIES: &str = "No recordings of this species found on {sources}.";
 const NO_RECORDINGS_FILTERS: &str = "No recordings match the filters above.";
+const CLEAR_FILTERS: &str = "Clear filters";
 const LOCATION_DENIED: &str = "Location access denied. Near filter set to Anywhere.";
 const LOCATION_FAILED: &str = "Could not get your location: {reason}. Near filter set to Anywhere. Choose \u{201C}Me\u{201D} to try again.";
 const TRUNCATED: &str =
@@ -795,6 +796,23 @@ pub fn FindRecordings() -> impl IntoView {
 
     let audio_el = NodeRef::<html::Audio>::new();
     let preview: RwSignal<Option<Preview>> = RwSignal::new(None);
+    // Under "No recordings match the filters above": puts every filter back
+    // to its widest setting. The search text stays.
+    let clear_filters = move |_| {
+        group.set(None);
+        country.set(None);
+        min_smp.set(None);
+        near_mode.set(NearMode::Anywhere);
+        near_point.set(None);
+    };
+    let filtered_empty = move || {
+        view! {
+            <p class="find-empty">
+                {NO_RECORDINGS_FILTERS}" "
+                <button class="xc-btn xc-btn-small" on:click=clear_filters>{CLEAR_FILTERS}</button>
+            </p>
+        }
+    };
     Effect::new(move |_| {
         if let Some(el) = audio_el.get() {
             PREVIEW_AUDIO.with(|a| *a.borrow_mut() = Some(el));
@@ -1985,7 +2003,7 @@ pub fn FindRecordings() -> impl IntoView {
                     </p>
                     {no_rate_note}
                 </div>
-                {move || (recs.total.get() == 0 && !recs.loading.get()).then(|| view! { <p class="find-empty">{NO_RECORDINGS_FILTERS}</p> })}
+                {move || (recs.total.get() == 0 && !recs.loading.get()).then(filtered_empty)}
                 {recordings_table(true)}
                 {move || recs.loading.get().then(|| view! { <p class="xc-loading">"Loading\u{2026}"</p> })}
             }
@@ -2017,14 +2035,15 @@ pub fn FindRecordings() -> impl IntoView {
                     // With a filter set, no recordings may only mean none under the
                     // filter; without one, the species has none in any indexed source.
                     {move || (recs.total.get() == 0 && !recs.loading.get()).then(|| {
-                        let text = if any_filter() {
-                            NO_RECORDINGS_FILTERS.to_string()
-                        } else {
+                        if any_filter() {
+                            return filtered_empty().into_any();
+                        }
+                        let text = {
                             let sources = sources_in(&status.get(), &["ready", "indexing"])
                                 .unwrap_or_else(|| vec![SourceSite::XenoCanto.name().to_string()]);
                             fill(NO_RECORDINGS_SPECIES, &[("sources", &join_list(&sources, "or"))])
                         };
-                        view! { <p class="find-empty">{text}</p> }
+                        view! { <p class="find-empty">{text}</p> }.into_any()
                     })}
                     {move || (recs.total.get() > 0).then(|| recordings_table(false))}
                     {move || recs.loading.get().then(|| view! { <p class="xc-loading">"Loading\u{2026}"</p> })}
