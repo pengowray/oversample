@@ -121,6 +121,8 @@ pub fn run() {
             cmd_annotations::write_central_annotations,
             cmd_annotations::list_central_annotations,
             cmd_annotations::delete_central_annotations,
+            cmd_annotations::read_folder_settings,
+            cmd_annotations::set_folder_annotations_beside,
             cmd_annotations::export_annotations_file,
             cmd_annotations::open_file_dialog,
             cmd_models::models_sizes,

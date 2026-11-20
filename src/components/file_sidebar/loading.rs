@@ -418,6 +418,7 @@ pub(crate) async fn load_named_bytes_id(
         cached_full_peak_db: None,
         read_only: false,
         had_sidecar: false,
+        beside_only: false,
         saved_hashes: None,
         hash_source: None,
         wav_markers,

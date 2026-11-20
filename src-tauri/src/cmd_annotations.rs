@@ -131,6 +131,72 @@ pub fn delete_central_annotations(app: tauri::AppHandle, file_key: String) -> Re
     }
 }
 
+/// The per-folder settings file, beside the recordings (TOML). Today it
+/// holds one setting, `annotations = "beside"`: annotations of the
+/// recordings in this folder are kept in a .batm beside each recording,
+/// and only there.
+const FOLDER_SETTINGS: &str = ".oversample";
+
+/// What the folder's `.oversample` says (see `FOLDER_SETTINGS`).
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderSettings {
+    pub annotations_beside: bool,
+}
+
+fn folder_settings_path(audio_path: &str) -> Result<std::path::PathBuf, String> {
+    std::path::Path::new(audio_path)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.join(FOLDER_SETTINGS))
+        .ok_or_else(|| "no folder".to_string())
+}
+
+fn read_folder_table(path: &std::path::Path) -> Result<toml::Table, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => text
+            .parse::<toml::Table>()
+            .map_err(|e| format!("{}: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(toml::Table::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// The settings of the folder that holds `audio_path`. No file, or a file
+/// that cannot be read, is the default (nothing set).
+#[tauri::command]
+pub fn read_folder_settings(audio_path: String) -> FolderSettings {
+    let Ok(path) = folder_settings_path(&audio_path) else {
+        return FolderSettings::default();
+    };
+    let table = read_folder_table(&path).unwrap_or_default();
+    FolderSettings {
+        annotations_beside: table.get("annotations").and_then(|v| v.as_str()) == Some("beside"),
+    }
+}
+
+/// Turn "annotations beside the recordings" on or off for the folder that
+/// holds `audio_path`, keeping any other settings in its `.oversample`. A
+/// file left with no settings is deleted.
+#[tauri::command]
+pub fn set_folder_annotations_beside(audio_path: String, beside: bool) -> Result<(), String> {
+    let path = folder_settings_path(&audio_path)?;
+    let mut table = read_folder_table(&path)?;
+    if beside {
+        table.insert("annotations".into(), toml::Value::String("beside".into()));
+    } else {
+        table.remove("annotations");
+    }
+    if table.is_empty() {
+        return match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+            _ => Ok(()),
+        };
+    }
+    let text = toml::to_string(&table).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Show a native save dialog and export annotations to the chosen path.
 /// Returns the saved path, or empty string if cancelled.
 #[cfg(not(target_os = "android"))]
@@ -190,6 +256,25 @@ pub async fn open_file_dialog() -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn folder_settings_round_trip() {
+        let dir = std::env::temp_dir().join(format!("oversample-folder-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let audio = dir.join("a.wav").to_string_lossy().to_string();
+        let file = dir.join(super::FOLDER_SETTINGS);
+        assert!(!super::read_folder_settings(audio.clone()).annotations_beside);
+        super::set_folder_annotations_beside(audio.clone(), true).unwrap();
+        assert!(super::read_folder_settings(audio.clone()).annotations_beside);
+        // Other settings are kept; with none left the file goes.
+        std::fs::write(&file, "annotations = \"beside\"\nsite = \"Pond\"\n").unwrap();
+        super::set_folder_annotations_beside(audio.clone(), false).unwrap();
+        assert!(std::fs::read_to_string(&file).unwrap().contains("site"));
+        std::fs::write(&file, "annotations = \"beside\"\n").unwrap();
+        super::set_folder_annotations_beside(audio.clone(), false).unwrap();
+        assert!(!file.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn keys_that_could_leave_the_folder_are_refused() {
         for bad in [

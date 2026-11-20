@@ -334,15 +334,15 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
     use leptos::prelude::{Update, WithUntracked};
 
     // Check read_only flag — skip all saves
-    let (read_only, had_sidecar) =
+    let (read_only, had_sidecar, beside_only) =
         state
             .library
             .files()
             .with_untracked(|files: &Vec<crate::state::LoadedFile>| {
                 files
                     .get(file_idx)
-                    .map(|f| (f.read_only, f.had_sidecar))
-                    .unwrap_or((false, false))
+                    .map(|f| (f.read_only, f.had_sidecar, f.beside_only))
+                    .unwrap_or((false, false, false))
             });
     if read_only {
         return;
@@ -419,7 +419,24 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
     let seq = crate::cloud::sync::next_save_seq();
     // The Android app saves like the browser (its device store is its own
     // annotations folder; see `cloud::store`).
-    if state.is_tauri && !crate::cloud::store::android_app() {
+    let beside_path = set.file_identity.file_path.clone().filter(|_| beside_only);
+    if let (true, Some(path)) = (state.is_tauri, beside_path) {
+        // Desktop, folder set to keep annotations beside the recordings: the
+        // .batm there is the only copy. A copy in the app's folder (from
+        // before the setting) is removed once the .batm is written.
+        wasm_bindgen_futures::spawn_local(async move {
+            let sidecar_yaml = sidecar_yaml_without_full_path(&set);
+            match tauri_save_sidecar(&path, &sidecar_yaml).await {
+                Ok(()) => {
+                    log::debug!("Tauri saved annotations beside the recording: {path}.batm");
+                    if let Err(e) = tauri_delete_central(&key).await {
+                        log::debug!("Tauri central copy of {key} not removed: {e}");
+                    }
+                }
+                Err(e) => log::warn!("Tauri save beside the recording failed for {path}: {e}"),
+            }
+        });
+    } else if state.is_tauri && !crate::cloud::store::android_app() {
         // Desktop: always save to central annotations directory
         wasm_bindgen_futures::spawn_local(async move {
             if let Err(e) = tauri_save_central(&key, &yaml).await {
@@ -1023,11 +1040,16 @@ fn load_annotations_tauri(
         } else {
             None
         };
-        if sidecar_yaml.is_some() {
+        let beside_only = match file_path {
+            Some(ref path) => tauri_folder_beside(path).await,
+            None => false,
+        };
+        if sidecar_yaml.is_some() || beside_only {
             if let Some(idx) = state.file_idx_for_id(file_id) {
                 state.library.files().update(|files| {
                     if let Some(f) = files.get_mut(idx) {
-                        f.had_sidecar = true;
+                        f.had_sidecar |= sidecar_yaml.is_some();
+                        f.beside_only = beside_only;
                     }
                 });
             }
@@ -1100,7 +1122,15 @@ fn load_annotations_tauri(
         // unknown: the central copy is the newer content, whatever the time
         // on the .batm beside the recording says; both get it.
         let drive_copy_first = crate::cloud::sync::local::take_unplaced(&key);
-        let (winner, needs_resave) = if drive_copy_first && central.is_some() && sidecar.is_some() {
+        let (winner, needs_resave) = if beside_only {
+            // The .batm beside the recording is the copy. One in the app's
+            // folder only (from before the setting) is used and moved there.
+            match (sidecar, central) {
+                (Some(b), _) => (Some(b), false),
+                (None, Some(c)) => (Some(c), true),
+                (None, None) => (None, false),
+            }
+        } else if drive_copy_first && central.is_some() && sidecar.is_some() {
             (central, true)
         } else {
             newer_of_central_and_beside(central, sidecar, central_via_fallback)
@@ -1196,6 +1226,44 @@ pub(crate) async fn tauri_save_central(file_key: &str, yaml: &str) -> Result<(),
             path: None,
             yaml: Some(yaml),
         },
+    )
+    .await
+}
+
+/// Desktop: whether the folder of the recording at `audio_path` keeps
+/// annotations beside its recordings (its `.oversample` file).
+pub(crate) async fn tauri_folder_beside(audio_path: &str) -> bool {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args<'a> {
+        audio_path: &'a str,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Reply {
+        annotations_beside: bool,
+    }
+    crate::tauri_bridge::tauri_invoke_typed_args::<_, Reply>(
+        "read_folder_settings",
+        &Args { audio_path },
+    )
+    .await
+    .map(|r| r.annotations_beside)
+    .unwrap_or(false)
+}
+
+/// Desktop: turn "annotations beside the recordings" on or off for the
+/// folder of the recording at `audio_path` (writes its `.oversample`).
+pub(crate) async fn tauri_set_folder_beside(audio_path: &str, beside: bool) -> Result<(), String> {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args<'a> {
+        audio_path: &'a str,
+        beside: bool,
+    }
+    crate::tauri_bridge::tauri_invoke_args(
+        "set_folder_annotations_beside",
+        &Args { audio_path, beside },
     )
     .await
 }

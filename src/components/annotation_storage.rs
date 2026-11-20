@@ -21,6 +21,9 @@ const SAVED_ON_DEVICE: &str = "Saved on this device";
 const NOT_SAVED_VIEW_ONLY: &str = "Not saved: this file is view-only";
 const DRIVE_BUTTON_TIP: &str = "Open the Google Drive settings";
 const NOT_IN_DRIVE: &str = "Not in Google Drive";
+/// Desktop: the per-folder setting (the folder's `.oversample` file).
+const BESIDE_LABEL: &str = "Keep .batm beside recordings in this folder";
+const BESIDE_TIP: &str = "Annotations of the recordings in this folder are saved only in a .batm file beside each recording, not in the app's folder or Google Drive. The setting is kept in a .oversample file in the folder.";
 const NOT_IN_DRIVE_TIP: &str =
     "Made while signed out. Move it with \"Move to Google Drive\" in the Google Drive settings.";
 const NOT_COPIED_TIP: &str =
@@ -66,11 +69,52 @@ fn open_drive_settings(state: AppState) {
     });
 }
 
+/// Desktop: turn the folder setting on or off, then save every open file
+/// of that folder so its annotations move to their new home (on: the .batm
+/// beside the recording; off: the app's folder, with the .batm kept up to
+/// date as before).
+fn set_folder_beside(state: AppState, audio_path: String, on: bool) {
+    fn folder(p: &str) -> &str {
+        p.rfind(['/', '\\']).map_or("", |i| &p[..i])
+    }
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Err(e) = crate::opfs::tauri_set_folder_beside(&audio_path, on).await {
+            state.show_error_toast(&format!("Couldn't save the folder setting: {e}"));
+            return;
+        }
+        let dir = folder(&audio_path).to_string();
+        let has_set = |id: u64| state.annotations.store().with_untracked(|s| s.get(id).is_some());
+        let mut to_save = Vec::new();
+        state.library.files().update(|files| {
+            for (idx, f) in files.iter_mut().enumerate() {
+                let path = f.identity.as_ref().and_then(|i| i.file_path.as_deref());
+                if !path.is_some_and(|p| folder(p) == dir) {
+                    continue;
+                }
+                f.beside_only = on;
+                if has_set(f.id) {
+                    // Off: the .batm written while it was on stays and is
+                    // kept up to date.
+                    f.had_sidecar = true;
+                    to_save.push(idx);
+                }
+            }
+        });
+        for idx in to_save {
+            crate::opfs::save_annotations(state, idx);
+        }
+    });
+}
+
 /// What the line needs to know about the open file.
 #[derive(Clone, PartialEq)]
 struct OpenFile {
     read_only: bool,
     had_sidecar: bool,
+    /// The folder keeps annotations beside its recordings (desktop).
+    beside_only: bool,
+    /// Full path of the audio file (desktop, opened from disk).
+    path: Option<String>,
     /// The audio file's name, without folders.
     name: String,
     /// Key of its saved annotations, once its hash is known.
@@ -91,6 +135,8 @@ pub fn AnnotationStorage() -> impl IntoView {
                 id: f.id,
                 read_only: f.read_only,
                 had_sidecar: f.had_sidecar,
+                beside_only: f.beside_only,
+                path: f.identity.as_ref().and_then(|i| i.file_path.clone()),
                 name: name.to_string(),
                 key: f
                     .identity
@@ -120,19 +166,39 @@ pub fn AnnotationStorage() -> impl IntoView {
         } else {
             SAVED_IN_BROWSER
         };
-        let beside = (state.is_tauri && file.had_sidecar).then(|| format!("{}.batm", file.name));
+        let desktop = state.is_tauri && !crate::cloud::store::android_app();
+        let beside = (state.is_tauri && (file.had_sidecar || file.beside_only))
+            .then(|| format!("{}.batm", file.name));
+        // With the folder setting on, the .batm is the only copy.
+        let only_beside = desktop && file.beside_only;
         let key = file.key.clone();
+        let folder_toggle = file.path.clone().filter(|_| desktop).map(|path| {
+            let on = file.beside_only;
+            view! {
+                <label class="annotation-storage-row annotation-storage-toggle" title=BESIDE_TIP>
+                    <input
+                        type="checkbox"
+                        checked=on
+                        on:change=move |ev| set_folder_beside(state, path.clone(), event_target_checked(&ev))
+                    />
+                    {BESIDE_LABEL}
+                </label>
+            }
+        });
         Some(
             view! {
                 <div class="annotation-storage">
-                    <div class="annotation-storage-row">{device}</div>
+                    {(!only_beside).then(|| view! {
+                        <div class="annotation-storage-row">{device}</div>
+                    })}
                     {beside.map(|batm| view! {
                         <div class="annotation-storage-row with-name" title=format!("{batm} is in the same folder as the recording")>
-                            "Also saved in "
+                            {if only_beside { "Saved in " } else { "Also saved in " }}
                             <span class="annotation-storage-name">{batm.clone()}</span>
                             " beside the recording"
                         </div>
                     })}
+                    {folder_toggle}
                     {move || {
                         // Only a set whose home is the signed-in account has a
                         // Drive copy. One from the device store (made while

@@ -170,6 +170,7 @@ pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize
         cached_full_peak_db: None,
         read_only: false,
         had_sidecar: false,
+        beside_only: false,
         saved_hashes: None,
         hash_source: None,
         wav_markers,

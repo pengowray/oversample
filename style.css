@@ -10424,3 +10424,15 @@ body.hfr-nudge-on .hfr-switch {
     min-height: 24px;
     padding: 2px 8px;
 }
+/* Desktop: "Keep .batm beside recordings in this folder" (the folder's
+   .oversample file). A checkbox row in the storage line's grey. */
+.annotation-storage-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 24px;
+    cursor: pointer;
+}
+.annotation-storage-toggle input {
+    margin: 0;
+}

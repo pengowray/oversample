@@ -347,6 +347,10 @@ pub struct LoadedFile {
     /// A file-adjacent .batm sidecar existed when this file was loaded.
     /// When true, auto-save updates the sidecar alongside the central store.
     pub had_sidecar: bool,
+    /// Desktop: the folder's `.oversample` says `annotations = "beside"`, so
+    /// the .batm beside the recording is the only copy of its annotations
+    /// (none in the app's folder, none in Google Drive).
+    pub beside_only: bool,
     /// The hashes and size in the annotations read from disk for this file,
     /// as they were saved (`file_identity::remember_saved_hashes`). The Info
     /// panel compares the file's computed hashes with these.
