@@ -203,6 +203,80 @@ pub fn refine_passes(window: u32, step: u32) -> Vec<Pass> {
     passes
 }
 
+/// Audio sent with a window cut out of a recording ([`live_cut`]) before and
+/// after the window, at least, in seconds, so the resampler gives the window
+/// the same samples a run over the whole recording gives it.
+pub const CUT_MARGIN_S: f64 = 0.25;
+
+/// One window of a recording, cut out to be scored on its own
+/// (`ToWorker::Live` with `at`). See [`live_cut`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LiveCut {
+    /// First sample of the recording to send.
+    pub from: u64,
+    /// Samples to send, from `from` on: the window and the margins each side
+    /// of it.
+    pub len: u64,
+    /// The window starts this many model-rate samples into the resampled
+    /// audio sent.
+    pub skip: u32,
+    /// The window's start and end in the recording, in seconds. The start is
+    /// a model-rate sample time, as a run's window starts are.
+    pub start_s: f64,
+    pub end_s: f64,
+}
+
+fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
+/// The cut that scores `method`'s window starting at `start_s` (at the
+/// nearest model-rate sample) in a recording of `total` samples at
+/// `source_rate`. `None` when the window is not wholly inside the recording:
+/// the only window of a run with zero padding is its last one end to end,
+/// which a cut never gives.
+///
+/// The resampler's output lines up with a run's over the whole recording
+/// when the cut starts on a multiple of `source_rate / gcd(source_rate,
+/// model_rate)` samples (3.3 ms at 44.1 kHz for BirdNET, never more than
+/// 1 s), so the cut starts on the last such sample at least
+/// [`CUT_MARGIN_S`] before the window. Its window then has the samples the
+/// run gives a window with the same start, to float rounding.
+pub fn live_cut(method: Method, source_rate: u32, start_s: f64, total: u64) -> Option<LiveCut> {
+    if source_rate == 0 || !start_s.is_finite() || start_s < 0.0 {
+        return None;
+    }
+    let (inn, out) = (source_rate as u128, method.model_rate() as u128);
+    let g = gcd_u64(inn as u64, out as u64) as u128;
+    let (qa, qm) = (inn / g, out / g);
+    let win = method.window_samples() as u128;
+    let total = total as u128;
+    // The window in model samples, and in source samples (rounded outwards).
+    let s = (start_s * out as f64).round() as u128;
+    if (s + win) * inn > total * out {
+        return None;
+    }
+    let first = s * inn / out;
+    let last = ((s + win) * inn).div_ceil(out);
+    let margin = (CUT_MARGIN_S * inn as f64).ceil() as u128;
+    // The last grid point at or before the margin: the run's model sample
+    // `k * qm` lines up with the cut's first sample.
+    let k = first.saturating_sub(margin) / qa;
+    let from = k * qa;
+    let to = (last + margin).min(total);
+    let start = s as f64 / out as f64;
+    Some(LiveCut {
+        from: from as u64,
+        len: (to - from) as u64,
+        skip: (s - k * qm) as u32,
+        start_s: start,
+        end_s: start + method.window_secs(),
+    })
+}
+
 /// What a model file is to the worker. The worker holds one model of each
 /// [`ModelSlot`]; a model of another [`ModelFamily`] replaces it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -644,7 +718,16 @@ pub enum ToWorker {
     /// audio slot picks which: the BirdNET backbone, BirdNET+ V3.0, or Perch's
     /// embedding model, which also needs Perch's classifier in the head slot.
     /// Answered by `Live`. It leaves any run alone.
-    Live { req: u32, source_rate: u32 },
+    ///
+    /// With `at`, the audio is a cut out of a recording ([`live_cut`]) and
+    /// the window is the one starting `at` model-rate samples into it once
+    /// resampled, padded with zeros at the end if the audio stops short.
+    Live {
+        req: u32,
+        source_rate: u32,
+        #[serde(default)]
+        at: Option<u32>,
+    },
 }
 
 /// Worker to app.
@@ -692,8 +775,14 @@ pub enum FromWorker {
     /// followed by the confidence (0 to 1) of every class in label order: a
     /// sigmoid for BirdNET and BirdNET+ V3.0, Perch's softmax share over all
     /// its classes, as in a run's results. `ms` is the
-    /// time the resampling and the model took.
-    Live { req: u32, ms: f64 },
+    /// time the resampling and the model took. `top` is the window's
+    /// [`TOP_K`] classes worked out exactly as a run's `Window` gives them.
+    Live {
+        req: u32,
+        ms: f64,
+        #[serde(default)]
+        top: Vec<Score>,
+    },
     /// Something failed. `run` is `None` for model loading.
     Error {
         run: Option<u32>,
@@ -704,6 +793,56 @@ pub enum FromWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Where a cut lies, at rates whose grid of lined-up starts is short
+    /// (44.1 kHz: 147 samples) and long (192,001 Hz: 1 s).
+    #[test]
+    fn cuts_hold_the_window_and_start_on_the_grid() {
+        for (method, rate) in [
+            (Method::BirdNet, 44_100u32),
+            (Method::BirdNet, 48_000),
+            (Method::BirdNet, 192_001),
+            (Method::Perch, 22_050),
+        ] {
+            let total = rate as u64 * 60;
+            let g = gcd_u64(rate as u64, method.model_rate() as u64);
+            let qa = rate as u64 / g;
+            for start in [0.0, 0.1, 7.25, 31.123_45, 60.0 - method.window_secs()] {
+                let c = live_cut(method, rate, start, total).unwrap();
+                assert_eq!(c.from % qa, 0, "{rate} Hz from {start}");
+                // The start is the nearest model sample.
+                assert!((c.start_s - start).abs() <= 0.5 / method.model_rate() as f64);
+                assert_eq!(c.end_s, c.start_s + method.window_secs());
+                // The audio sent holds the window, with the margin each side
+                // where the recording has it.
+                let win_from = (c.start_s * rate as f64).floor() as u64;
+                let win_to = (c.end_s * rate as f64).ceil() as u64;
+                let margin = (CUT_MARGIN_S * rate as f64) as u64;
+                assert!(c.from <= win_from.saturating_sub(margin));
+                assert!(win_from - c.from <= margin + qa);
+                assert!(c.from + c.len >= (win_to + margin).min(total));
+                assert!(c.from + c.len <= total);
+                // `skip` model samples in is the window's start.
+                let skip_s = c.skip as f64 / method.model_rate() as f64;
+                assert!((c.from as f64 / rate as f64 + skip_s - c.start_s).abs() < 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn cuts_are_whole_windows_inside_the_recording() {
+        let total = 44_100 * 10;
+        assert!(live_cut(Method::BirdNet, 44_100, 7.0, total).is_some());
+        assert!(live_cut(Method::BirdNet, 44_100, 7.01, total).is_none());
+        assert!(live_cut(Method::BirdNet, 44_100, -0.5, total).is_none());
+        assert!(live_cut(Method::BirdNet, 44_100, f64::NAN, total).is_none());
+        assert!(live_cut(Method::BirdNet, 0, 1.0, total).is_none());
+        // Shorter than a window: no cut at all.
+        assert!(live_cut(Method::Perch, 44_100, 0.0, 44_100 * 4).is_none());
+        // Near the end the margin after the window is cut short.
+        let c = live_cut(Method::BirdNet, 44_100, 7.0, total).unwrap();
+        assert_eq!(c.from + c.len, total);
+    }
 
     #[test]
     fn window_lengths() {
