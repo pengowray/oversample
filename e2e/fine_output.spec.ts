@@ -139,3 +139,90 @@ test("under XForm, the old picture stays up until the redrawn one arrives", asyn
   await page.mouse.up();
   await expect(freeze).toHaveCount(0, { timeout: 6_000 });
 });
+
+test("Snap shows the setting in every mode's panel", async ({ page }) => {
+  await openSweep(page);
+  await openSection(page, "PS");
+  await page.locator(".fine-out-snap select").selectOption("Powers of 2");
+  await page.keyboard.press("Escape");
+  await openSection(page, "TE");
+  await expect(page.locator(".fine-out-snap select")).toHaveValue("Powers of 2");
+  await page.keyboard.press("Escape");
+  // HET has one snap, shown for either of the factor snaps.
+  await openSection(page, "HET");
+  await expect(page.locator(".fine-out-snap option")).toHaveText(["Free", "5 kHz steps"]);
+  await expect(page.locator(".fine-out-snap select")).toHaveValue("5 kHz steps");
+});
+
+test.describe("on a phone", () => {
+  test.use({
+    viewport: { width: 375, height: 812 },
+    isMobile: true,
+    hasTouch: true,
+    userAgent:
+      "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+  });
+
+  /** Picks a mode in the Hear sheet and opens the section in its panel. */
+  async function openOnPhone(page: Page, modeName: string) {
+    const head = page.locator(".fine-out-head");
+    for (let i = 0; i < 2 && !(await head.isVisible()); i++) {
+      if (!(await page.locator(".hear-sheet.open").count())) await page.locator(".hear-chip").tap();
+      await page.locator(".hear-sheet").getByText(modeName, { exact: true }).tap();
+      await page.waitForTimeout(400);
+    }
+    await expect(head).toBeVisible();
+    if ((await head.getAttribute("aria-expanded")) !== "true") await head.tap();
+    await expect(page.locator(".fine-out-svg")).toBeVisible();
+  }
+
+  for (const [modeName, file] of [
+    ["Heterodyne", "het"],
+    ["Time expansion", "te"],
+    ["Pitch shift", "ps"],
+    ["Zero crossing", "zc"],
+  ]) {
+    test(`${modeName}: the section fits a 375 px screen`, async ({ page }, testInfo) => {
+      await openSweep(page);
+      await openOnPhone(page, modeName);
+      if (file === "ps") await page.getByRole("button", { name: "Divide and shift" }).tap();
+      const body = (await page.locator(".fine-out-body").boundingBox())!;
+      expect(body.x).toBeGreaterThanOrEqual(0);
+      expect(body.x + body.width).toBeLessThanOrEqual(375);
+      for (const row of await page.locator(".fine-out-row").all()) {
+        const overflow = await row.evaluate((el) => el.scrollWidth - el.clientWidth);
+        expect(overflow).toBeLessThanOrEqual(0);
+      }
+      await page.screenshot({ path: testInfo.outputPath(`phone-${file}.png`) });
+    });
+  }
+
+  test("a touch drag of the high handle changes the factor", async ({ page }) => {
+    await openSweep(page);
+    await openOnPhone(page, "Pitch shift");
+    const label = page.locator(".fine-out-value").first();
+    const before = await label.textContent();
+    const scrollBefore = await page.locator(".hearing-bar").evaluate((el) => el.scrollLeft);
+    const knob = page.locator(".fine-out-handle .fine-out-knob").first();
+    const box = (await knob.boundingBox())!;
+    const [x, y] = [box.x + box.width / 2, box.y + box.height / 2];
+    // Pointer events of type "touch", as a finger sends them.
+    const fire = (type: string, cy: number) =>
+      page.evaluate(
+        ({ type, x, cy }) => {
+          const target = type === "pointerdown" ? document.elementFromPoint(x, cy)! : window;
+          target.dispatchEvent(
+            new PointerEvent(type, { pointerType: "touch", pointerId: 7, isPrimary: true, clientX: x, clientY: cy, bubbles: true, cancelable: true }),
+          );
+        },
+        { type, x, cy },
+      );
+    await fire("pointerdown", y);
+    for (let i = 1; i <= 6; i++) await fire("pointermove", y + i * 6);
+    await expect(label).not.toHaveText(before!);
+    await fire("pointerup", y + 36);
+    await expect(label).not.toHaveText(before!);
+    // The bar the panel hangs from did not pan with the drag.
+    expect(await page.locator(".hearing-bar").evaluate((el) => el.scrollLeft)).toBe(scrollBefore);
+  });
+});

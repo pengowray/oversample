@@ -508,8 +508,18 @@ fn axes_view(nyquist: Signal<f64>, top: Signal<f64>) -> impl IntoView {
     }
 }
 
-/// The Snap setting. `options` are (value, label) pairs.
+/// The Snap setting. `options` are (value, label) pairs; a setting that is
+/// not among them shows as the last one (HET has one snap for both of the
+/// factor snaps).
 fn snap_select(state: AppState, options: &'static [(OutputSnap, &'static str)]) -> impl IntoView {
+    let shown = move || {
+        let snap = state.viewmode.output_snap().get();
+        options
+            .iter()
+            .find(|(s, _)| *s == snap)
+            .unwrap_or(&options[options.len() - 1])
+            .1
+    };
     let on_change = move |ev: web_sys::Event| {
         let value = event_target_value(&ev);
         if let Some((snap, _)) = options.iter().find(|(_, label)| *label == value) {
@@ -519,13 +529,12 @@ fn snap_select(state: AppState, options: &'static [(OutputSnap, &'static str)]) 
     view! {
         <label class="fine-out-snap">
             "Snap"
-            <select on:change=on_change
-                prop:value=move || {
-                    let snap = state.viewmode.output_snap().get();
-                    options.iter().find(|(s, _)| *s == snap).unwrap_or(&options[0]).1
-                }
-            >
-                {options.iter().map(|(_, label)| view! { <option value=*label>{*label}</option> }).collect::<Vec<_>>()}
+            <select on:change=on_change>
+                // `selected` on the option, not `value` on the select: the
+                // select's value is set before its options exist.
+                {options.iter().map(|(_, label)| view! {
+                    <option value=*label selected=move || shown() == *label>{*label}</option>
+                }).collect::<Vec<_>>()}
             </select>
         </label>
     }
@@ -605,8 +614,10 @@ fn DivideDiagram(mode: PlaybackMode) -> impl IntoView {
         _ => heard_top_for(heard.get().1),
     });
 
-    let commit = move |m: Mapping| {
-        let set = read_mapping(&state, mode, band.get_untracked().0, false);
+    // `band_lo` is passed in: this also runs from a timer, after the panel
+    // (and the `band` Memo) may have gone.
+    let commit = move |m: Mapping, band_lo: f64| {
+        let set = read_mapping(&state, mode, band_lo, false);
         if m != set {
             write_mapping(&state, mode, m);
         }
@@ -651,14 +662,14 @@ fn DivideDiagram(mode: PlaybackMode) -> impl IntoView {
             spawn_local(async move {
                 crate::web_util::sleep_ms(COMMIT_IDLE_MS).await;
                 if moves.get() == n {
-                    commit(m);
+                    commit(m, band.0);
                 }
             });
         };
         let on_end = move || {
             moves_end.set(moves_end.get().wrapping_add(1));
             if let Some(Some(m)) = draft.try_get_untracked() {
-                commit(m);
+                commit(m, band.0);
             }
             draft.try_set(None);
             dragging.try_set(false);
@@ -1033,7 +1044,6 @@ fn HetDiagram() -> impl IntoView {
     const CARRIER_SNAPS: &[(OutputSnap, &str)] = &[
         (OutputSnap::Free, "Free"),
         (OutputSnap::Standard, "5 kHz steps"),
-        (OutputSnap::EqualChroma, "5 kHz steps"),
     ];
 
     view! {
