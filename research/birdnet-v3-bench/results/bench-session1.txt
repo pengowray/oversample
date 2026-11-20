@@ -1,0 +1,20 @@
+## round 1, load average 14.38 13.76 13.70
+V2.4 native: tract native plain: load 453 ms, 60 windows, median 107.2 ms, min 75.9 ms, peak RSS 266 MB
+V2.4 wasm:   load 855 ms, 60 windows, median 256.7 ms, WASM memory 204 MB
+BirdNET+_V3.0_Global_12K_FP16_pruned.onnx native: tract native, 11725 classes: load 1491 ms, per 3 s window median 156.8 ms, min 124.8 ms, first 188.9 ms 60 windows in 9.93 s (18x real time), peak RSS 457 MB 
+BirdNET+_V3.0_Global_12K_FP16_pruned.onnx wasm:   tract wasm32-unknown-unknown (wasm-bindgen), 11725 classes: load 1931 ms, per 3 s window median 389.4 ms, first 501 ms, 60 windows in 24.34 s (7x real time), WASM memory 373 MB, process RSS 630 MB
+BirdNET+_V3.0_Global_12K_FP16.onnx native: tract native, 11725 classes: load 2453 ms, per 3 s window median 172.9 ms, min 162.4 ms, first 176.5 ms 60 windows in 10.36 s (17x real time), peak RSS 879 MB 
+BirdNET+_V3.0_Global_12K_FP16.onnx wasm:   tract wasm32-unknown-unknown (wasm-bindgen), 11725 classes: load 2681 ms, per 3 s window median 470.4 ms, first 526 ms, 60 windows in 28.61 s (6x real time), WASM memory 970 MB, process RSS 1344 MB
+backbone.f16.onnx native: tract native, 0 classes: load 944 ms, per 3 s window median 139.1 ms, min 120.9 ms, first 145.4 ms 60 windows in 9.04 s (20x real time), peak RSS 266 MB 
+backbone.f16.onnx wasm:   tract wasm32-unknown-unknown (wasm-bindgen), 0 classes: load 2318 ms, per 3 s window median 396.0 ms, first 481 ms, 60 windows in 23.91 s (8x real time), WASM memory 222 MB, process RSS 443 MB
+## round 2, load average 11.40 13.67 13.75
+V2.4 native: tract native plain: load 371 ms, 60 windows, median 61.3 ms, min 52.2 ms, peak RSS 266 MB
+V2.4 wasm:   load 574 ms, 60 windows, median 177.0 ms, WASM memory 204 MB
+BirdNET+_V3.0_Global_12K_FP16_pruned.onnx native: tract native, 11725 classes: load 1063 ms, per 3 s window median 135.3 ms, min 126.7 ms, first 137.5 ms 60 windows in 8.31 s (22x real time), peak RSS 448 MB 
+BirdNET+_V3.0_Global_12K_FP16_pruned.onnx wasm:   tract wasm32-unknown-unknown (wasm-bindgen), 11725 classes: load 1783 ms, per 3 s window median 381.6 ms, first 464 ms, 60 windows in 23.12 s (8x real time), WASM memory 373 MB, process RSS 629 MB
+BirdNET+_V3.0_Global_12K_FP16.onnx native: tract native, 11725 classes: load 2325 ms, per 3 s window median 166.5 ms, min 157.7 ms, first 162.2 ms 60 windows in 10.07 s (18x real time), peak RSS 878 MB 
+BirdNET+_V3.0_Global_12K_FP16.onnx wasm:   tract wasm32-unknown-unknown (wasm-bindgen), 11725 classes: load 2547 ms, per 3 s window median 451.8 ms, first 523 ms, 60 windows in 27.67 s (7x real time), WASM memory 970 MB, process RSS 1365 MB
+backbone.f16.onnx native: tract native, 0 classes: load 900 ms, per 3 s window median 138.6 ms, min 123.6 ms, first 128.8 ms 60 windows in 8.50 s (21x real time), peak RSS 277 MB 
+backbone.f16.onnx wasm:   tract wasm32-unknown-unknown (wasm-bindgen), 0 classes: load 1671 ms, per 3 s window median 389.6 ms, first 443 ms, 60 windows in 23.95 s (8x real time), WASM memory 222 MB, process RSS 442 MB
+
+[exited with code 0]

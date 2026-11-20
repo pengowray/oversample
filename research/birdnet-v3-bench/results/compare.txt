@@ -1,0 +1,29 @@
+# Variants against the FP32 reference (onnxruntime)
+reference: fp32 (21 windows, 11725 classes)
+run | windows | same top-1 | top-5 same set | same classes at 0.25 or more | max abs score diff | max abs diff, top-1 class | embedding cosine (min)
+fp16 (recordings) | 18 | 18/18 | 17/18 | 18/18 | 0.0033 | 0.0033 | 0.999888
+fp16 (silence+noise) | 3 | 3/3 | 3/3 | 3/3 | 0.0003 | 0.0001 | 0.999637
+pruned (recordings) | 18 | 17/18 | 3/18 | 17/18 | 0.1566 | 0.1566 | 0.999888
+pruned (silence+noise) | 3 | 1/3 | 1/3 | 2/3 | 0.2470 | 0.0097 | 0.999637
+bnl (recordings) | 18 | 17/18 | 3/18 | 17/18 | 0.1566 | 0.1566 | 0.999888
+bnl (silence+noise) | 3 | 1/3 | 1/3 | 2/3 | 0.2470 | 0.0097 | 0.999637
+
+# tract native (official files patched in memory) and tract wasm against onnxruntime on the same file
+reference: fp32 (21 windows, 11725 classes)
+run | windows | same top-1 | top-5 same set | same classes at 0.25 or more | max abs score diff | max abs diff, top-1 class | embedding cosine (min)
+tract-mem-fp16 (recordings) | 18 | 18/18 | 17/18 | 18/18 | 0.0033 | 0.0033 | 0.999886
+tract-mem-fp16 (silence+noise) | 3 | 3/3 | 3/3 | 3/3 | 0.0003 | 0.0001 | 0.999636
+tract-full.fp32 (recordings) | 18 | 18/18 | 18/18 | 18/18 | 0.0000 | 0.0000 | 1.000000
+tract-full.fp32 (silence+noise) | 3 | 3/3 | 3/3 | 3/3 | 0.0000 | 0.0000 | 1.000000
+reference: pruned (21 windows, 11725 classes)
+run | windows | same top-1 | top-5 same set | same classes at 0.25 or more | max abs score diff | max abs diff, top-1 class | embedding cosine (min)
+tract-mem-pruned (recordings) | 18 | 18/18 | 18/18 | 18/18 | 0.0001 | 0.0001 | 1.000000
+tract-mem-pruned (silence+noise) | 3 | 3/3 | 3/3 | 3/3 | 0.0002 | 0.0000 | 1.000000
+wasm-pruned (recordings) | 18 | 18/18 | 18/18 | 18/18 | 0.0000 | 0.0000 | 1.000000
+wasm-pruned (silence+noise) | 3 | 3/3 | 3/3 | 3/3 | 0.0002 | 0.0000 | 1.000000
+pruned.tract-asis (recordings) | 18 | 18/18 | 17/18 | 18/18 | 0.0228 | 0.0228 | 0.999314
+pruned.tract-asis (silence+noise) | 3 | 2/3 | 3/3 | 2/3 | 0.0096 | 0.0082 | 0.999682
+reference: bnl (21 windows, 10064 classes)
+run | windows | same top-1 | top-5 same set | same classes at 0.25 or more | max abs score diff | max abs diff, top-1 class | embedding cosine (min)
+tract-mem-bnl (recordings) | 18 | 18/18 | 18/18 | 18/18 | 0.0001 | 0.0001 | 1.000000
+tract-mem-bnl (silence+noise) | 3 | 3/3 | 3/3 | 3/3 | 0.0002 | 0.0000 | 1.000000

@@ -1,0 +1,22 @@
+BirdNET+_V3.0_Global_10K_FP16_BNL.onnx: onnxruntime 1.32.0, 1 thread(s), load 0.50 s, median 98.2 ms per 3 s window, 10064 classes, embedding 1280, any NaN: False
+ 0 XC540767 - Gentoo Penguin - Pygoscelis p Gentoo Penguin 0.725; Macaroni Penguin 0.040; Northern Gannet 0.034; Black-legged Kittiwake 0.021; Red-tailed Tropicbird 0.015
+ 1 XC540767 - Gentoo Penguin - Pygoscelis p Gentoo Penguin 0.871; Black-legged Kittiwake 0.009; Magellanic Penguin 0.006; Red-breasted Nuthatch 0.006; Rufous-collared Sparrow 0.004
+ 2 XC540767 - Gentoo Penguin - Pygoscelis p Gentoo Penguin 0.902; Macaroni Penguin 0.025; Magellanic Penguin 0.016; Northern Gannet 0.013; Red-tailed Tropicbird 0.008
+ 3 XC540767 - Gentoo Penguin - Pygoscelis p Gentoo Penguin 0.772; Chopi Blackbird 0.031; Little Ringed Plover 0.019; Osprey 0.014; Red-breasted Nuthatch 0.013
+ 4 XC540767 - Gentoo Penguin - Pygoscelis p Gentoo Penguin 0.461; Adelie Penguin 0.058; White Wagtail 0.024; Royal Tern 0.016; Ruddy Shelduck 0.014
+ 5 XC540767 - Gentoo Penguin - Pygoscelis p Gentoo Penguin 0.869; Black-legged Kittiwake 0.025; Northern Gannet 0.017; Red-breasted Nuthatch 0.014; Cape Gannet 0.011
+ 6 XC1083752 - Pauraque - Nyctidromus albic Pauraque 0.950; Rufous Nightjar 0.005; Little Nightjar 0.003; Common Potoo 0.003; Red Junglefowl 0.002
+ 7 XC1083752 - Pauraque - Nyctidromus albic Pauraque 0.947; Little Nightjar 0.004; Rufous Nightjar 0.003; Red Junglefowl 0.002; Common Potoo 0.002
+ 8 XC1083752 - Pauraque - Nyctidromus albic Pauraque 0.946; Rufous Nightjar 0.005; Little Nightjar 0.004; Tropical Screech Owl 0.003; Red Junglefowl 0.003
+ 9 XC1083752 - Pauraque - Nyctidromus albic Pauraque 0.937; Rusty-margined Flycatcher 0.879; Great Kiskadee 0.024; Tropical Kingbird 0.022; Screaming Piha 0.021
+10 XC1083752 - Pauraque - Nyctidromus albic Pauraque 0.924; Pied Puffbird 0.060; White-collared Swift 0.034; Swallow-tailed Kite 0.021; Biscutate Swift 0.013
+11 XC1083752 - Pauraque - Nyctidromus albic Pauraque 0.950; Rufous Nightjar 0.005; Little Nightjar 0.005; Red Junglefowl 0.003; Ferruginous Pygmy Owl 0.003
+12 XC1086259 - Common Scoter - Melanitta ni Common Scoter 0.798; Eurasian Coot 0.004; Canada Goose 0.002; Northern Saw-whet Owl 0.001; Northern Cardinal 0.001
+13 XC1086259 - Common Scoter - Melanitta ni Common Scoter 0.930; Common Poorwill 0.040; Yellow-throated Toucan 0.016; Eurasian Coot 0.008; Greater White-fronted Goose 0.006
+14 XC1086259 - Common Scoter - Melanitta ni Fireworks 0.031; Human 0.029; Music 0.028; Gun 0.025; Hammer 0.014
+15 XC1140427 - Alpine Swift - Tachymarptis  Straneck's Tyrannulet 0.310; Common Blackbird 0.142; Alpine Swift 0.083; Wood Thrush 0.046; Eastern Phoebe 0.041
+16 XC1140427 - Alpine Swift - Tachymarptis  Alpine Swift 0.895; House Finch 0.013; House Sparrow 0.010; Bogota Rail 0.008; Northern Cardinal 0.007
+17 XC1140427 - Alpine Swift - Tachymarptis  Ortolan Bunting 0.091; Eurasian Bittern 0.047; Great Horned Owl 0.031; Common Moorhen 0.030; Western Barn Owl 0.027
+18 silence (all zeros)                      Green-billed Coucal 0.253; Mourning Dove 0.246; Andaman Coucal 0.173; Blue-headed Wood Dove 0.147; Greater Honeyguide 0.087
+19 white noise, -90 dBFS RMS                Great Kiskadee 0.021; Northern Cardinal 0.019; Rufous-collared Sparrow 0.017; Southern House Wren 0.017; Golden-crowned Warbler 0.016
+20 white noise, -60 dBFS RMS                Great Kiskadee 0.016; Northern Cardinal 0.015; Roesel's Bush-cricket 0.013; House Sparrow 0.012; Golden-crowned Warbler 0.011
