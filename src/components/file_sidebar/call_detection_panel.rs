@@ -524,58 +524,125 @@ fn InbuiltDetection() -> impl IntoView {
         .into_any()
     };
 
+    // Outline on the spectrogram the regions a choice would add, while the
+    // pointer is over it or the keyboard focus is on it. Touch has no hover,
+    // so a tap only picks the choice.
+    let show_preview = move |what: AnnotateWhat| {
+        state
+            .call_detection
+            .preview()
+            .set(Some(crate::call_annotations::AnnotatePreview {
+                what,
+                bat_calls_only: bat_calls_only.get_untracked(),
+            }));
+    };
+    let hide_preview = move || state.call_detection.preview().set(None);
+    // True while the preview shown is for the radio button with keyboard
+    // focus. Only then does a blur clear the preview: clicking a radio button
+    // also moves the focus, which blurs the button that had it, and the
+    // choice under the pointer must keep its preview.
+    let preview_from_focus = StoredValue::new(false);
+    // A new search or another file clears the results and hides the
+    // choices, so clear the preview too.
+    Effect::new(move || {
+        if !has_results.get() {
+            hide_preview();
+        }
+    });
+    on_cleanup(hide_preview);
+
     let annotate_section = move || {
+        // Only these two are tracked here, so the radio buttons are not
+        // rebuilt (losing their hover and focus) when a choice is picked.
         if !has_results.get() || total_count.get() == 0 {
             return None;
         }
-        let what = annotate_what.get();
-        let (calls, trains) = to_add.get();
-        let n = calls + trains;
-        let others = total_count.get() - bat_count.get();
-        let reason = (n == 0).then(|| {
-            if what == AnnotateWhat::Calls {
-                if bat_calls_only.get() && others > 0 {
+        let n = move || {
+            let (calls, trains) = to_add.get();
+            calls + trains
+        };
+        let reason = move || {
+            (n() == 0).then(|| {
+                let others = total_count.get() - bat_count.get();
+                let text = if annotate_what.get() == AnnotateWhat::Calls {
+                    if bat_calls_only.get() && others > 0 {
+                        format!(
+                            "No bat calls found. Turn off \u{201C}Bat calls only\u{201D} to add the {}.",
+                            count(others, "other detection", "other detections")
+                        )
+                    } else {
+                        "No bat calls found".to_string()
+                    }
+                } else {
+                    "No call trains found".to_string()
+                };
+                view! { <div class="detection-status-note detection-annotate-row">{text}</div> }
+            })
+        };
+        let note = move || {
+            let (existing, existing_tags) = existing_auto.get();
+            (existing > 0 && n() > 0).then(|| {
+                let tags = existing_tags.join(" or ");
+                let text = if existing == 1 {
                     format!(
-                        "No bat calls found. Turn off \u{201C}Bat calls only\u{201D} to add the {}.",
-                        count(others, "other detection", "other detections")
+                        "Replaces 1 annotation tagged {tags}, even if you edited it. Undo with {}.",
+                        undo_keys()
                     )
                 } else {
-                    "No bat calls found".to_string()
+                    format!(
+                        "Replaces {existing} annotations tagged {tags}, including any you edited. Undo with {}.",
+                        undo_keys()
+                    )
+                };
+                view! {
+                    <div
+                        class="detection-status-note detection-annotate-row"
+                        title="Annotations without this tag are kept. Any that were inside a removed train move to the top level of the Annotations tab."
+                    >{text}</div>
                 }
-            } else {
-                "No call trains found".to_string()
-            }
-        });
-        let (existing, existing_tags) = existing_auto.get();
-        let note = (existing > 0 && n > 0).then(|| {
-            let tags = existing_tags.join(" or ");
-            if existing == 1 {
-                format!(
-                    "Replaces 1 annotation tagged {tags}, even if you edited it. Undo with {}.",
-                    undo_keys()
-                )
-            } else {
-                format!(
-                    "Replaces {existing} annotations tagged {tags}, including any you edited. Undo with {}.",
-                    undo_keys()
-                )
-            }
-        });
-        let button_text = if n == 0 {
-            "Add annotations".to_string()
-        } else {
-            format!("Add {}", count(n, "annotation", "annotations"))
+            })
+        };
+        let button_text = move || match n() {
+            0 => "Add annotations".to_string(),
+            n => format!("Add {}", count(n, "annotation", "annotations")),
         };
         // Radio buttons in a column: the sidebar is too narrow for the three
         // options side by side.
         let option = move |value: AnnotateWhat, label: &'static str| {
             view! {
-                <label class="setting-label detection-radio">
+                <label
+                    class="setting-label detection-radio"
+                    on:pointerenter=move |ev| {
+                        if ev.pointer_type() != "touch" {
+                            preview_from_focus.set_value(false);
+                            show_preview(value);
+                        }
+                    }
+                    on:pointerleave=move |ev| {
+                        if ev.pointer_type() != "touch" {
+                            preview_from_focus.set_value(false);
+                            hide_preview();
+                        }
+                    }
+                >
                     <input
                         type="radio"
                         name="detection-annotate-what"
                         prop:checked=move || annotate_what.get() == value
                         on:change=move |_| annotate_what.set(value)
+                        on:focus=move |ev| {
+                            // Keyboard focus only; a click or tap also focuses.
+                            if focus_visible(&ev) {
+                                preview_from_focus.set_value(true);
+                                show_preview(value);
+                            }
+                        }
+                        on:blur=move |_| {
+                            if preview_from_focus.get_value() {
+                                preview_from_focus.set_value(false);
+                                hide_preview();
+                            }
+                        }
                     />
                     {label}
                 </label>
@@ -588,7 +655,7 @@ fn InbuiltDetection() -> impl IntoView {
                     {option(AnnotateWhat::Calls, "Calls")}
                     {option(AnnotateWhat::Trains, "Trains")}
                     {option(AnnotateWhat::TrainsWithCalls, "Trains with nested calls")}
-                    {(what == AnnotateWhat::TrainsWithCalls).then(|| view! {
+                    {move || (annotate_what.get() == AnnotateWhat::TrainsWithCalls).then(|| view! {
                         <div class="detection-status-note detection-radio-note">"Calls not in a train are added at the top level"</div>
                     })}
                 </div>
@@ -605,16 +672,11 @@ fn InbuiltDetection() -> impl IntoView {
                         " Bat calls only"
                     </label>
                 </div>
-                {reason.map(|r| view! { <div class="detection-status-note detection-annotate-row">{r}</div> })}
-                {note.map(|t| view! {
-                    <div
-                        class="detection-status-note detection-annotate-row"
-                        title="Annotations without this tag are kept. Any that were inside a removed train move to the top level of the Annotations tab."
-                    >{t}</div>
-                })}
+                {reason}
+                {note}
                 <button
                     class="sidebar-btn detection-add-btn"
-                    disabled=n == 0
+                    disabled=move || n() == 0
                     on:click=move |_| add_annotations(state, annotate_what.get_untracked(), bat_calls_only.get_untracked())
                 >{button_text}</button>
             </div>
@@ -937,6 +999,16 @@ pub(super) fn event_target_value(ev: &web_sys::Event) -> String {
         .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
         .map(|el| el.value())
         .unwrap_or_default()
+}
+
+/// True when the focus event's target shows a focus ring (`:focus-visible`):
+/// the keyboard moved the focus, not a click or tap.
+fn focus_visible(ev: &web_sys::FocusEvent) -> bool {
+    use wasm_bindgen::JsCast;
+    ev.target()
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        .and_then(|el| el.matches(":focus-visible").ok())
+        .unwrap_or(false)
 }
 
 pub(super) fn event_target_checked(ev: &web_sys::Event) -> bool {

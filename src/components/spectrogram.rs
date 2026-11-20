@@ -382,6 +382,7 @@ pub fn Spectrogram() -> impl IntoView {
                 .call_detection
                 .scanned()
                 .with(|s| s.as_ref().map(|(id, _)| *id));
+            let annotate_preview = state.call_detection.preview().get();
             let main_view = state.viewmode.main_view().get();
             // Intensity is always a spectrogram setting (shared by the XForm view) —
             // the XForm toggle reuses the Spectrogram menu's intensity sliders.
@@ -1561,6 +1562,36 @@ pub fn Spectrogram() -> impl IntoView {
                             );
                         }
                     }
+                }
+
+                // The regions an "Annotate Calls and Trains" choice would add,
+                // while the pointer or keyboard focus is on that choice.
+                if let Some(p) = annotate_preview.filter(|_| {
+                    !xform_on
+                        && detection_file.is_some()
+                        && detection_file == state.current_file_id()
+                }) {
+                    let regions = state.call_detection.detected().with_untracked(|calls| {
+                        state.call_detection.trains().with_untracked(|trains| {
+                            crate::call_annotations::plan_call_regions(
+                                calls,
+                                trains,
+                                p.what,
+                                p.bat_calls_only,
+                            )
+                        })
+                    });
+                    crate::canvas::overlays::draw_annotate_preview(
+                        &ctx,
+                        &regions,
+                        min_freq,
+                        max_freq,
+                        scroll,
+                        time_res,
+                        zoom,
+                        display_w as f64,
+                        display_h as f64,
+                    );
                 }
 
                 // File-embedded time markers (WAV cue points, M4A chapters).
