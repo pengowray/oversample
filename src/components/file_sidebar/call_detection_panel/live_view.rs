@@ -132,7 +132,21 @@ pub(super) fn LiveView(
             </label>
             <Show when=on>
                 {move || status().map(|s| view! { <div class="detection-status-note" title=model_time>{s}</div> })}
-                <div class="live-emb-chart" node_ref=chart_ref></div>
+                // Hidden until the model is loaded: before that it would show
+                // an empty frame under "Download ... below". Hidden, not
+                // removed, so the element registered with live_embedding
+                // stays the same; its ResizeObserver redraws it when shown.
+                <div
+                    class="live-emb-chart"
+                    node_ref=chart_ref
+                    style:display=move || {
+                        if matches!(state.classifier.live().get(), LiveStatus::Ready { .. }) {
+                            ""
+                        } else {
+                            "none"
+                        }
+                    }
+                ></div>
             </Show>
         </div>
     }
