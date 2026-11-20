@@ -137,6 +137,15 @@ impl HeardAxis {
         }
     }
 
+    /// The frequency of the recording that the picture draws at
+    /// `picture_hz`: the inverse of [`Self::picture_hz`].
+    pub fn recording_hz(self, picture_hz: f64) -> f64 {
+        match self.picture {
+            Picture::Recording => picture_hz,
+            Picture::Heard => (picture_hz + self.shift_hz) / self.freq_scale,
+        }
+    }
+
     /// True when the time labels differ from the recording's.
     pub fn scales_time(self) -> bool {
         (self.time_scale - 1.0).abs() > 1e-9

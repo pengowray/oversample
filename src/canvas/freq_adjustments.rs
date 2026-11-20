@@ -17,6 +17,18 @@ fn current_display_offset(state: &AppState) -> Option<f32> {
     display_dc::known_offset(target, state.viewmode.channel_view().get_untracked())
 }
 
+/// Maps a frequency of the picture to the recording's frequency drawn there.
+/// They differ under XForm with pitch shift, where the picture is of the
+/// shifted audio: at ÷8, the row at 2.5 kHz shows the recording's 20 kHz.
+/// The PASS band and the notch bands are set in the recording's Hz, so each
+/// row is compared with them by its recording frequency. Without this the
+/// band 18 to 25 kHz was left uncut at 18 to 24 kHz of the shifted picture,
+/// which showed as a solid band of noise.
+fn row_to_recording(state: &AppState) -> impl Fn(f64) -> f64 {
+    let axis = crate::heard_axis::heard_axis_untracked(state);
+    move |picture_hz| axis.map_or(picture_hz, |a| a.recording_hz(picture_hz))
+}
+
 thread_local! {
     /// Cache for freq_adjustments: (fingerprint, result).
     /// Avoids recomputing on every scroll when only the viewport changed.
@@ -59,6 +71,10 @@ fn freq_adj_fingerprint(state: &AppState, file_max_freq: f64, tile_height: usize
         (b.strength_db as i32).hash(&mut h);
     }
     state.display.xform_enabled().get_untracked().hash(&mut h);
+    // Which recording frequency each row of the picture is (`row_to_recording`).
+    let to_recording = row_to_recording(state);
+    to_recording(0.0).to_bits().hash(&mut h);
+    to_recording(1000.0).to_bits().hash(&mut h);
     (state.display.filter_nr().get_untracked() as u8).hash(&mut h);
     (state.display.filter_notch().get_untracked() as u8).hash(&mut h);
     state.noise_reduce.enabled().get_untracked().hash(&mut h);
@@ -128,6 +144,7 @@ fn compute_freq_adjustments_inner(
     }
 
     let mut adj = vec![0.0f32; tile_height];
+    let to_recording = row_to_recording(state);
 
     // EQ: apply per-band dB offsets
     if show_eq && state.filter.enabled().get_untracked() {
@@ -142,7 +159,7 @@ fn compute_freq_adjustments_inner(
 
         for (row, adj_val) in adj.iter_mut().enumerate().take(tile_height) {
             let bin = tile_height - 1 - row; // bin 0 = DC
-            let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
+            let freq = to_recording(file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64);
             let eq_db = if freq < freq_low {
                 db_below
             } else if freq <= freq_high || !band_mode.has_above_band() {
@@ -183,7 +200,8 @@ fn compute_freq_adjustments_inner(
             let bands = state.notch.bands().get_untracked();
             for (row, adj_val) in adj.iter_mut().enumerate().take(tile_height) {
                 let bin = tile_height - 1 - row;
-                let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
+                let freq =
+                    to_recording(file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64);
                 for band in &bands {
                     if !band.enabled {
                         continue;
@@ -239,6 +257,12 @@ fn compute_freq_adjustments_inner(
                 for (row, adj_val) in adj.iter_mut().enumerate().take(tile_height) {
                     let bin = tile_height - 1 - row;
                     let freq = file_max_freq * bin as f64 / (tile_height - 1).max(1) as f64;
+                    // The playback floor was learned from the recording.
+                    let freq = if from_playback {
+                        to_recording(freq)
+                    } else {
+                        freq
+                    };
                     let nf_bin = ((freq / nf_max_freq) * (nf_bins - 1) as f64).round() as usize;
                     if nf_bin < nf_bins {
                         let noise_mag = floor_bins[nf_bin];
