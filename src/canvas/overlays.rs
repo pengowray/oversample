@@ -1421,23 +1421,25 @@ pub fn draw_score_strips(
         }
     }
 
-    // Names over the left end of each row, on a dark box so they read over
-    // full-strength cells.
+    // Names over the left end of each row, as outlined text with no box, so
+    // the cells under a name stay visible.
     ctx.set_font("11px sans-serif");
     ctx.set_text_baseline("middle");
     for (r, row) in strips.rows.iter().enumerate() {
         let y0 = r as f64 * SCORE_ROW_H;
         let flag_w = if row.unlikely { 10.0 } else { 0.0 };
-        let text_w = ctx.measure_text(&row.label).map_or(0.0, |m| m.width());
-        ctx.set_fill_style_str("rgba(10, 10, 10, 0.8)");
-        ctx.fill_rect(0.0, y0, 4.0 + flag_w + text_w + 4.0, SCORE_ROW_H - 1.0);
         let mut x = 4.0;
         if row.unlikely {
             draw_unlikely_flag(ctx, x, y0 + (SCORE_ROW_H - 1.0 - 10.0) / 2.0);
             x += flag_w;
         }
+        let y = y0 + (SCORE_ROW_H - 1.0) / 2.0 + 0.5;
+        ctx.set_line_join("round");
+        ctx.set_line_width(3.0);
+        ctx.set_stroke_style_str("rgba(10, 10, 10, 0.9)");
+        let _ = ctx.stroke_text(&row.label, x, y);
         ctx.set_fill_style_str("rgba(240, 240, 245, 0.95)");
-        let _ = ctx.fill_text(&row.label, x, y0 + (SCORE_ROW_H - 1.0) / 2.0 + 0.5);
+        let _ = ctx.fill_text(&row.label, x, y);
     }
 }
 
