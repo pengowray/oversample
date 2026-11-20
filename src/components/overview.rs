@@ -849,6 +849,44 @@ pub fn OverviewToolbar() -> impl IntoView {
     }
 }
 
+/// What the method picked in the Call detection tab found in the current
+/// file, as marks for the overview, while that tab's "Show overlay" is on.
+/// Reactive: call in a `Memo`.
+fn detection_marks(state: AppState) -> Option<crate::canvas::overview_marks::OverviewMarks> {
+    use crate::canvas::overview_marks::{classifier_marks, inbuilt_marks};
+    if !state.call_detection.overlay_enabled().get() {
+        return None;
+    }
+    let file = state.current_file_id_tracked()?;
+    let method = state.call_detection.method().get();
+    match method.classifier() {
+        None => {
+            // Only results from this file; another file's may still be held.
+            let scanned = state
+                .call_detection
+                .scanned()
+                .with(|s| s.as_ref().map(|(id, _)| *id));
+            if scanned != Some(file) {
+                return None;
+            }
+            Some(state.call_detection.detected().with(|calls| {
+                state
+                    .call_detection
+                    .trains()
+                    .with(|trains| inbuilt_marks(calls, trains))
+            }))
+        }
+        Some(m) => {
+            use crate::classifier::summary::{colour_order, spans};
+            let min = crate::classifier::min_confidence(state, m);
+            state.classifier.results().with(|results| {
+                let run = results.get(&(file, m))?;
+                Some(classifier_marks(&spans(run, min, true), &colour_order(run)))
+            })
+        }
+    }
+}
+
 // ── Helpers for sizing a canvas to its CSS pixel dimensions ──────────────────
 
 /// Resize a canvas element's bitmap to match its CSS layout size.
@@ -887,6 +925,10 @@ pub fn OverviewPanel() -> impl IntoView {
     // smooth main-view time axis. Non-reactive: it's interpolation state, not a
     // signal anything subscribes to.
     let smooth_now = StoredValue::new(0.0f64);
+
+    // Marks for what the Call detection tab found. Built only when the
+    // results change; each overlay redraw merges them into pixel columns.
+    let found_marks = Memo::new(move |_| detection_marks(state));
 
     // ── Background Effect ── draws waveform/spectrogram content.
     // Does NOT subscribe to scroll_offset or zoom_level, so panning/zooming
@@ -1278,6 +1320,7 @@ pub fn OverviewPanel() -> impl IntoView {
         // live_data_cols so the markers/viewport advance with the data (not only
         // when the follow-scroll animation happens to nudge scroll_offset).
         let _live_cols = state.mic.live_data_cols().get();
+        found_marks.track();
 
         let Some(canvas_el) = overlay_ref.get() else {
             return;
@@ -1425,6 +1468,23 @@ pub fn OverviewPanel() -> impl IntoView {
             let visible_time = visible_cols * spec_time_res;
             let vp_x = ((scroll - axis_start) * px_per_sec).max(0.0);
             let vp_w = (visible_time * px_per_sec).max(2.0);
+
+            // What the Call detection tab found, along the top edge. Drawn
+            // first, so the viewport rect and bookmarks stay on top. The
+            // results are for the file, not the live window.
+            if !is_live {
+                found_marks.with_untracked(|marks| {
+                    if let Some(marks) = marks {
+                        crate::canvas::overview_marks::draw(
+                            &ctx,
+                            marks,
+                            axis_start,
+                            total_duration,
+                            w,
+                        );
+                    }
+                });
+            }
 
             match overview_view {
                 OverviewView::Spectrogram => {
