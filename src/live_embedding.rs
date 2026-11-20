@@ -560,10 +560,71 @@ fn generation() -> u32 {
     GENERATION.with(|g| g.get())
 }
 
-/// The live view's switch: remembers it and starts or stops the readings.
-pub fn set_enabled(state: AppState, on: bool) {
-    state.classifier.live_on().set(on);
-    set_user(state, LIVE_VIEW, on);
+/// One class of the reading shown in the Call detection tab's "At the play
+/// position" rows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReadoutClass {
+    pub class: u16,
+    pub common: String,
+    pub scientific: String,
+    /// A species or named sound, which can have a row above the spectrogram.
+    pub is_species: bool,
+    pub score: f32,
+    /// A bird unlikely at the recording's place and month.
+    pub unlikely: bool,
+}
+
+/// The reading the Call detection tab shows at the play position: its top
+/// classes (the first always, the others at 0.05 or above), and for a paused
+/// reading the part of the file it is of, in seconds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Readout {
+    pub top: Vec<ReadoutClass>,
+    pub range: Option<(f64, f64)>,
+    /// A bat recording or other ultrasound, which the model does not hear.
+    pub ultrasonic: bool,
+}
+
+thread_local! {
+    /// What [`readout`] returns. Set only when the shown reading changes, a
+    /// few times a second while a file plays.
+    static READOUT: ArcRwSignal<Option<Readout>> = ArcRwSignal::new(None);
+}
+
+/// The reading shown at the play position, `None` before the first one (or
+/// while a paused reading is on its way). Reactive.
+pub fn readout() -> ArcRwSignal<Option<Readout>> {
+    READOUT.with(|r| r.clone())
+}
+
+fn set_readout(value: Option<Readout>) {
+    READOUT.with(|r| {
+        if r.with_untracked(|old| *old != value) {
+            r.set(value);
+        }
+    });
+}
+
+/// Draw the chart again now, for example when its map is shown after being
+/// folded away (a paused file sends no new readings).
+pub fn redraw(state: AppState) {
+    draw(state);
+}
+
+/// Unregister `el` as the chart, if it is the one registered (a view that
+/// replaced it may have registered its own first).
+pub fn clear_chart(el: &web_sys::HtmlElement) {
+    let ours = CHART.with(|c| c.borrow().as_ref().is_some_and(|c| c == el));
+    if ours {
+        set_chart(None);
+    }
+}
+
+/// True when the chart's component maps are BirdNET V2.4's class-row
+/// components, the ones the rows above the spectrogram can show, so each
+/// map can carry a pin.
+pub fn component_pins_apply(method: Method) -> bool {
+    method == Method::BirdNet && pc_rows(&BIRDNET)
 }
 
 /// Say whether view `who` ([`LIVE_VIEW`] or [`EXPLORER`]) wants readings. The
@@ -640,6 +701,7 @@ pub fn restart(state: AppState) {
     classifier::played::flush(state, now_ms());
     stop_filling(state);
     HISTORY.with(|h| h.borrow_mut().clear());
+    set_readout(None);
     SESSION.with(|h| h.borrow_mut().clear());
     SPECTRUM.with(|h| *h.borrow_mut() = None);
     crate::live_explorer::reset();
@@ -1724,6 +1786,7 @@ fn draw_view(state: AppState, view: PausedView) {
             ))
         })
     });
+    let mut shown_readout = None;
     let json = HISTORY.with(|h| {
         let h = h.borrow();
         // Nothing heard and no paused reading: nothing to draw, unless a
@@ -1738,13 +1801,36 @@ fn draw_view(state: AppState, view: PausedView) {
             None if pending => &[],
             None => h.back().map_or(&[][..], |r| r.scores.as_slice()),
         };
-        let top: Vec<_> = top_classes(top_scores, 3)
+        let top_kept: Vec<(usize, f32)> = top_classes(top_scores, 3)
             .into_iter()
             .enumerate()
             .filter(|&(i, (_, s))| i == 0 || s >= 0.05)
             .map(|(_, t)| t)
-            .map(|(c, s)| (name(c), round3(s), unlikely(c)))
             .collect();
+        let top: Vec<_> = top_kept
+            .iter()
+            .map(|&(c, s)| (name(c), round3(s), unlikely(c)))
+            .collect();
+        // The same classes for the tab's rows, which need the scientific
+        // name (for the pin) as well.
+        shown_readout = (!top_kept.is_empty()).then(|| Readout {
+            top: top_kept
+                .iter()
+                .map(|&(c, s)| {
+                    let label = labels.as_ref().and_then(|l| l.get(c));
+                    ReadoutClass {
+                        class: c as u16,
+                        common: name(c),
+                        scientific: label.map_or_else(String::new, |l| l.scientific.clone()),
+                        is_species: label.is_some_and(|l| l.is_species),
+                        score: round3(s),
+                        unlikely: unlikely(c),
+                    }
+                })
+                .collect(),
+            range: shown.map(|key| (key.1 as f64 / 1000.0, key.2 as f64 / 1000.0)),
+            ultrasonic: RATE.with(|r| r.get()) >= ULTRASONIC_RATE,
+        });
         let ago = |r: &Reading| round3(((r.t - now) / 1000.0) as f32);
         let trail: Vec<_> = h
             .iter()
@@ -1832,6 +1918,7 @@ fn draw_view(state: AppState, view: PausedView) {
             },
         }))
     });
+    set_readout(shown_readout);
     let Some(json) = json else { return };
     let species = MAP.with(|m| m.borrow().clone()).filter(|_| {
         !js_sys::Reflect::get(&el, &"__liveSpecies".into())

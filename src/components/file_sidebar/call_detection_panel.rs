@@ -13,6 +13,7 @@
 
 mod classifier_section;
 mod live_view;
+mod parts;
 mod species_map;
 
 use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
@@ -27,6 +28,7 @@ use crate::dsp::call_detect::{
 use crate::state::store_fields::*;
 use crate::state::{AppState, DetectionMethod, RightSidebarTab};
 use classifier_section::ClassifierSection;
+use parts::{in_force_line, section_head, settings_button, Fold};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_core::audio::source::ChannelView;
@@ -446,47 +448,76 @@ fn InbuiltDetection() -> impl IntoView {
         }
     };
 
-    let status = move || {
-        if current_file.get().is_none() {
-            return view! { <div class="sidebar-panel-empty">"No file selected"</div> }.into_any();
+    let settings_open = RwSignal::new(false);
+    // The settings in force: the two that decide what is found, then any
+    // other that is not at its default.
+    let facts = move || {
+        let p = state.call_detection_params();
+        let d = CallScanParams::default();
+        let mut f = vec![
+            format!("Lowest bat frequency {} kHz", khz(p.min_bat_hz)),
+            format!("Threshold {:.0} dB", p.threshold_db),
+        ];
+        if p.min_call_ms != d.min_call_ms {
+            f.push(format!("Min duration {:.1} ms", p.min_call_ms));
         }
+        if p.max_call_ms != d.max_call_ms {
+            f.push(format!("Max duration {:.0} ms", p.max_call_ms));
+        }
+        if p.trains.max_gap_s != d.trains.max_gap_s {
+            f.push(format!("Train gap {:.1} s", p.trains.max_gap_s));
+        }
+        if list_filter.get() == ListFilter::BatCalls {
+            f.push("Listed: bat calls".to_string());
+        }
+        if !state.call_detection.overlay_enabled().get() {
+            f.push("Boxes off".to_string());
+        }
+        f
+    };
+
+    // Under the settings line: the search's progress, or why it cannot run.
+    let progress = move || {
+        current_file.get()?;
         if state.call_detection.scanning().with(|s| s.is_some()) {
             let pct = (state.call_detection.progress().get() * 100.0).round();
-            return view! {
-                <div class="detection-status">
-                    <div>{format!("Searching for bat calls\u{2026} {pct:.0}% done")}</div>
-                    <div class="detection-progress">
-                        <div class="detection-progress-fill" style=format!("width:{pct:.0}%")></div>
+            return Some(
+                view! {
+                    <div class="cd-notes">
+                        <div class="cd-progress-text">{format!("Searching for bat calls\u{2026} {pct:.0}% done")}</div>
+                        <div class="detection-progress">
+                            <div class="detection-progress-fill" style=format!("width:{pct:.0}%")></div>
+                        </div>
                     </div>
-                </div>
-            }
-            .into_any();
+                }
+                .into_any(),
+            );
         }
-        if !has_results.get() {
-            return view! { <div class="detection-status"></div> }.into_any();
+        if !has_results.get() || state.call_detection.band_hz().get().is_some() {
+            return None;
         }
         let params = state.call_detection_params();
-        let Some((lo, hi)) = state.call_detection.band_hz().get() else {
-            let rate = state.library.files().with(|files| {
-                state
-                    .library
-                    .current_index()
-                    .get()
-                    .and_then(|i| files.get(i))
-                    .map(|f| f.audio.sample_rate)
-                    .unwrap_or(0)
-            });
-            let min_rate = 2.0 * (params.band_lo_hz() + 1000.0);
-            let half_rate = rate as f32 / 2.0;
-            let hint = (half_rate > 8_000.0).then(|| {
-                format!(
-                    "Set the lowest bat frequency below {} kHz to search this recording.",
-                    khz(half_rate)
-                )
-            });
-            return view! {
-                <div class="detection-status">
-                    <div>{format!(
+        let rate = state.library.files().with(|files| {
+            state
+                .library
+                .current_index()
+                .get()
+                .and_then(|i| files.get(i))
+                .map(|f| f.audio.sample_rate)
+                .unwrap_or(0)
+        });
+        let min_rate = 2.0 * (params.band_lo_hz() + 1000.0);
+        let half_rate = rate as f32 / 2.0;
+        let hint = (half_rate > 8_000.0).then(|| {
+            format!(
+                "Set the lowest bat frequency below {} kHz to search this recording.",
+                khz(half_rate)
+            )
+        });
+        Some(
+            view! {
+                <div class="cd-notes">
+                    <div class="detection-error">{format!(
                         "Sample rate too low: {} kHz. The search needs a sample rate above {} kHz.",
                         khz(rate as f32),
                         khz(min_rate)
@@ -494,34 +525,53 @@ fn InbuiltDetection() -> impl IntoView {
                     {hint.map(|h| view! { <div class="detection-status-note">{h}</div> })}
                 </div>
             }
-            .into_any();
-        };
+            .into_any(),
+        )
+    };
+
+    // The heading's right side: what was found.
+    let head_fact = move || {
+        if !has_results.get() || state.call_detection.band_hz().get().is_none() {
+            return String::new();
+        }
+        if total_count.get() == 0 {
+            return "Nothing detected".to_string();
+        }
+        format!(
+            "{}, {}",
+            count(bat_count.get(), "bat call", "bat calls"),
+            state
+                .call_detection
+                .trains()
+                .with(|t| count(t.len(), "call train", "call trains"))
+        )
+    };
+    let notes = move || {
+        if !has_results.get() {
+            return None;
+        }
+        let (lo, hi) = state.call_detection.band_hz().get()?;
         let total = total_count.get();
         if total == 0 {
-            return view! {
-                <div class="detection-status">
-                    <div>{format!("Nothing detected from {} to {} kHz.", khz(lo), khz(hi))}</div>
-                    <div class="detection-status-note">"Lower the threshold to find fainter sounds."</div>
+            return Some(
+                view! {
+                    <div class="cd-notes">
+                        <div class="detection-status-note">{format!("Nothing detected from {} to {} kHz.", khz(lo), khz(hi))}</div>
+                        <div class="detection-status-note">"Lower the threshold to find fainter sounds."</div>
+                    </div>
+                }
+                .into_any(),
+            );
+        }
+        let others = total - bat_count.get();
+        (others > 0).then(|| {
+            view! {
+                <div class="cd-notes">
+                    <div class="detection-status-note">{count(others, "other detection", "other detections")}</div>
                 </div>
             }
-            .into_any();
-        }
-        let bats = bat_count.get();
-        let trains = state.call_detection.trains().with(|t| t.len());
-        let others = total - bats;
-        view! {
-            <div class="detection-status">
-                <div class="detection-summary">{format!(
-                    "{}, {}",
-                    count(bats, "bat call", "bat calls"),
-                    count(trains, "call train", "call trains")
-                )}</div>
-                {(others > 0).then(|| view! {
-                    <div class="detection-status-note">{count(others, "other detection", "other detections")}</div>
-                })}
-            </div>
-        }
-        .into_any()
+            .into_any()
+        })
     };
 
     // Outline on the spectrogram the regions a choice would add, while the
@@ -544,25 +594,21 @@ fn InbuiltDetection() -> impl IntoView {
     let preview_from_focus = StoredValue::new(false);
     // A new search or another file clears the results and hides the
     // choices, so clear the preview too.
-    Effect::new(move || {
+    Effect::new(move |_| {
         if !has_results.get() {
             hide_preview();
         }
     });
     on_cleanup(hide_preview);
 
-    let annotate_section = move || {
-        // Only these two are tracked here, so the radio buttons are not
-        // rebuilt (losing their hover and focus) when a choice is picked.
-        if !has_results.get() || total_count.get() == 0 {
-            return None;
-        }
-        let n = move || {
-            let (calls, trains) = to_add.get();
-            calls + trains
-        };
+    let n_to_add = move || {
+        let (calls, trains) = to_add.get();
+        calls + trains
+    };
+    // The inside of the "Add N annotations" fold.
+    let annotate_body = move || {
         let reason = move || {
-            (n() == 0).then(|| {
+            (n_to_add() == 0).then(|| {
                 let others = total_count.get() - bat_count.get();
                 let text = if annotate_what.get() == AnnotateWhat::Calls {
                     if bat_calls_only.get() && others > 0 {
@@ -581,7 +627,7 @@ fn InbuiltDetection() -> impl IntoView {
         };
         let note = move || {
             let (existing, existing_tags) = existing_auto.get();
-            (existing > 0 && n() > 0).then(|| {
+            (existing > 0 && n_to_add() > 0).then(|| {
                 let tags = existing_tags.join(" or ");
                 let text = if existing == 1 {
                     format!(
@@ -601,10 +647,6 @@ fn InbuiltDetection() -> impl IntoView {
                     >{text}</div>
                 }
             })
-        };
-        let button_text = move || match n() {
-            0 => "Add annotations".to_string(),
-            n => format!("Add {}", count(n, "annotation", "annotations")),
         };
         // Radio buttons in a column: the sidebar is too narrow for the three
         // options side by side.
@@ -648,37 +690,53 @@ fn InbuiltDetection() -> impl IntoView {
                 </label>
             }
         };
+        view! {
+            <div class="detection-annotate-row detection-radio-group">
+                {option(AnnotateWhat::Calls, "Calls")}
+                {option(AnnotateWhat::Trains, "Trains")}
+                {option(AnnotateWhat::TrainsWithCalls, "Trains with nested calls")}
+                {move || (annotate_what.get() == AnnotateWhat::TrainsWithCalls).then(|| view! {
+                    <div class="detection-status-note detection-radio-note">"Calls not in a train are added at the top level"</div>
+                })}
+            </div>
+            <div class="setting-row">
+                <label
+                    class="setting-label"
+                    title="Turn off to add every detection as a call annotation, with its kind in the label. Trains contain only bat calls."
+                >
+                    <input
+                        type="checkbox"
+                        prop:checked=move || bat_calls_only.get()
+                        on:change=move |ev| bat_calls_only.set(event_target_checked(&ev))
+                    />
+                    " Bat calls only"
+                </label>
+            </div>
+            {reason}
+            {note}
+            <button
+                class="psd-btn cd-add-btn"
+                disabled=move || n_to_add() == 0
+                on:click=move |_| add_annotations(state, annotate_what.get_untracked(), bat_calls_only.get_untracked())
+            >{move || match n_to_add() {
+                0 => "Add annotations".to_string(),
+                n => format!("Add {}", count(n, "annotation", "annotations")),
+            }}</button>
+        }
+    };
+    let annotate_section = move || {
+        // Only these two are tracked here, so the radio buttons are not
+        // rebuilt (losing their hover and focus) when a choice is picked.
+        if !has_results.get() || total_count.get() == 0 {
+            return None;
+        }
+        let title = Signal::derive(move || match n_to_add() {
+            0 => "Add annotations".to_string(),
+            n => format!("Add {}", count(n, "annotation", "annotations")),
+        });
         Some(view! {
-            <div class="setting-group">
-                <div class="setting-group-title">"Annotate Calls and Trains"</div>
-                <div class="detection-annotate-row detection-radio-group">
-                    {option(AnnotateWhat::Calls, "Calls")}
-                    {option(AnnotateWhat::Trains, "Trains")}
-                    {option(AnnotateWhat::TrainsWithCalls, "Trains with nested calls")}
-                    {move || (annotate_what.get() == AnnotateWhat::TrainsWithCalls).then(|| view! {
-                        <div class="detection-status-note detection-radio-note">"Calls not in a train are added at the top level"</div>
-                    })}
-                </div>
-                <div class="setting-row">
-                    <label
-                        class="setting-label"
-                        title="Turn off to add every detection as a call annotation, with its kind in the label. Trains contain only bat calls."
-                    >
-                        <input
-                            type="checkbox"
-                            prop:checked=move || bat_calls_only.get()
-                            on:change=move |ev| bat_calls_only.set(event_target_checked(&ev))
-                        />
-                        " Bat calls only"
-                    </label>
-                </div>
-                {reason}
-                {note}
-                <button
-                    class="sidebar-btn detection-add-btn"
-                    disabled=move || n() == 0
-                    on:click=move |_| add_annotations(state, annotate_what.get_untracked(), bat_calls_only.get_untracked())
-                >{button_text}</button>
+            <div class="cd-folds">
+                <Fold name="annotate" title=title>{annotate_body()}</Fold>
             </div>
         })
     };
@@ -729,37 +787,20 @@ fn InbuiltDetection() -> impl IntoView {
                 })
                 .collect::<Vec<_>>()
         });
-        let filter_button = move |value: ListFilter, label: String| {
-            view! {
-                <button
-                    class=move || if list_filter.get() == value { "psd-btn psd-btn-active" } else { "psd-btn" }
-                    on:click=move |_| list_filter.set(value)
-                >{label}</button>
-            }
-        };
         Some(view! {
-            <div class="setting-group">
-                <div class="detection-annotate-row">
-                    <div class="psd-btn-group">
-                        // The counts are in the status line above.
-                        {filter_button(ListFilter::BatCalls, "Bat calls".to_string())}
-                        {filter_button(ListFilter::All, "All detections".to_string())}
-                    </div>
-                </div>
-                <div class="detection-list">
-                    <table class="detection-table">
-                        <thead>
-                            <tr>
-                                <th class="detection-col-num">"#"</th>
-                                <th>"Start"</th>
-                                <th>"Kind"</th>
-                                <th class="detection-col-num" title="Peak frequency">"kHz"</th>
-                                <th class="detection-col-num" title="Duration">"ms"</th>
-                            </tr>
-                        </thead>
-                        <tbody>{rows}</tbody>
-                    </table>
-                </div>
+            <div class="detection-list">
+                <table class="detection-table">
+                    <thead>
+                        <tr>
+                            <th class="detection-col-num">"#"</th>
+                            <th>"Start"</th>
+                            <th>"Kind"</th>
+                            <th class="detection-col-num" title="Peak frequency">"kHz"</th>
+                            <th class="detection-col-num" title="Duration">"ms"</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows}</tbody>
+                </table>
             </div>
         })
     };
@@ -780,6 +821,7 @@ fn InbuiltDetection() -> impl IntoView {
                 <input
                     type="range"
                     class="setting-range"
+                    aria-label=label
                     min=min.to_string()
                     max=max.to_string()
                     step=step.to_string()
@@ -794,69 +836,220 @@ fn InbuiltDetection() -> impl IntoView {
             </div>
         }
     };
+    let filter_button = move |value: ListFilter, label: &'static str| {
+        view! {
+            <button
+                class=move || if list_filter.get() == value { "psd-btn psd-btn-active" } else { "psd-btn" }
+                aria-pressed=move || (list_filter.get() == value).to_string()
+                on:click=move |_| list_filter.set(value)
+            >{label}</button>
+        }
+    };
+    let settings = move || {
+        settings_open.get().then(|| {
+            view! {
+                <div class="cd-settings">
+                    {slider(
+                        "Lowest bat frequency",
+                        "Detections with a peak frequency below this are marked Low frequency. Default 16 kHz. Lower it to find free-tailed bats near 11 kHz; expect more false detections from birds and insects.\nThis is the Lowest bat frequency setting from Settings, which the Loudest-frequency line, ZC and HFR also use.",
+                        (8.0, 30.0, 1.0),
+                        |p| p.min_bat_hz as f64 / 1000.0,
+                        |p, v| p.min_bat_hz = (v * 1000.0) as f32,
+                        |v| format!("{v:.0} kHz"),
+                    )}
+                    {slider(
+                        "Threshold",
+                        "Sounds must be at least this many dB above the noise floor to be detected. Default 12 dB. Lower values find fainter calls and more noise.",
+                        (6.0, 24.0, 1.0),
+                        |p| p.threshold_db as f64,
+                        |p, v| {
+                            // Keep the release level 3 dB under the threshold, as in the defaults.
+                            p.threshold_db = v as f32;
+                            p.release_db = v as f32 - 3.0;
+                        },
+                        |v| format!("{v:.0} dB"),
+                    )}
+                    {slider(
+                        "Min duration",
+                        "Sounds shorter than this are ignored. Default 1 ms.",
+                        (0.5, 5.0, 0.5),
+                        |p| p.min_call_ms as f64,
+                        |p, v| p.min_call_ms = v as f32,
+                        |v| format!("{v:.1} ms"),
+                    )}
+                    {slider(
+                        "Max duration",
+                        "Sounds longer than this are treated as background noise and ignored. Default 100 ms.",
+                        (20.0, 200.0, 10.0),
+                        |p| p.max_call_ms as f64,
+                        |p, v| p.max_call_ms = v as f32,
+                        |v| format!("{v:.0} ms"),
+                    )}
+                    {slider(
+                        "Train gap",
+                        "Longest gap between calls in one call train. A call joins a train if it starts within this time after the train's last call ends and its peak is within 5 kHz of that call's peak. Default 0.5 s. Changing it regroups the trains straight away.",
+                        (0.1, 2.0, 0.1),
+                        |p| p.trains.max_gap_s,
+                        |p, v| p.trains.max_gap_s = v,
+                        |v| format!("{v:.1} s"),
+                    )}
+                    // A filter of the list only: the boxes show every detection.
+                    <div class="setting-row">
+                        <span class="setting-label">"Listed"</span>
+                        <div class="psd-btn-group" role="group" aria-label="Listed">
+                            {filter_button(ListFilter::BatCalls, "Bat calls")}
+                            {filter_button(ListFilter::All, "All detections")}
+                        </div>
+                    </div>
+                    <div class="setting-row detection-annotate-row">
+                        <label class="setting-label">
+                            <input
+                                type="checkbox"
+                                prop:checked=move || state.call_detection.overlay_enabled().get()
+                                on:change=move |ev| state.call_detection.overlay_enabled().set(event_target_checked(&ev))
+                            />
+                            " Boxes on the spectrogram"
+                        </label>
+                    </div>
+                </div>
+            }
+        })
+    };
 
     view! {
-        <div>
-            {status}
-            <div class="setting-row detection-annotate-row">
-                <label class="setting-label">
-                    <input
-                        type="checkbox"
-                        prop:checked=move || state.call_detection.overlay_enabled().get()
-                        on:change=move |ev| state.call_detection.overlay_enabled().set(event_target_checked(&ev))
-                    />
-                    " Show overlay"
-                </label>
-            </div>
+        <div class="cd-inbuilt">
+            {move || match current_file.get() {
+                None => view! { <div class="cd-no-file">"No file selected"</div> }.into_any(),
+                Some(_) => view! {
+                    <div class="cd-action-row">
+                        <div class="cd-action">{in_force_line(settings_open, facts)}</div>
+                        {settings_button(settings_open)}
+                    </div>
+                }
+                .into_any(),
+            }}
+            {progress}
+            {settings}
+            {move || has_results.get().then(|| view! {
+                <div class="cd-section">
+                    {section_head("In this recording", head_fact, String::new)}
+                    {notes}
+                    {list_section}
+                </div>
+            })}
             {annotate_section}
-            {list_section}
-            <div class="setting-group">
-                <div class="setting-group-title">"Detection Settings"</div>
-                {slider(
-                    "Lowest bat frequency",
-                    "Detections with a peak frequency below this are marked Low frequency. Default 16 kHz. Lower it to find free-tailed bats near 11 kHz; expect more false detections from birds and insects.\nThis is the Lowest bat frequency setting from Settings, which the Loudest-frequency line, ZC and HFR also use.",
-                    (8.0, 30.0, 1.0),
-                    |p| p.min_bat_hz as f64 / 1000.0,
-                    |p, v| p.min_bat_hz = (v * 1000.0) as f32,
-                    |v| format!("{v:.0} kHz"),
-                )}
-                {slider(
-                    "Threshold",
-                    "Sounds must be at least this many dB above the noise floor to be detected. Default 12 dB. Lower values find fainter calls and more noise.",
-                    (6.0, 24.0, 1.0),
-                    |p| p.threshold_db as f64,
-                    |p, v| {
-                        // Keep the release level 3 dB under the threshold, as in the defaults.
-                        p.threshold_db = v as f32;
-                        p.release_db = v as f32 - 3.0;
-                    },
-                    |v| format!("{v:.0} dB"),
-                )}
-                {slider(
-                    "Min duration",
-                    "Sounds shorter than this are ignored. Default 1 ms.",
-                    (0.5, 5.0, 0.5),
-                    |p| p.min_call_ms as f64,
-                    |p, v| p.min_call_ms = v as f32,
-                    |v| format!("{v:.1} ms"),
-                )}
-                {slider(
-                    "Max duration",
-                    "Sounds longer than this are treated as background noise and ignored. Default 100 ms.",
-                    (20.0, 200.0, 10.0),
-                    |p| p.max_call_ms as f64,
-                    |p, v| p.max_call_ms = v as f32,
-                    |v| format!("{v:.0} ms"),
-                )}
-                {slider(
-                    "Train gap",
-                    "Longest gap between calls in one call train. A call joins a train if it starts within this time after the train's last call ends and its peak is within 5 kHz of that call's peak. Default 0.5 s. Changing it regroups the trains straight away.",
-                    (0.1, 2.0, 0.1),
-                    |p| p.trains.max_gap_s,
-                    |p, v| p.trains.max_gap_s = v,
-                    |v| format!("{v:.1} s"),
-                )}
+        </div>
+    }
+}
+
+/// The methods, in the order the drop-down lists them, each with its line of
+/// description.
+const METHODS: [(DetectionMethod, &str, &str); 5] = [
+    (
+        DetectionMethod::Inbuilt,
+        "In-built bat call detection",
+        "Finds bat calls. Runs automatically.",
+    ),
+    (
+        DetectionMethod::BirdNet,
+        "BirdNET V2.4",
+        "Bird species, plus some other sounds such as dog and engine",
+    ),
+    (
+        DetectionMethod::BirdNetV3,
+        "BirdNET+ V3.0",
+        "11,725 birds, insects, frogs, mammals and other sounds. Slower than V2.4.",
+    ),
+    (
+        DetectionMethod::Perch,
+        "Perch 2.0",
+        "Birds, frogs and insects, plus sounds such as thunder and traffic",
+    ),
+    (
+        DetectionMethod::Bats,
+        "BattyBirdNET",
+        "Bat species of Europe and the USA",
+    ),
+];
+
+/// The method drop-down: a button with the picked method's name, and a menu
+/// of the methods with their descriptions. The menu sits over the panel
+/// inside the sidebar (not in a portal), so it is in the sidebar's layer on
+/// phones too. It closes on a pick, on Escape and on a press outside it.
+#[component]
+fn MethodPicker() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let method = move || state.call_detection.method().get();
+    let open = RwSignal::new(false);
+    let wrap = NodeRef::<leptos::html::Div>::new();
+    let outside = window_event_listener(leptos::ev::pointerdown, move |ev| {
+        use wasm_bindgen::JsCast;
+        if !open.get_untracked() {
+            return;
+        }
+        let inside = wrap.get_untracked().is_some_and(|w| {
+            let w: &web_sys::Node = w.as_ref();
+            ev.target()
+                .and_then(|t| t.dyn_into::<web_sys::Node>().ok())
+                .is_some_and(|t| w.contains(Some(&t)))
+        });
+        if !inside {
+            open.set(false);
+        }
+    });
+    on_cleanup(move || outside.remove());
+    let on_key = move |ev: web_sys::KeyboardEvent| {
+        if ev.key() == "Escape" && open.get_untracked() {
+            ev.stop_propagation();
+            open.set(false);
+        }
+    };
+    let name_of = |m: DetectionMethod| METHODS.iter().find(|x| x.0 == m).map_or("", |x| x.1);
+    let help_of = |m: DetectionMethod| METHODS.iter().find(|x| x.0 == m).map_or("", |x| x.2);
+    let options = METHODS
+        .iter()
+        .map(|&(value, label, help)| {
+            let sel = move || method() == value;
+            view! {
+                <button
+                    class="layer-panel-opt cd-method-opt"
+                    class:sel=sel
+                    role="option"
+                    aria-selected=move || sel().to_string()
+                    on:click=move |_| {
+                        state.call_detection.method().set(value);
+                        state.call_detection.selected_window().set(None);
+                        open.set(false);
+                    }
+                >
+                    <span class="preset-main">{label}</span>
+                    <span class="preset-sub">{help}</span>
+                </button>
+            }
+        })
+        .collect::<Vec<_>>();
+    let options = StoredValue::new(options);
+    view! {
+        <div class="cd-method" node_ref=wrap on:keydown=on_key>
+            <button
+                class="cd-method-btn"
+                aria-haspopup="listbox"
+                aria-expanded=move || open.get().to_string()
+                title="Method"
+                on:click=move |_| open.update(|v| *v = !*v)
+            >
+                <span class="cd-method-name">{move || name_of(method())}</span>
+                <span class="cd-caret">{"\u{25BE}"}</span>
+            </button>
+            <div
+                class="layer-panel cd-method-menu"
+                role="listbox"
+                aria-label="Method"
+                style:display=move || if open.get() { "" } else { "none" }
+            >
+                {options.into_inner()}
             </div>
+            <div class="detection-status-note cd-method-help">{move || help_of(method())}</div>
         </div>
     }
 }
@@ -867,25 +1060,6 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
     let state = expect_context::<AppState>();
     let method = move || state.call_detection.method().get();
 
-    let option = move |value: DetectionMethod, label: &'static str, help: &'static str| {
-        view! {
-            <label class="setting-label detection-radio detection-method">
-                <input
-                    type="radio"
-                    name="detection-method"
-                    prop:checked=move || method() == value
-                    on:change=move |_| {
-                        state.call_detection.method().set(value);
-                        state.call_detection.selected_window().set(None);
-                    }
-                />
-                <span class="detection-method-text">
-                    <span>{label}</span>
-                    <span class="detection-status-note">{help}</span>
-                </span>
-            </label>
-        }
-    };
     // What "Auto" gives the current recording, and where that came from.
     let auto = Memo::new(move |_| bat_pick::current_auto_scope(state));
     let region_select = move || {
@@ -943,25 +1117,11 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
     };
 
     view! {
-        <div class="sidebar-panel">
-            <div class="detection-annotate-row detection-radio-group detection-methods">
-                {option(DetectionMethod::Inbuilt, "In-built bat call detection", "Finds bat calls. Runs automatically.")}
-                {option(DetectionMethod::BirdNet, "BirdNET V2.4", "Bird species, plus some other sounds such as dog and engine")}
-                {option(DetectionMethod::BirdNetV3, "BirdNET+ V3.0", "11,725 birds, insects, frogs, mammals and other sounds. Slower than V2.4.")}
-                // Before BattyBirdNET, so the region list stays under it.
-                {option(DetectionMethod::Perch, "Perch 2.0", "Birds, frogs and insects, plus sounds such as thunder and traffic")}
-                {option(DetectionMethod::Bats, "BattyBirdNET", "Bat species of Europe and the USA")}
+        <div class="sidebar-panel cd-panel">
+            <div class="cd-top">
+                <MethodPicker />
                 {region_select}
             </div>
-            // One live view for both models, so picking the other one restarts
-            // the readings with it instead of building the view again.
-            // BirdNET+ V3.0 has no live view yet.
-            <Show when=move || matches!(method(), DetectionMethod::BirdNet | DetectionMethod::Perch)>
-                <live_view::LiveView method=Signal::derive(move || match method() {
-                    DetectionMethod::Perch => Method::Perch,
-                    _ => Method::BirdNet,
-                }) />
-            </Show>
             {move || match method() {
                 DetectionMethod::Inbuilt => view! { <InbuiltDetection /> }.into_any(),
                 DetectionMethod::BirdNet => view! { <ClassifierSection method=Method::BirdNet /> }.into_any(),

@@ -2,8 +2,12 @@
 // (vendor/, Apache-2.0), loaded the first time the view is shown.
 //
 // Called from src/live_embedding.rs:
+//   oversampleLiveEmbedding.setMapHost(el, host)  (where the map goes)
+//   oversampleLiveEmbedding.setPins(el, pinsJson)  (pins on the component maps)
 //   oversampleLiveEmbedding.update(el, json, speciesJson, pcJson)
 //   oversampleLiveEmbedding.dispose(el)  (also when the model changes)
+// The reading's top classes are drawn by the Call detection tab itself
+// (live_view.rs); `top` below is not drawn here.
 // `json` is { min, top: [[name, score, unlikelyHere]...],
 //   trail: [[x, y, secondsAgo, score, umapX, umapY]...] (x, y on the t-SNE layout),
 //   rows: [name...], rowsUnlikely: [bool...], heard (any reading in the history),
@@ -54,11 +58,9 @@
   const FLAG_COLOUR = '#ffcc88';
   const FLAG_GLYPH = '\u2691';
   const UNLIKELY_TEXT = 'Unlikely at this place and month';
-  // The app's flag icon (Icon::Flag in icons.rs), for the DOM readout.
-  const FLAG_SVG =
-    '<svg class="icon" viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15s1-1 4-1 5 2 8 2 3-1 3-1V4s-1 1-3 1-5-2-8-2-4 1-4 1z"/><path d="M5 22V3"/></svg>';
-  const flagHtml = () =>
-    `<span class="unlikely-flag" role="img" aria-label="${UNLIKELY_TEXT}" title="${UNLIKELY_TEXT}">${FLAG_SVG}</span>`;
+  // The app's pin icon (Icon::Pin in icons.rs).
+  const PIN_SVG =
+    '<svg class="icon" viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path class="icon-pin-head" d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>';
   // The paused reading's marker: a play triangle in the blue of the
   // spectrogram's dashed "here" line (rgba(100, 160, 255) in
   // spectrogram.rs). A triangle, not a ring, so it differs from the dashed
@@ -894,6 +896,27 @@
   };
   const swatch = (j) => `<i class="live-emb-swatch" style="background:${PC_COLOURS[j]}"></i>`;
 
+  // The pin on each component map (el.__pins: one bool per component, or
+  // null when the rows above the spectrogram cannot show these components).
+  // The same look and wording as the pins in the Call detection tab's lists
+  // (classifier_section.rs, .cd-pin).
+  function markPins(el) {
+    const div = el.__parts && el.__parts.pcs;
+    const b = div && div.__built;
+    if (!b || !el.__pins) return;
+    b.maps.forEach((m, k) => {
+      const pin = m.cell.querySelector('.live-emb-pc-pin');
+      if (!pin) return;
+      const on = !!el.__pins[k];
+      const name = `PC${k + 1}`;
+      const text = on ? `Remove ${name} from above the spectrogram` : `Show ${name} above the spectrogram`;
+      pin.classList.toggle('on', on);
+      pin.setAttribute('aria-pressed', String(on));
+      pin.setAttribute('aria-label', text);
+      pin.title = text;
+    });
+  }
+
   function pcBuild(el) {
     const div = el.__parts.pcs;
     const pc = el.__pc;
@@ -930,12 +953,28 @@
     const maps = [];
     for (let k = 0; k < n; k++) {
       const name = `PC${k + 1}`;
-      const cell = document.createElement('button');
-      cell.type = 'button';
+      // A cell holds two buttons (pick the component, pin its row), so it
+      // is not a button itself; a press on its map or graph also picks it.
+      const cell = document.createElement('div');
       cell.className = 'live-emb-pc';
       const label = document.createElement('div');
       label.className = 'live-emb-pc-label';
-      label.innerHTML = `${pie(pc.variance[k])}<span>${name}</span>`;
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'live-emb-pc-pick';
+      pick.innerHTML = `${pie(pc.variance[k])}<span>${name}</span>`;
+      label.appendChild(pick);
+      if (el.__pins) {
+        const pin = document.createElement('button');
+        pin.type = 'button';
+        pin.className = 'cd-pin live-emb-pc-pin';
+        pin.innerHTML = PIN_SVG;
+        pin.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent('oversample-pc-pin', { detail: k }));
+        });
+        label.appendChild(pin);
+      }
       const canvas = document.createElement('canvas');
       canvas.className = 'live-emb-pc-map';
       canvas.width = canvas.height = px;
@@ -950,7 +989,7 @@
       div.appendChild(cell);
       const img = document.createElement('canvas');
       img.width = img.height = px;
-      const m = { cell, img, ctx: canvas.getContext('2d'), graph: graph.getContext('2d') };
+      const m = { cell, pick, img, ctx: canvas.getContext('2d'), graph: graph.getContext('2d') };
       maps.push(m);
 
       const share = `${(pc.variance[k] * 100).toFixed(1)}% of the variation between ${between}`;
@@ -959,7 +998,7 @@
       const ends = lo
         ? `<div class="live-emb-tip-line">${swatch(0)}Low end: ${esc(lo)}</div><div class="live-emb-tip-line">${swatch(4)}High end: ${esc(hi)}</div>`
         : '';
-      cell.setAttribute('aria-label', `${name}: ${share}`);
+      pick.setAttribute('aria-label', `${name}: ${share}`);
       // Over the map: what the colour under the pointer stands for.
       canvas.addEventListener('pointermove', (e) => {
         if (e.pointerType !== 'mouse') return;
@@ -995,16 +1034,18 @@
         );
       });
       cell.addEventListener('pointerleave', () => (tip.style.display = 'none'));
-      cell.addEventListener('click', () => {
+      cell.addEventListener('click', (e) => {
+        if (e.target.closest('.live-emb-pc-pin')) return;
         el.__sel = el.__sel === k ? null : k;
         maps.forEach((o, j) => o.cell.classList.toggle('selected', el.__sel === j));
-        maps.forEach((o, j) => o.cell.setAttribute('aria-pressed', String(el.__sel === j)));
+        maps.forEach((o, j) => o.pick.setAttribute('aria-pressed', String(el.__sel === j)));
         viewChanged(el);
       });
       cell.classList.toggle('selected', el.__sel === k);
-      cell.setAttribute('aria-pressed', String(el.__sel === k));
+      pick.setAttribute('aria-pressed', String(el.__sel === k));
     }
     div.appendChild(tip);
+    markPins(el);
     return { width: div.clientWidth, maps, px, dpr, layout: points(el) };
   }
 
@@ -1113,48 +1154,24 @@
     });
   }
 
-  function readout(el, d) {
-    const [first, ...rest] = d.top;
-    if (!first) {
-      el.innerHTML = '';
-      return;
-    }
-    // A name with the "unlikely here" flag after it when it has one.
-    const named = (t, cls) =>
-      (cls ? `<span class="${cls}">${esc(t[0])}</span>` : esc(t[0])) + (t[2] ? flagHtml() : '');
-    const others = rest.map((t) => `${named(t)} ${t[1].toFixed(2)}`).join(', ');
-    // The paused reading names the part of the file it is of.
-    const range = d.preview ? `<span class="live-emb-range">${esc(d.preview.range)}</span> ` : '';
-    let html;
-    let next;
-    if (first[1] >= d.min) {
-      html = `${range}${named(first, 'live-emb-name')} <span class="live-emb-score">${first[1].toFixed(2)}</span>`;
-      next = others ? `Next: ${others}` : '';
-    } else {
-      html = `${range}<span class="live-emb-none">No species at ${d.min.toFixed(2)} or above</span>`;
-      next = `Highest: ${named(first)} ${first[1].toFixed(2)}${others ? ', ' + others : ''}`;
-      // Bat recordings: say why nothing is found.
-      if (d.ultrasonic && d.model) next += `<br>${esc(d.model.hearing)}`;
-    }
-    el.innerHTML = html + (next ? `<div class="live-emb-next">${next}</div>` : '');
-    const n = el.querySelector('.live-emb-next');
-    if (n) n.title = n.textContent;
-  }
-
   // ── Full screen ───────────────────────────────────────────────────────
-  // The view fills the window (CSS, .live-emb-full), and where the browser
-  // allows it the screen. Android's web view has no full-screen support for
-  // page elements, so there the view only fills the app's window.
+  // The whole "At the play position" section (.live-emb, from the Call
+  // detection tab) fills the window (CSS, .live-emb-full), and where the
+  // browser allows it the screen. Android's web view has no full-screen
+  // support for page elements, so there the view only fills the app's window.
+  const fullTarget = (el) => el.closest('.live-emb') || el;
+
   function setFull(el, on) {
-    if (el.classList.contains('live-emb-full') === on) return;
-    el.classList.toggle('live-emb-full', on);
+    const t = fullTarget(el);
+    if (t.classList.contains('live-emb-full') === on) return;
+    t.classList.toggle('live-emb-full', on);
     const b = el.__parts && el.__parts.fullBtn;
     if (b) b.textContent = on ? 'Exit full screen' : 'Full screen';
     try {
-      if (on && el.requestFullscreen) {
-        const r = el.requestFullscreen();
+      if (on && t.requestFullscreen) {
+        const r = t.requestFullscreen();
         if (r && r.catch) r.catch(() => {});
-      } else if (!on && document.fullscreenElement === el) document.exitFullscreen();
+      } else if (!on && document.fullscreenElement === t) document.exitFullscreen();
     } catch (_) {
       // The window-filling view is shown either way.
     }
@@ -1200,12 +1217,13 @@
     full.type = 'button';
     full.className = 'live-emb-full-btn';
     full.textContent = 'Full screen';
-    full.addEventListener('click', () => setFull(el, !el.classList.contains('live-emb-full')));
+    full.addEventListener('click', () => setFull(el, !fullTarget(el).classList.contains('live-emb-full')));
     // Leaving the browser's full screen (Escape, a system gesture) also
     // leaves the window-filling view.
     const onChange = () => {
+      const t = fullTarget(el);
       if (!document.fullscreenElement && el.__wasFull) setFull(el, false);
-      el.__wasFull = document.fullscreenElement === el;
+      el.__wasFull = document.fullscreenElement === t;
     };
     document.addEventListener('fullscreenchange', onChange);
     div.append(group, full);
@@ -1214,21 +1232,24 @@
     return full;
   }
 
+  // The strip goes in `el`; the map's tools, the map and the component maps
+  // go in el.__mapHost (the "Map and components" fold) when there is one.
   function parts(el) {
     if (!el.__parts) {
       el.innerHTML = '';
-      const mk = (cls) => {
+      const host = el.__mapHost || el;
+      if (host !== el) host.innerHTML = '';
+      const mk = (cls, parent) => {
         const div = document.createElement('div');
         div.className = cls;
-        el.appendChild(div);
+        parent.appendChild(div);
         return div;
       };
       const p = {
-        readout: mk('live-emb-readout'),
-        strip: mk('live-emb-strip'),
-        tools: mk('live-emb-tools'),
-        map: mk('live-emb-map'),
-        pcs: mk('live-emb-pcs'),
+        strip: mk('live-emb-strip', el),
+        tools: mk('live-emb-tools', host),
+        map: mk('live-emb-map', host),
+        pcs: mk('live-emb-pcs', host),
       };
       p.fullBtn = tools(el, p.tools);
       el.__parts = p;
@@ -1250,6 +1271,21 @@
   }
 
   window.oversampleLiveEmbedding = {
+    // Where the map and component maps go (see parts). Call before the
+    // first update.
+    setMapHost(el, host) {
+      el.__mapHost = host;
+    },
+    // Which component maps carry a pin, and which pins are on: a JSON array
+    // of bools, or null for no pins. Rebuilds the maps when pins come or go.
+    setPins(el, json) {
+      const pins = json ? JSON.parse(json) : null;
+      const had = !!el.__pins;
+      el.__pins = pins;
+      const div = el.__parts && el.__parts.pcs;
+      if (div && had !== !!pins) div.__built = null;
+      markPins(el);
+    },
     async update(el, json, speciesJson, pcJson) {
       const d = JSON.parse(json);
       el.__last = d;
@@ -1266,7 +1302,6 @@
       if (el.__last !== d) return; // a newer reading arrived while loading
       const p = parts(el);
       p.tools.__mark();
-      readout(p.readout, d);
       // The strip keeps the most rows it has had, so the map under it does
       // not move up and down as classes come and go.
       el.__rows = Math.max(el.__rows || 1, d.rows.length);
@@ -1279,6 +1314,9 @@
         const strip = chartFor(p.strip);
         strip.setOption(stripOptions(d), { replaceMerge: ['series', 'yAxis', 'grid', 'xAxis', 'graphic'] });
       }
+      // The map's fold is closed: nothing to draw there. Opening it draws
+      // the map again (live_embedding::redraw).
+      if (p.map.clientWidth === 0) return;
       const map = chartFor(p.map, () => viewChanged(el));
       const t0 = performance.now();
       if (!map.__ready && el.__species) {
@@ -1323,6 +1361,7 @@
       el.__view = null;
       el.__last = null;
       el.innerHTML = '';
+      if (el.__mapHost) el.__mapHost.innerHTML = '';
     },
   };
 })();

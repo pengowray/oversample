@@ -1,13 +1,25 @@
 //! The BirdNET, BattyBirdNET, Perch and BirdNET+ V3.0 part of the Call
-//! detection tab: download
-//! the model, analyse the current file, list the species found, and add them as
-//! annotations. The calls it makes are in `crate::classifier`.
+//! detection tab: download the model, analyse the current file, list the
+//! species found, and add them as annotations. The calls it makes are in
+//! `crate::classifier`.
 //!
-//! Order on screen: the action (download, analyse, progress), the results
-//! (minimum confidence, summary, list, the selected window's top 3), adding
-//! annotations, then the stored model and the attribution the model's licence
-//! asks for.
+//! Order on screen (the layout the owner approved on 2026-11-21):
+//!
+//! 1. The action (download, Analyse, progress) with the settings button
+//!    beside it, a line listing the settings in force, and the settings
+//!    themselves when opened (Step, minimum confidence, place and "Mark birds
+//!    unlikely here", boxes on the spectrogram).
+//! 2. "At the play position" (`live_view.rs`), for the methods with live
+//!    readings.
+//! 3. "In this recording": one list of the species found, the sound
+//!    clusters and the picked components, each with a pin that shows it in a
+//!    row above the spectrogram; then the search that adds a row.
+//! 4. Folds: "Every window" and "Add N annotations".
+//! 5. One line about the stored model, and the attribution the model's
+//!    licence asks for.
 
+use super::live_view::LiveView;
+use super::parts::{in_force_line, pin_button, section_head, settings_button, Fold};
 use super::species_map::SpeciesMapDialog;
 use super::{count, event_target_checked, event_target_value, undo_keys};
 use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
@@ -22,12 +34,6 @@ use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ListView {
-    BySpecies,
-    ByWindow,
-}
 
 const MB: f64 = 1_000_000.0;
 
@@ -76,7 +82,7 @@ fn window_len(secs: f64) -> String {
 #[derive(Clone, Copy, PartialEq)]
 struct RunInfo {
     windows: usize,
-    /// Windows Analyse made; the rest are the live view's readings.
+    /// Windows Analyse made; the rest are readings at the play position.
     analysed: usize,
     /// Time the windows' cells cover, in seconds.
     covered_secs: f64,
@@ -100,9 +106,9 @@ fn windows_or_time(s: &summary::Summary, windows: usize, secs: f64) -> String {
     }
 }
 
-/// The Step choice under the Analyse button: the time between the starts of
-/// windows for the next Analyse, as a group of buttons like the number of
-/// Sound groups. Saved for every classifier. None for BattyBirdNET.
+/// The Step setting: the time between the starts of windows for the next
+/// Analyse, as a group of buttons like the number of Sound clusters. Saved
+/// for every classifier. None for BattyBirdNET.
 fn step_row(method: Method, pick: RwSignal<summary::StepPick>) -> Option<impl IntoView> {
     let choices = summary::step_choices(method);
     if choices.is_empty() {
@@ -132,7 +138,7 @@ fn step_row(method: Method, pick: RwSignal<summary::StepPick>) -> Option<impl In
         })
         .collect::<Vec<_>>();
     Some(view! {
-        <div class="detection-step-row" title=help>
+        <div class="setting-row detection-step-row" title=help>
             <span class="setting-label">"Step"</span>
             <div class="psd-btn-group" role="group" aria-label="Step">{buttons}</div>
         </div>
@@ -142,17 +148,16 @@ fn step_row(method: Method, pick: RwSignal<summary::StepPick>) -> Option<impl In
 /// A small square in the colour the spectrogram's label strip gives this
 /// class, so a row in the lists can be matched to its label and call boxes.
 /// `slot` is the species' place in `summary::colour_order`; None for classes
-/// that are not a species ("Noise"). Inline style: the colour comes from
-/// overlays.rs, the shape from the species map legend's `.map-key`.
-fn species_swatch(slot: Option<usize>) -> impl IntoView {
+/// that are not a species ("Noise"), or that no window has as its top class.
+/// Inline style: the colour comes from overlays.rs, the shape from the
+/// species map legend's `.map-key`.
+pub(super) fn species_swatch(slot: Option<usize>) -> impl IntoView {
     use crate::canvas::spectrogram_renderer::{species_colour, NOT_SPECIES_COLOUR};
     let colour = slot.map_or(NOT_SPECIES_COLOUR, |s| species_colour(s).0);
     view! {
         <span
-            class="map-key"
-            style=format!(
-                "display:inline-block;vertical-align:-1px;margin-right:6px;border-radius:2px;background:{colour}",
-            )
+            class="map-key cd-swatch"
+            style=format!("background:{colour}")
         ></span>
     }
 }
@@ -163,7 +168,7 @@ fn class_name(label: Option<&classifier::SpeciesLabel>) -> String {
 }
 
 /// True when this species has a row above the spectrogram. Reactive.
-fn strip_picked(state: AppState, method: Method, scientific: &str) -> bool {
+pub(super) fn strip_picked(state: AppState, method: Method, scientific: &str) -> bool {
     state.call_detection.strip_species().with(|v| {
         v.iter()
             .any(|s| s.method == method && s.scientific == scientific)
@@ -171,16 +176,34 @@ fn strip_picked(state: AppState, method: Method, scientific: &str) -> bool {
 }
 
 /// Add or remove this species' row above the spectrogram.
-fn toggle_strip(state: AppState, method: Method, scientific: String) {
+pub(super) fn toggle_strip(state: AppState, method: Method, scientific: String) {
     state.call_detection.strip_species().update(|v| {
         classifier::strips::toggle(v, classifier::strips::StripSpecies { method, scientific })
     });
     save_strips(state);
 }
 
-/// Save the picked rows (species, components and sound groups) for the next
-/// session.
-fn save_strips(state: AppState) {
+/// True when component `k` (0 for PC1) has a row above the spectrogram.
+/// Reactive.
+pub(super) fn component_picked(state: AppState, k: usize) -> bool {
+    state
+        .call_detection
+        .strip_components()
+        .with(|v| v.contains(&k))
+}
+
+/// Add or remove component `k`'s row above the spectrogram.
+pub(super) fn toggle_component(state: AppState, k: usize) {
+    state
+        .call_detection
+        .strip_components()
+        .update(|v| classifier::strips::toggle(v, k));
+    save_strips(state);
+}
+
+/// Save the picked rows (species, components and sound clusters) for the
+/// next session.
+pub(super) fn save_strips(state: AppState) {
     let cd = state.call_detection;
     crate::settings::set_score_strips(&classifier::strips::StripPicks {
         species: cd.strip_species().get_untracked(),
@@ -190,34 +213,21 @@ fn save_strips(state: AppState) {
     });
 }
 
-/// The cell with a species' "Show" checkbox: adds or removes its row above
-/// the spectrogram. A click on it leaves the row's own click (show the
-/// window) alone.
-fn strip_cell(state: AppState, method: Method, scientific: String, name: String) -> impl IntoView {
+/// The pin cell of a species row.
+pub(super) fn species_pin(
+    state: AppState,
+    method: Method,
+    scientific: String,
+    name: String,
+) -> impl IntoView {
     let sci = scientific.clone();
+    let picked = move || strip_picked(state, method, &sci);
     view! {
-        <td class="detection-col-strip" on:click=|ev| ev.stop_propagation()>
-            // The label fills the cell, so a tap anywhere in it ticks the box.
-            <label class="detection-strip-hit" title=format!("Show {name} scores above the spectrogram")>
-                <input
-                    type="checkbox"
-                    aria-label=format!("Show {name} scores above the spectrogram")
-                    prop:checked=move || strip_picked(state, method, &sci)
-                    on:change=move |_| toggle_strip(state, method, scientific.clone())
-                />
-            </label>
+        <td class="cd-col-pin">
+            {pin_button(name, picked, move || toggle_strip(state, method, scientific.clone()))}
         </td>
     }
 }
-
-/// The header above [`strip_cell`].
-fn strip_header() -> impl IntoView {
-    view! {
-        <th class="detection-col-strip" title=STRIP_HEADER_HELP>"Show"</th>
-    }
-}
-
-const STRIP_HEADER_HELP: &str = "Tick a species to show its scores in a row above the spectrogram";
 
 /// Scroll the spectrogram so the window from `start_s` to `end_s` has its
 /// middle in the centre, and pick it.
@@ -264,7 +274,7 @@ fn analyse(state: AppState, file_id: u64, choice: ModelChoice, step_secs: f64) {
     });
 }
 
-/// The large files the panel's download button and "Delete model" stand for:
+/// The large files the panel's download button and Delete stand for:
 /// BirdNET's backbone (shared by BirdNET and BattyBirdNET; labels and regional
 /// classifiers are small and download on Analyse), all of Perch's files, or
 /// BirdNET+ V3.0's one file.
@@ -276,7 +286,7 @@ fn model_files(method: Method) -> Vec<&'static catalog::ModelFile> {
     }
 }
 
-/// The files that "Delete model" removes.
+/// The files that Delete removes.
 fn deletable_files(method: Method) -> Vec<&'static catalog::ModelFile> {
     match method {
         Method::BirdNet | Method::Bats => catalog::birdnet_files().collect(),
@@ -383,6 +393,47 @@ fn add_annotations(state: AppState, file_id: u64, method: Method, merge: bool) {
     state.show_info_toast(toast);
 }
 
+/// One species row of the "In this recording" list.
+#[derive(Clone, PartialEq)]
+struct SpeciesListRow {
+    class: u16,
+    name: String,
+    scientific: String,
+    label: Option<classifier::SpeciesLabel>,
+    slot: Option<usize>,
+    /// Windows, or the time when windows overlap.
+    amount: String,
+    best: f32,
+    /// The best window, which a press on the row shows.
+    start: f64,
+    end: f64,
+}
+
+impl SpeciesListRow {
+    /// Everything the row shows, so a row is drawn again only when it
+    /// changes.
+    fn key(&self) -> (u16, Option<usize>, String, u32, u64) {
+        (
+            self.class,
+            self.slot,
+            self.amount.clone(),
+            self.best.to_bits(),
+            self.start.to_bits(),
+        )
+    }
+}
+
+/// A species picked for a row above the spectrogram that is not among this
+/// recording's species at or above the minimum confidence.
+#[derive(Clone, PartialEq)]
+struct MissingRow {
+    scientific: String,
+    name: String,
+    label: Option<classifier::SpeciesLabel>,
+    /// The model has the species among its classes.
+    in_model: bool,
+}
+
 #[component]
 pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     let state = expect_context::<AppState>();
@@ -399,11 +450,11 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     // Which model files are on this device; checked once per opening.
     classifier::refresh_downloads(state);
 
-    let list_view = RwSignal::new(ListView::BySpecies);
     // Merging neighbouring windows suits bats: one pass is many 0.56 s windows.
     let merge = RwSignal::new(bats);
     let show_credits = RwSignal::new(false);
     let map_open = RwSignal::new(false);
+    let settings_open = RwSignal::new(false);
 
     let current_file = Memo::new(move |_| state.current_file_id_tracked());
     let source_rate = Memo::new(move |_| {
@@ -437,6 +488,9 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             })
         })
     });
+    // An Analyse has run on this file (readings at the play position also
+    // go into the results, so having results is not enough).
+    let analysed = Memo::new(move |_| results_info.get().is_some_and(|r| r.analysed > 0));
     // The Step picked for the next Analyse (saved for every classifier).
     let step_pick = RwSignal::new(crate::settings::get_classifier_step());
     let min_conf = move || classifier::min_confidence(state, method);
@@ -490,10 +544,11 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         });
     }
 
-    // Download, analyse, or progress.
-    let action = move || {
+    // ── 1. The action ────────────────────────────────────────────────────
+    // Download, Analyse, or progress; the settings button stays beside it.
+    let primary = move || {
         let Some(file_id) = current_file.get() else {
-            return view! { <div class="sidebar-panel-empty">"No file selected"</div> }.into_any();
+            return view! { <div class="cd-no-file">"No file selected"</div> }.into_any();
         };
         let total_size: u64 = choice().files().iter().map(|f| f.size).sum();
         match backbone.get() {
@@ -502,13 +557,11 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             }
             DownloadStatus::NotDownloaded => {
                 return view! {
-                    <div class="detection-status">
-                        <button
-                            class="sidebar-btn detection-primary-btn"
-                            on:click=move |_| classifier::download(state, choice())
-                        >{format!("Download model ({})", mb(total_size))}</button>
-                        <div class="detection-status-note">"Runs on this device. Recordings are not uploaded."</div>
-                    </div>
+                    <button
+                        class="sidebar-btn detection-primary-btn"
+                        on:click=move |_| classifier::download(state, choice())
+                    >{format!("Download model ({})", mb(total_size))}</button>
+                    <div class="detection-status-note">"Runs on this device. Recordings are not uploaded."</div>
                 }
                 .into_any();
             }
@@ -516,27 +569,23 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 let done = (fraction * model_size as f64 / MB).round();
                 let pct = fraction * 100.0;
                 return view! {
-                    <div class="detection-status">
-                        <div>{format!(
-                            "Downloading model: {done:.0} of {:.0} MB",
-                            model_size as f64 / MB
-                        )}</div>
-                        <div class="detection-progress">
-                            <div class="detection-progress-fill" style=format!("width:{pct:.1}%")></div>
-                        </div>
+                    <div class="cd-progress-text">{format!(
+                        "Downloading model: {done:.0} of {:.0} MB",
+                        model_size as f64 / MB
+                    )}</div>
+                    <div class="detection-progress">
+                        <div class="detection-progress-fill" style=format!("width:{pct:.1}%")></div>
                     </div>
                 }
                 .into_any();
             }
             DownloadStatus::Failed(e) => {
                 return view! {
-                    <div class="detection-status">
-                        <div class="detection-error">{format!("Download failed. {e}")}</div>
-                        <button
-                            class="sidebar-btn detection-primary-btn"
-                            on:click=move |_| classifier::download(state, choice())
-                        >{format!("Retry download ({})", mb(total_size))}</button>
-                    </div>
+                    <div class="detection-error">{format!("Download failed. {e}")}</div>
+                    <button
+                        class="sidebar-btn detection-primary-btn"
+                        on:click=move |_| classifier::download(state, choice())
+                    >{format!("Retry download ({})", mb(total_size))}</button>
                 }
                 .into_any();
             }
@@ -547,23 +596,16 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         if let (Some(min), Some((rate, _))) = (method.min_source_rate(), source_rate.get()) {
             if rate < min {
                 return view! {
-                    <div class="detection-status">
-                        <div class="detection-error">{format!(
-                            "Sample rate too low: {} kHz. BattyBirdNET needs a sample rate of {} kHz or more.",
-                            rate as f64 / 1000.0,
-                            min / 1000
-                        )}</div>
-                    </div>
+                    <div class="detection-error">{format!(
+                        "Sample rate too low: {} kHz. BattyBirdNET needs a sample rate of {} kHz or more.",
+                        rate as f64 / 1000.0,
+                        min / 1000
+                    )}</div>
                 }
                 .into_any();
             }
         }
 
-        let stop = move || {
-            view! {
-                <button class="psd-btn detection-stop-btn" on:click=move |_| classifier::cancel(state)>"Stop"</button>
-            }
-        };
         if busy_here() {
             let (text, pct) = match run_status() {
                 RunStatus::LoadingModel { .. } => ("Loading the model\u{2026}".to_string(), None),
@@ -585,8 +627,8 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                     Some(fraction * 100.0),
                 ),
                 RunStatus::Running { fraction, .. } => {
-                    // Windows Analyse made: the live view's readings kept in
-                    // the results are not part of the count.
+                    // Windows Analyse made: the readings at the play position
+                    // kept in the results are not part of the count.
                     let (done, len) = results_info
                         .get()
                         .map(|r| (r.analysed, r.window_secs))
@@ -609,27 +651,39 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 _ => (String::new(), None),
             };
             return view! {
-                <div class="detection-status">
-                    <div class="detection-busy-row">
-                        <span>{text}</span>
-                        {stop()}
-                    </div>
-                    <div class="detection-progress">
-                        {pct.map(|p| view! {
-                            <div class="detection-progress-fill" style=format!("width:{p:.1}%")></div>
-                        })}
-                    </div>
+                <div class="detection-busy-row">
+                    <span>{text}</span>
+                    <button class="psd-btn detection-stop-btn" on:click=move |_| classifier::cancel(state)>"Stop"</button>
+                </div>
+                <div class="detection-progress">
+                    {pct.map(|p| view! {
+                        <div class="detection-progress-fill" style=format!("width:{p:.1}%")></div>
+                    })}
                 </div>
             }
             .into_any();
         }
 
-        let label = match choice() {
-            ModelChoice::BirdNet => "Analyse with BirdNET V2.4".to_string(),
-            ModelChoice::Bats(r) => format!("Analyse with BattyBirdNET ({})", r.label()),
-            ModelChoice::Perch => "Analyse with Perch 2.0".to_string(),
-            ModelChoice::BirdNetV3 => "Analyse with BirdNET+ V3.0".to_string(),
-        };
+        // The method is named in the drop-down above, so the button says
+        // only what it does. After a run it is no longer the main action.
+        let first = !analysed.get();
+        view! {
+            <button
+                class=if first { "sidebar-btn detection-primary-btn" } else { "psd-btn cd-again-btn" }
+                on:click=move |_| {
+                    let step = step_pick.get_untracked().secs(method);
+                    analyse(state, file_id, choice(), step)
+                }
+            >{if first { "Analyse" } else { "Analyse again" }}</button>
+        }
+        .into_any()
+    };
+    // Notes about the last run, under the button that makes the next one.
+    let action_notes = move || {
+        let file_id = current_file.get()?;
+        if busy_here() {
+            return None;
+        }
         let error = match run_status() {
             RunStatus::Failed {
                 file_id: f,
@@ -649,11 +703,11 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                     summary::step_text(r.spacing_secs)
                 ))
             } else if r.analysed == 0 {
-                // Only the live view's readings (`classifier::played`): no
-                // Analyse has run on this file.
+                // Only readings at the play position (`classifier::played`):
+                // no Analyse has run on this file.
                 let length = source_rate.get().map_or(0.0, |(_, d)| d);
                 Some(format!(
-                    "Results from Live view: {} of the {} recording. Analyse for the whole recording.",
+                    "Results for {} of the {} recording, from the play position. Analyse for the whole recording.",
                     summary::time_amount(r.covered_secs),
                     summary::time_amount(length)
                 ))
@@ -664,27 +718,79 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 ))
             }
         });
-        view! {
-            <div class="detection-status">
-                {error.map(|e: ClassifierError| view! { <div class="detection-error">{e.to_string()}</div> })}
-                {partial.map(|p| view! { <div class="detection-status-note">{p}</div> })}
-                <button
-                    class="sidebar-btn detection-primary-btn"
-                    on:click=move |_| {
-                        let step = step_pick.get_untracked().secs(method);
-                        analyse(state, file_id, choice(), step)
-                    }
-                >{label}</button>
-                {step_row(method, step_pick)}
-            </div>
-        }
-        .into_any()
+        (error.is_some() || partial.is_some()).then(|| {
+            view! {
+                <div class="cd-notes">
+                    {error.map(|e: ClassifierError| view! { <div class="detection-error">{e.to_string()}</div> })}
+                    {partial.map(|p| view! { <div class="detection-status-note">{p}</div> })}
+                </div>
+            }
+        })
     };
 
-    // Minimum confidence, summary, overlay, list, and the selected window.
-    // The slider is built once per set of results, so dragging it re-renders
-    // only the summary and the list below it.
+    // The settings in force, in one line under the action.
+    let facts = move || {
+        let mut f = Vec::new();
+        if !summary::step_choices(method).is_empty() {
+            f.push(format!(
+                "Step {}",
+                summary::step_text(step_pick.get().secs(method))
+            ));
+        }
+        f.push(format!("Min confidence {:.2}", min_conf()));
+        if !state.call_detection.overlay_enabled().get() {
+            f.push("Boxes off".to_string());
+        }
+        if let Some(p) = place_fact(state, method, current_file.get()) {
+            f.push(p);
+        }
+        f
+    };
+    // "Use my location" in the Place row: None idle, Some(None) waiting,
+    // Some(Some(msg)) failed.
+    let locating: RwSignal<Option<Option<String>>> = RwSignal::new(None);
     let has_results = Memo::new(move |_| results_info.get().is_some_and(|r| r.windows > 0));
+    let settings = move || {
+        settings_open.get().then(|| {
+            view! {
+                <div class="cd-settings">
+                    {step_row(method, step_pick)}
+                    <div class="setting-row" title="Lists only windows whose top species has at least this confidence. Applies to the lists, the annotations and the boxes on the spectrogram.">
+                        <span class="setting-label">"Minimum confidence"</span>
+                        <span class="setting-value">{move || format!("{:.2}", min_conf())}</span>
+                    </div>
+                    <div class="setting-row">
+                        <input
+                            type="range"
+                            class="setting-range"
+                            aria-label="Minimum confidence"
+                            min="0.05"
+                            max="0.95"
+                            step="0.05"
+                            prop:value=move || min_conf().to_string()
+                            on:input=move |ev| {
+                                if let Ok(v) = event_target_value(&ev).parse::<f32>() {
+                                    classifier::set_min_confidence(state, method, v);
+                                }
+                            }
+                        />
+                    </div>
+                    {move || place_rows(state, method, current_file, locating, has_results)}
+                    <div class="setting-row detection-annotate-row">
+                        <label class="setting-label">
+                            <input
+                                type="checkbox"
+                                prop:checked=move || state.call_detection.overlay_enabled().get()
+                                on:change=move |ev| state.call_detection.overlay_enabled().set(event_target_checked(&ev))
+                            />
+                            " Boxes on the spectrogram"
+                        </label>
+                    </div>
+                </div>
+            }
+        })
+    };
+
     // The location list for this file, once it has results and while marking
     // is on (the first time downloads the Geomodel, 16 MB).
     Effect::new(move |_| {
@@ -697,31 +803,368 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             location::update(state, file);
         }
     });
-    // The method and region are picked just above, so the title names the
-    // region only while the results are for another one (a relabel is going
-    // or failed).
-    // For results of a run that asked for a step shorter than the window,
-    // the title gives the step the shown results have, since the Step above
-    // can differ and a run stopped part way can have a longer one. Results
-    // with the windows end to end keep the plain title.
-    let results_title = Memo::new(move |_| {
-        let picked = bat_scope.get();
-        let info = results_info.get();
-        match info.as_ref().and_then(|r| r.region) {
-            Some(r) if r != picked => format!("Results for {}", r.label()),
-            _ => match info {
-                Some(r) if r.step_secs < r.window_secs => {
-                    format!("Results ({} step)", summary::step_text(r.spacing_secs))
-                }
-                _ => "Results".to_string(),
-            },
-        }
+
+    // ── 2. At the play position ──────────────────────────────────────────
+    let live = matches!(method, Method::BirdNet | Method::Perch).then(|| {
+        view! { <LiveView method=method current_file=current_file has_results=has_results map_open=map_open /> }
     });
-    let headline = move || {
+
+    // ── 3. In this recording ─────────────────────────────────────────────
+    let in_recording = move || {
+        current_file.get()?;
+        Some(in_recording_section(
+            state,
+            method,
+            current_file,
+            summary,
+            results_info,
+            has_results,
+            bat_scope,
+            step_pick,
+        ))
+    };
+
+    // ── 4. Folds ─────────────────────────────────────────────────────────
+    // "Every window", when any window reaches the minimum confidence.
+    let any_listed = Memo::new(move |_| {
+        summary.with(|s| {
+            s.as_ref()
+                .is_some_and(|s| s.species_windows + s.not_species_windows > 0)
+        })
+    });
+    let every_window = move || {
+        any_listed.get().then(|| {
+            view! {
+                <Fold name="windows" title="Every window".to_string()>
+                    {window_table(state, method, current_file)}
+                </Fold>
+            }
+        })
+    };
+    // "Add N annotations": what Analyse found, as annotations.
+    let to_add = Memo::new(move |_| {
+        let Some(file_id) = current_file.get() else {
+            return (0, String::new());
+        };
+        let min = min_conf();
+        let m = merge.get();
+        state.classifier.results().with(|r| {
+            r.get(&(file_id, method))
+                .map(|run| {
+                    (
+                        summary::spans(run, min, m).len(),
+                        summary::auto_tag_value(run),
+                    )
+                })
+                .unwrap_or_default()
+        })
+    });
+    let can_annotate = Memo::new(move |_| {
+        let any_species = summary.with(|s| s.as_ref().is_some_and(|s| s.species_windows > 0));
+        has_results.get() && any_species
+    });
+    let annotate = move || {
+        if !can_annotate.get() || busy_here() {
+            return None;
+        }
+        let title = Signal::derive(move || match to_add.get().0 {
+            0 => "Add annotations".to_string(),
+            n => format!("Add {}", count(n, "annotation", "annotations")),
+        });
+        Some(view! {
+            <Fold name="annotate" title=title>
+                {annotate_body(state, method, current_file, merge, to_add)}
+            </Fold>
+        })
+    };
+
+    // ── 5. The stored model, and the attribution ─────────────────────────
+    let model = move || model_line(state, method, model_size, backbone, show_credits);
+
+    view! {
+        <div class="cd-classifier">
+            <div class="cd-action-row">
+                <div class="cd-action">{primary}</div>
+                {settings_button(settings_open)}
+            </div>
+            {action_notes}
+            {move || current_file.get().is_some().then(|| in_force_line(settings_open, facts))}
+            {settings}
+            {live}
+            {in_recording}
+            <div class="cd-folds">
+                {every_window}
+                {annotate}
+            </div>
+            {model}
+            // In a portal on <body>: the sidebar is hidden when closed on
+            // phones, and the dialog must not go with it.
+            {move || map_open.get().then(|| view! {
+                <leptos::portal::Portal>
+                    <SpeciesMapDialog open=map_open current_file=current_file method=method />
+                </leptos::portal::Portal>
+            })}
+        </div>
+    }
+}
+
+/// The "In this recording" section: the header with what was found, notes
+/// on the results, the list (species, sound clusters, components) with a pin
+/// on each row, the search that adds a row, the selected window's top 3, and
+/// the counts of windows left out.
+#[allow(clippy::too_many_arguments)]
+fn in_recording_section(
+    state: AppState,
+    method: Method,
+    current_file: Memo<Option<u64>>,
+    summary: Memo<Option<summary::Summary>>,
+    results_info: Memo<Option<RunInfo>>,
+    has_results: Memo<bool>,
+    bat_scope: Memo<classifier::BatScope>,
+    step_pick: RwSignal<summary::StepPick>,
+) -> impl IntoView {
+    let min_conf = move || classifier::min_confidence(state, method);
+    // "2 species, 1 sound, 16 windows", or "No species".
+    let head_fact = move || {
+        let s = summary.get()?;
+        if s.species.is_empty() {
+            return Some("No species".to_string());
+        }
+        // Named sounds (Thunder, Dog) are listed with the species but
+        // counted apart, so "3 species" never includes Thunder.
+        let sounds = state.classifier.results().with(|m| {
+            current_file
+                .get()
+                .and_then(|f| m.get(&(f, method)))
+                .map_or(0, |r| {
+                    s.species
+                        .iter()
+                        .filter(|row| r.labels.get(row.class as usize).is_some_and(|l| l.is_sound))
+                        .count()
+                })
+        });
+        let animals = s.species.len() - sounds;
+        let mut parts = Vec::new();
+        if animals > 0 {
+            parts.push(count(animals, "species", "species"));
+        }
+        if sounds > 0 {
+            parts.push(count(sounds, "sound", "sounds"));
+        }
+        parts.push(windows_or_time(&s, s.species_windows, s.species_secs));
+        Some(parts.join(", "))
+    };
+    let head_title = move || format!("At confidence {:.2} or above", min_conf());
+
+    // Notes on what the results are: for another BattyBirdNET region (a
+    // relabel is going or failed), or made with another step than the one
+    // picked now.
+    let results_notes = move || {
+        let r = results_info.get()?;
+        if r.analysed == 0 {
+            return None;
+        }
+        if let Some(region) = r.region.filter(|g| *g != bat_scope.get()) {
+            return Some(format!("Results for {}", region.label()));
+        }
+        let picked = step_pick.get().secs(method);
+        let differs = !summary::step_choices(method).is_empty()
+            && (r.spacing_secs - picked).abs() > 1e-6
+            && r.complete;
+        differs.then(|| {
+            format!(
+                "Results use a {} step. Analyse again for a {} step.",
+                summary::step_text(r.spacing_secs),
+                summary::step_text(picked)
+            )
+        })
+    };
+
+    let flag_col = location::applies_to(method);
+    // Columns before the pin: name, the flag, time (or windows), best.
+    let cols = 3 + usize::from(flag_col);
+
+    // Species rows, worked out in a memo and drawn by key, so readings that
+    // change no row (several a second while a file plays) redraw nothing.
+    let species_rows = Memo::new(move |_| {
+        let min = min_conf();
+        state.classifier.results().with(|m| {
+            let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
+                return (false, Vec::new());
+            };
+            let order = summary::colour_order(run);
+            let s = summary::summarise(run, min);
+            let rows = s
+                .species
+                .iter()
+                .map(|row| {
+                    let label = run.labels.get(row.class as usize).cloned();
+                    let w = &run.windows[row.best_window];
+                    SpeciesListRow {
+                        class: row.class,
+                        name: class_name(label.as_ref()),
+                        scientific: label
+                            .as_ref()
+                            .map(|l| l.scientific.clone())
+                            .unwrap_or_default(),
+                        label,
+                        slot: order.iter().position(|&c| c == row.class),
+                        // Windows that overlap would count the same audio twice.
+                        amount: if s.overlapping {
+                            summary::time_amount(row.secs)
+                        } else {
+                            row.windows.to_string()
+                        },
+                        best: row.best,
+                        start: w.start_s,
+                        end: w.end_s,
+                    }
+                })
+                .collect::<Vec<_>>();
+            (s.overlapping, rows)
+        })
+    });
+    let overlapping = move || species_rows.with(|r| r.0);
+    let species_row = move |r: SpeciesListRow| {
+        let (start, end) = (r.start, r.end);
+        let class = move || {
+            if state.call_detection.selected_window().get() == Some(start) {
+                "detection-row selected"
+            } else {
+                "detection-row"
+            }
+        };
+        let flag = flag_cell(state, method, current_file.get_untracked(), r.label.as_ref());
+        view! {
+            <tr class=class title=r.scientific.clone() on:click=move |_| show_window(state, start, end)>
+                <td class="detection-col-kind">
+                    <span class="cd-name-line">{species_swatch(r.slot)}<span>{r.name.clone()}</span></span>
+                </td>
+                {flag}
+                <td class="detection-col-num">{r.amount.clone()}</td>
+                <td class="detection-col-num">{format!("{:.2}", r.best)}</td>
+                {species_pin(state, method, r.scientific.clone(), r.name.clone())}
+            </tr>
+        }
+    };
+
+    // Picked species with no row above: still listed, so they can be
+    // unpinned.
+    let missing_rows = Memo::new(move |_| {
+        let picked: Vec<String> = state.call_detection.strip_species().with(|v| {
+            v.iter()
+                .filter(|s| s.method == method)
+                .map(|s| s.scientific.clone())
+                .collect()
+        });
+        if picked.is_empty() {
+            return Vec::new();
+        }
+        let listed: Vec<String> =
+            species_rows.with(|r| r.1.iter().map(|r| r.scientific.clone()).collect());
+        state.classifier.results().with(|m| {
+            let run = current_file.get().and_then(|f| m.get(&(f, method)));
+            picked
+                .into_iter()
+                .filter(|s| !listed.contains(s))
+                .map(|scientific| {
+                    let label = run.and_then(|run| {
+                        classifier::strips::class_of(run, &scientific)
+                            .and_then(|c| run.labels.get(c as usize).cloned())
+                    });
+                    MissingRow {
+                        name: label
+                            .as_ref()
+                            .map_or_else(|| scientific.clone(), classifier::strips::display_name),
+                        // Without results the model's list is not known here.
+                        in_model: label.is_some() || run.is_none(),
+                        label,
+                        scientific,
+                    }
+                })
+                .collect()
+        })
+    });
+    let missing_row = move |r: MissingRow| {
+        let flag = flag_cell(state, method, current_file.get_untracked(), r.label.as_ref());
+        let cells = if r.in_model {
+            view! {
+                <td class="detection-col-num cd-missing">"\u{2013}"</td>
+                <td class="detection-col-num cd-missing" title="Highest confidence in this recording is below the minimum">
+                    {move || format!("< {:.2}", min_conf())}
+                </td>
+            }
+            .into_any()
+        } else {
+            view! {
+                <td class="cd-missing" colspan="2" title="This model's list of classes does not have this species">
+                    "Not in this model"
+                </td>
+            }
+            .into_any()
+        };
+        view! {
+            <tr class="detection-row-other" title=r.scientific.clone()>
+                <td class="detection-col-kind">
+                    <span class="cd-name-line">{species_swatch(None)}<span>{r.name.clone()}</span></span>
+                </td>
+                {flag}
+                {cells}
+                {species_pin(state, method, r.scientific.clone(), r.name.clone())}
+            </tr>
+        }
+    };
+
+    // BirdNET V2.4's components picked for a row above the spectrogram.
+    let component_rows = move || {
+        if method != Method::BirdNet {
+            return Vec::new();
+        }
+        let picked = state.call_detection.strip_components().get();
+        let shares = crate::components::score_strips::birdnet_components()
+            .map(|p| p.variance.clone())
+            .unwrap_or_default();
+        picked
+            .into_iter()
+            .map(|k| {
+                let name = format!("PC{}", k + 1);
+                let help = shares.get(k).map_or_else(String::new, |s| {
+                    format!("{name}: {:.1}% of the variation between BirdNET's classes", s * 100.0)
+                });
+                view! {
+                    <tr title=help>
+                        <td class="detection-col-kind" colspan=cols.to_string()>
+                            <span class="cd-name-line">
+                                <span class="map-key cd-swatch cd-swatch-pc"></span>
+                                <span>{name.clone()}</span>
+                            </span>
+                        </td>
+                        <td class="cd-col-pin">
+                            {pin_button(name, move || component_picked(state, k), move || toggle_component(state, k))}
+                        </td>
+                    </tr>
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let clusters_pin = pin_button(
+        "Sound clusters".to_string(),
+        move || state.call_detection.sound_groups().get(),
+        move || {
+            state.call_detection.sound_groups().update(|v| *v = !*v);
+            save_strips(state);
+        },
+    )
+    .into_any();
+
+    // The windows left out of the list, and why nothing is listed.
+    let notes = move || {
         let s = summary.get()?;
         let min = min_conf();
-        let main = if s.species.is_empty() {
-            match s.highest {
+        let mut notes = Vec::new();
+        if s.species.is_empty() {
+            notes.push(match s.highest {
                 Some((class, conf)) => {
                     let name = state.classifier.results().with(|m| {
                         current_file
@@ -735,35 +1178,8 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                     )
                 }
                 None => format!("No species at confidence {min:.2} or above."),
-            }
-        } else {
-            // Named sounds (Thunder, Dog) are listed with the species but
-            // counted apart, so "3 species" never includes Thunder.
-            let sounds = state.classifier.results().with(|m| {
-                current_file
-                    .get()
-                    .and_then(|f| m.get(&(f, method)))
-                    .map_or(0, |r| {
-                        s.species
-                            .iter()
-                            .filter(|row| {
-                                r.labels.get(row.class as usize).is_some_and(|l| l.is_sound)
-                            })
-                            .count()
-                    })
             });
-            let animals = s.species.len() - sounds;
-            let mut parts = Vec::new();
-            if animals > 0 {
-                parts.push(count(animals, "species", "species"));
-            }
-            if sounds > 0 {
-                parts.push(count(sounds, "sound", "sounds"));
-            }
-            parts.push(windows_or_time(&s, s.species_windows, s.species_secs));
-            format!("{min:.2} or above: {}", parts.join(", "))
-        };
-        let mut notes = Vec::new();
+        }
         if s.below_windows > 0 {
             notes.push(format!(
                 "Below {min:.2}: {}",
@@ -776,138 +1192,60 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 windows_or_time(&s, s.not_species_windows, s.not_species_secs)
             ));
         }
-        Some(view! {
-            <div class="detection-status">
-                <div class="detection-summary">{main}</div>
-                {notes.into_iter().map(|t| view! { <div class="detection-status-note">{t}</div> }).collect::<Vec<_>>()}
-            </div>
-        })
-    };
-    // The lists, when any window reaches the minimum confidence. Through a
-    // memo of that alone, so new windows (an Analyse, or the live view's
-    // readings while the file plays) leave the lists in place; each list
-    // follows the results itself.
-    let any_listed = Memo::new(move |_| {
-        summary.with(|s| {
-            s.as_ref()
-                .is_some_and(|s| s.species_windows + s.not_species_windows > 0)
-        })
-    });
-    let lists = move || {
-        if !any_listed.get() {
-            return None;
-        }
-        let view_button = move |value: ListView, label: &'static str| {
+        (!notes.is_empty()).then(|| {
             view! {
-                <button
-                    class=move || if list_view.get() == value { "psd-btn psd-btn-active" } else { "psd-btn" }
-                    on:click=move |_| list_view.set(value)
-                >{label}</button>
+                <div class="cd-notes">
+                    {notes.into_iter().map(|t| view! { <div class="detection-status-note">{t}</div> }).collect::<Vec<_>>()}
+                </div>
             }
-        };
-        Some(view! {
-            <div class="detection-annotate-row">
-                <div class="psd-btn-group">
-                    {view_button(ListView::BySpecies, "By species")}
-                    {view_button(ListView::ByWindow, "By window")}
-                </div>
-            </div>
-            {move || match list_view.get() {
-                ListView::BySpecies => species_table(state, method, current_file).into_any(),
-                ListView::ByWindow => window_table(state, method, current_file).into_any(),
-            }}
-        })
-    };
-    // "Use my location" in the Place row: None idle, Some(None) waiting,
-    // Some(Some(msg)) failed.
-    let locating: RwSignal<Option<Option<String>>> = RwSignal::new(None);
-    let results = move || {
-        if !has_results.get() {
-            return None;
-        }
-        Some(view! {
-            <div class="setting-group">
-                <div class="setting-group-title">{move || results_title.get()}</div>
-                <div class="setting-row" title="Shows only windows whose top species has at least this confidence. Applies to the summary, the list, the annotations and the overlay.">
-                    <span class="setting-label">"Minimum confidence"</span>
-                    <span class="setting-value">{move || format!("{:.2}", min_conf())}</span>
-                </div>
-                <div class="setting-row">
-                    <input
-                        type="range"
-                        class="setting-range"
-                        min="0.05"
-                        max="0.95"
-                        step="0.05"
-                        prop:value=move || min_conf().to_string()
-                        on:input=move |ev| {
-                            if let Ok(v) = event_target_value(&ev).parse::<f32>() {
-                                classifier::set_min_confidence(state, method, v);
-                            }
-                        }
-                    />
-                </div>
-                {headline}
-                {move || place_rows(state, method, current_file, locating)}
-                <div class="setting-row detection-annotate-row">
-                    <label class="setting-label">
-                        <input
-                            type="checkbox"
-                            prop:checked=move || state.call_detection.overlay_enabled().get()
-                            on:change=move |ev| state.call_detection.overlay_enabled().set(event_target_checked(&ev))
-                        />
-                        " Show overlay"
-                    </label>
-                </div>
-                {lists}
-                {move || top_three(state, method, current_file)}
-                // BattyBirdNET's regional classifiers give no usable map
-                // (research/species-map/README.md).
-                {crate::classifier::species_map::map_spec(method).is_some().then(|| view! {
-                    <div class="detection-annotate-row">
-                        <button class="psd-btn" on:click=move |_| map_open.set(true)>"Species map"</button>
-                    </div>
-                })}
-                // In a portal on <body>: the sidebar is hidden when closed on
-                // phones, and the dialog must not go with it.
-                {move || map_open.get().then(|| view! {
-                    <leptos::portal::Portal>
-                        <SpeciesMapDialog open=map_open current_file=current_file method=method />
-                    </leptos::portal::Portal>
-                })}
-            </div>
         })
     };
 
-    // Rows above the spectrogram: the species picked, and BirdNET's
-    // components.
-    let strips = move || {
-        if !has_results.get() {
-            return None;
-        }
-        Some(strips_group(state, method, current_file))
-    };
+    view! {
+        <div class="cd-section cd-recording">
+            {section_head("In this recording", move || head_fact(), head_title)}
+            {move || results_notes().map(|t| view! { <div class="cd-notes"><div class="detection-status-note">{t}</div></div> })}
+            {move || (!has_results.get()).then(|| view! {
+                <div class="cd-notes"><div class="detection-status-note">"Analyse to list the species found in this recording."</div></div>
+            })}
+            <table class="detection-table cd-list">
+                <thead>
+                    <tr>
+                        <th></th>
+                        {flag_header(method)}
+                        <th class="detection-col-num">{move || if overlapping() { "Time" } else { "Windows" }}</th>
+                        <th class="detection-col-num" title="Best confidence">"Best"</th>
+                        <th class="cd-col-pin" title="Shown above the spectrogram">
+                            <span class="cd-pin-head" aria-label="Shown above the spectrogram"><Icon kind=Icon::Pin /></span>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <For each=move || species_rows.with(|r| r.1.clone()) key=SpeciesListRow::key children=species_row />
+                    <For each=move || missing_rows.get() key=|r: &MissingRow| (r.scientific.clone(), r.in_model) children=missing_row />
+                    {crate::components::sound_groups::list_rows(state, method, current_file, save_strips, cols, clusters_pin)}
+                    {component_rows}
+                </tbody>
+            </table>
+            {strip_search(state, method, current_file)}
+            {top_three(state, method, current_file)}
+            {notes}
+        </div>
+    }
+}
 
-    // Add as annotations.
-    let annotate = move || {
+/// The inside of the "Add N annotations" fold: one per window or merged,
+/// what adding replaces, and the button.
+fn annotate_body(
+    state: AppState,
+    method: Method,
+    current_file: Memo<Option<u64>>,
+    merge: RwSignal<bool>,
+    to_add: Memo<(usize, String)>,
+) -> impl IntoView {
+    let note = move || {
         let file_id = current_file.get()?;
-        let n = results_info.get()?.windows;
-        let any_species = summary.with(|s| s.as_ref().is_some_and(|s| s.species_windows > 0));
-        if n == 0 || !any_species || busy_here() {
-            return None;
-        }
-        let min = min_conf();
-        let m = merge.get();
-        let (to_add, tag) = state.classifier.results().with(|r| {
-            r.get(&(file_id, method))
-                .map(|run| {
-                    (
-                        summary::spans(run, min, m).len(),
-                        summary::auto_tag_value(run),
-                    )
-                })
-                .unwrap_or_default()
-        });
+        let (n, tag) = to_add.get();
         let existing = state.annotations.store().with(|store| {
             store
                 .get(file_id)
@@ -919,83 +1257,85 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 })
                 .unwrap_or(0)
         });
-        let note = (existing > 0 && to_add > 0).then(|| {
-            format!(
+        (existing > 0 && n > 0).then(|| {
+            let text = format!(
                 "Replaces {} tagged #auto={tag}, including any you edited. Undo with {}.",
                 count(existing, "annotation", "annotations"),
                 undo_keys()
-            )
-        });
-        let option = move |value: bool, label: &'static str| {
-            view! {
-                <label class="setting-label detection-radio">
-                    <input
-                        type="radio"
-                        name="classifier-annotate-merge"
-                        prop:checked=move || merge.get() == value
-                        on:change=move |_| merge.set(value)
-                    />
-                    {label}
-                </label>
-            }
-        };
-        Some(view! {
-            <div class="setting-group">
-                <div class="setting-group-title">"Add as annotations"</div>
-                <div class="detection-annotate-row detection-radio-group">
-                    {option(false, "One per window")}
-                    {option(true, "Merge neighbours")}
-                </div>
-                {note.map(|t| view! { <div class="detection-status-note detection-annotate-row">{t}</div> })}
-                <button
-                    class="sidebar-btn detection-add-btn"
-                    disabled=to_add == 0
-                    on:click=move |_| add_annotations(state, file_id, method, merge.get_untracked())
-                >{if to_add == 0 {
-                    "Add annotations".to_string()
-                } else {
-                    format!("Add {}", count(to_add, "annotation", "annotations"))
-                }}</button>
-            </div>
+            );
+            view! { <div class="detection-status-note detection-annotate-row">{text}</div> }
         })
     };
-
-    // The stored model, and the attribution.
-    let model = move || {
-        let downloaded = backbone.get() == DownloadStatus::Downloaded;
-        let a = catalog::attribution(method);
-        let (byline, used_by, cant_run) = match method {
-            Method::BirdNet => (
-                "Powered by BirdNET V2.4.",
-                " Used by BirdNET and BattyBirdNET.",
-                "BirdNET and BattyBirdNET",
-            ),
-            Method::Bats => (
-                "BattyBirdNET by rdz-oss, powered by BirdNET.",
-                " Used by BirdNET and BattyBirdNET.",
-                "BirdNET and BattyBirdNET",
-            ),
-            Method::Perch => ("Perch 2.0 by Google DeepMind.", "", "Perch"),
-            Method::BirdNetV3 => ("Powered by BirdNET+ V3.0.", "", "BirdNET+ V3.0"),
-        };
-        // The link text is the site, e.g. "birdnet.cornell.edu".
-        let site = a
-            .powered_by_url
-            .trim_start_matches("https://")
-            .trim_start_matches("www.")
-            .trim_end_matches('/');
+    let option = move |value: bool, label: &'static str| {
         view! {
-            <div class="setting-group">
-                <div class="setting-group-title">"Model"</div>
-                {downloaded.then(|| view! {
-                    <div class="detection-status">
-                        <div class="detection-status-note">{format!(
-                            "Downloaded: {}.{used_by}",
-                            mb(model_size)
-                        )}</div>
-                    </div>
+            <label class="setting-label detection-radio">
+                <input
+                    type="radio"
+                    name="classifier-annotate-merge"
+                    prop:checked=move || merge.get() == value
+                    on:change=move |_| merge.set(value)
+                />
+                {label}
+            </label>
+        }
+    };
+    view! {
+        <div class="detection-annotate-row detection-radio-group">
+            {option(false, "One per window")}
+            {option(true, "Merge neighbours")}
+        </div>
+        {note}
+        <button
+            class="psd-btn cd-add-btn"
+            disabled=move || to_add.get().0 == 0
+            on:click=move |_| {
+                if let Some(file_id) = current_file.get_untracked() {
+                    add_annotations(state, file_id, method, merge.get_untracked());
+                }
+            }
+        >{move || match to_add.get().0 {
+            0 => "Add annotations".to_string(),
+            n => format!("Add {}", count(n, "annotation", "annotations")),
+        }}</button>
+    }
+}
+
+/// The line about the stored model (its size and Delete) and the
+/// attribution the model's licence asks for, with Credits.
+fn model_line(
+    state: AppState,
+    method: Method,
+    model_size: u64,
+    backbone: Memo<DownloadStatus>,
+    show_credits: RwSignal<bool>,
+) -> impl IntoView {
+    let downloaded = backbone.get() == DownloadStatus::Downloaded;
+    let a = catalog::attribution(method);
+    let (byline, cant_run) = match method {
+        Method::BirdNet => ("Powered by BirdNET V2.4.", "BirdNET and BattyBirdNET"),
+        Method::Bats => (
+            "BattyBirdNET by rdz-oss, powered by BirdNET.",
+            "BirdNET and BattyBirdNET",
+        ),
+        Method::Perch => ("Perch 2.0 by Google DeepMind.", "Perch"),
+        Method::BirdNetV3 => ("Powered by BirdNET+ V3.0.", "BirdNET+ V3.0"),
+    };
+    // BirdNET's backbone is shared with BattyBirdNET.
+    let shared = matches!(method, Method::BirdNet | Method::Bats);
+    // The link text is the site, e.g. "birdnet.cornell.edu".
+    let site = a
+        .powered_by_url
+        .trim_start_matches("https://")
+        .trim_start_matches("www.")
+        .trim_end_matches('/');
+    view! {
+        <div class="cd-model">
+            {downloaded.then(|| view! {
+                <div>
+                    {format!("Model on this device, {}. ", mb(model_size))}
                     <button
-                        class="psd-btn detection-delete-btn"
+                        class="detection-link-btn"
+                        title=shared.then_some("Used by BirdNET and BattyBirdNET")
                         on:click=move |_| {
                             let ok = web_sys::window()
                                 .and_then(|w| {
@@ -1011,38 +1351,28 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                                 classifier::delete_files(state, deletable_files(method));
                             }
                         }
-                    >{format!("Delete model ({})", mb(model_size))}</button>
-                })}
-                <div class="detection-status detection-credit">
-                    {byline}" "
-                    <a href=a.licence_url target="_blank" rel="noopener">{a.licence}</a>
-                    ". "
-                    <button
-                        class="detection-link-btn"
-                        aria-expanded=move || show_credits.get().to_string()
-                        on:click=move |_| show_credits.update(|v| *v = !*v)
-                    >"Credits"</button>
-                    {move || show_credits.get().then(|| view! {
-                        <div class="detection-credits">
-                            {a.credits.iter().map(|c| view! { <p>{*c}</p> }).collect::<Vec<_>>()}
-                            <p>{a.citation}</p>
-                            <p>
-                                <a href=a.powered_by_url target="_blank" rel="noopener">{site}</a>
-                            </p>
-                        </div>
-                    })}
+                    >"Delete"</button>
                 </div>
+            })}
+            <div>
+                {byline}" "
+                <a href=a.licence_url target="_blank" rel="noopener">{a.licence}</a>
+                ". "
+                <button
+                    class="detection-link-btn"
+                    aria-expanded=move || show_credits.get().to_string()
+                    on:click=move |_| show_credits.update(|v| *v = !*v)
+                >"Credits"</button>
             </div>
-        }
-    };
-
-    view! {
-        <div>
-            {action}
-            {results}
-            {strips}
-            {annotate}
-            {model}
+            {move || show_credits.get().then(|| view! {
+                <div class="detection-credits">
+                    {a.credits.iter().map(|c| view! { <p>{*c}</p> }).collect::<Vec<_>>()}
+                    <p>{a.citation}</p>
+                    <p>
+                        <a href=a.powered_by_url target="_blank" rel="noopener">{site}</a>
+                    </p>
+                </div>
+            })}
         </div>
     }
 }
@@ -1050,9 +1380,8 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
 /// The flag beside a bird the location list says is unlikely at the
 /// recording's place and month. One mark for every place a result is named
 /// (the lists, the top 3, the spectrogram's label strip), so it costs one
-/// character of width and the name stays on one line. The summary line
-/// "Unlikely here: 2 species" carries the same flag and so names it.
-fn unlikely_flag() -> impl IntoView {
+/// character of width and the name stays on one line.
+pub(super) fn unlikely_flag() -> impl IntoView {
     view! {
         <span
             class="unlikely-flag"
@@ -1130,14 +1459,49 @@ const MONTHS: [&str; 12] = [
     "December",
 ];
 
-/// The Place row and "Mark birds unlikely here". The place is the
-/// recording's own GPS, or else this device's position once the user asks for
-/// it with "Use my location" (kept in memory for this session).
+/// The month of a location-list week (1 to 48), or `None` for any month (0).
+fn month_of(week: u32) -> Option<&'static str> {
+    (week > 0).then(|| MONTHS[((week - 1) / 4).min(11) as usize])
+}
+
+/// For the line of settings in force: the place and month birds are marked
+/// unlikely for ("Antarctica in January", "Your location in June"), while
+/// "Mark birds unlikely here" is on. Reactive.
+fn place_fact(state: AppState, method: Method, file: Option<u64>) -> Option<String> {
+    if !location::applies_to(method) || !state.call_detection.mark_unexpected().get() {
+        return None;
+    }
+    let file = file?;
+    let (own, country, week) = state.library.files().with(|fs| {
+        fs.iter().find(|f| f.id == file).map(|f| {
+            (
+                place::file_place(f),
+                place::recording_place(f).map(|p| p.country),
+                place::file_week(f),
+            )
+        })
+    })?;
+    let device = state.classifier.device_position().get();
+    let where_ = match (own, device) {
+        (Some(p), _) => country.unwrap_or_else(|| format!("{:.2}, {:.2}", p.lat, p.lon)),
+        (None, Some(_)) => "Your location".to_string(),
+        (None, None) => return Some("Place unknown".to_string()),
+    };
+    Some(match month_of(week) {
+        Some(m) => format!("{where_} in {m}"),
+        None => format!("{where_}, any month"),
+    })
+}
+
+/// The Place row and "Mark birds unlikely here", in the settings. The place
+/// is the recording's own GPS, or else this device's position once the user
+/// asks for it with "Use my location" (kept in memory for this session).
 fn place_rows(
     state: AppState,
     method: Method,
     current_file: Memo<Option<u64>>,
     locating: RwSignal<Option<Option<String>>>,
+    has_results: Memo<bool>,
 ) -> Option<AnyView> {
     if !location::applies_to(method) {
         return None;
@@ -1173,6 +1537,42 @@ fn place_rows(
             locating.set(msg.map(Some));
         });
     };
+    // Beside the checkbox, so turning it on or off changes this one value
+    // and moves nothing: blank when off or before there are results, then
+    // "Checking..." until the location list is worked out, then how many
+    // listed species are flagged.
+    let marked = move || {
+        if !state.call_detection.mark_unexpected().get() || !has_results.get() {
+            return String::new();
+        }
+        let checking = state
+            .classifier
+            .occurrence()
+            .with(|m| m.get(&file).is_none_or(|o| o.scores.is_none()));
+        if checking {
+            "Checking\u{2026}".to_string()
+        } else {
+            count(
+                unlikely_species_count(state, file, method),
+                "species",
+                "species",
+            )
+        }
+    };
+    let mark_row = view! {
+        <div class="setting-row detection-annotate-row">
+            <label class="setting-label">
+                <input
+                    type="checkbox"
+                    prop:checked=move || state.call_detection.mark_unexpected().get()
+                    on:change=move |ev| state.call_detection.mark_unexpected().set(event_target_checked(&ev))
+                />
+                " Mark birds unlikely here"
+                {unlikely_flag()}
+            </label>
+            <span class="setting-value detection-marked-count">{marked}</span>
+        </div>
+    };
     let Some(place) = place else {
         return Some(
             view! {
@@ -1194,37 +1594,14 @@ fn place_rows(
                     </button>
                 </div>
                 {error}
+                {mark_row}
             }
             .into_any(),
         );
     };
     let from_device = own.is_none();
-    let month = match place.week {
-        0 => "any month".to_string(),
-        w => MONTHS[((w - 1) / 4).min(11) as usize].to_string(),
-    };
+    let month = month_of(place.week).unwrap_or("any month");
     let value = format!("{:.2}, {:.2} \u{b7} {month}", place.lat, place.lon);
-    // Beside the checkbox, so turning it on or off changes this one value
-    // and moves nothing: blank when off, then "Checking..." until the
-    // location list is worked out, then how many listed species are flagged.
-    let marked = move || {
-        if !state.call_detection.mark_unexpected().get() {
-            return String::new();
-        }
-        let checking = state
-            .classifier
-            .occurrence()
-            .with(|m| m.get(&file).is_none_or(|o| o.scores.is_none()));
-        if checking {
-            "Checking\u{2026}".to_string()
-        } else {
-            count(
-                unlikely_species_count(state, file, method),
-                "species",
-                "species",
-            )
-        }
-    };
     Some(
         view! {
             <div
@@ -1254,18 +1631,7 @@ fn place_rows(
                 </span>
             </div>
             {error}
-            <div class="setting-row detection-annotate-row">
-                <label class="setting-label">
-                    <input
-                        type="checkbox"
-                        prop:checked=move || state.call_detection.mark_unexpected().get()
-                        on:change=move |ev| state.call_detection.mark_unexpected().set(event_target_checked(&ev))
-                    />
-                    " Mark birds unlikely here"
-                    {unlikely_flag()}
-                </label>
-                <span class="setting-value detection-marked-count">{marked}</span>
-            </div>
+            {mark_row}
         }
         .into_any(),
     )
@@ -1274,77 +1640,7 @@ fn place_rows(
 const PLACE_HELP_OWN: &str = "From the recording's metadata. Birds the BirdNET Geomodel scores below 0.01 at this place and month are marked unlikely here. The place stays on this device.";
 const PLACE_HELP_DEVICE: &str = "Your location, from this device, used for recordings without location data. Birds the BirdNET Geomodel scores below 0.01 at this place and month are marked unlikely here. Your location stays on this device and is not saved.";
 
-/// The "By species" list: one row per species, most windows first. A click
-/// shows the species' best window.
-fn species_table(
-    state: AppState,
-    method: Method,
-    current_file: Memo<Option<u64>>,
-) -> impl IntoView {
-    let min = classifier::min_confidence(state, method);
-    let mut overlapping = false;
-    let rows = state.classifier.results().with(|m| {
-        let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
-            return Vec::new();
-        };
-        let order = summary::colour_order(run);
-        let s = summary::summarise(run, min);
-        overlapping = s.overlapping;
-        s.species
-            .iter()
-            .map(|row| {
-                let slot = order.iter().position(|&c| c == row.class);
-                let label = run.labels.get(row.class as usize);
-                let name = class_name(label);
-                let scientific = label.map(|l| l.scientific.clone()).unwrap_or_default();
-                let w = &run.windows[row.best_window];
-                let (start, end) = (w.start_s, w.end_s);
-                let flag = flag_cell(state, method, current_file.get(), label);
-                let strip = strip_cell(state, method, scientific.clone(), name.clone());
-                let class = move || {
-                    if state.call_detection.selected_window().get() == Some(start) {
-                        "detection-row selected"
-                    } else {
-                        "detection-row"
-                    }
-                };
-                // Windows that overlap would count the same audio twice.
-                let amount = if s.overlapping {
-                    summary::time_amount(row.secs)
-                } else {
-                    row.windows.to_string()
-                };
-                view! {
-                    <tr class=class title=scientific on:click=move |_| show_window(state, start, end)>
-                        {strip}
-                        <td class="detection-col-kind">{species_swatch(slot)}{name}</td>
-                        {flag}
-                        <td class="detection-col-num">{amount}</td>
-                        <td class="detection-col-num">{format!("{:.2}", row.best)}</td>
-                    </tr>
-                }
-            })
-            .collect::<Vec<_>>()
-    });
-    view! {
-        <div class="detection-list">
-            <table class="detection-table">
-                <thead>
-                    <tr>
-                        {strip_header()}
-                        <th>"Species"</th>
-                        {flag_header(method)}
-                        <th class="detection-col-num">{if overlapping { "Total time" } else { "Windows" }}</th>
-                        <th class="detection-col-num" title="Best confidence">"Best"</th>
-                    </tr>
-                </thead>
-                <tbody>{rows}</tbody>
-            </table>
-        </div>
-    }
-}
-
-/// One row of the "By window" list.
+/// One row of the "Every window" list.
 #[derive(Clone, PartialEq)]
 struct WindowRow {
     /// The window's number, when windows do not overlap.
@@ -1375,7 +1671,7 @@ impl WindowRow {
     }
 }
 
-/// The "By window" list: windows at or above the minimum, in time order.
+/// The "Every window" list: windows at or above the minimum, in time order.
 /// The rows are worked out in a memo and drawn by key, so readings that add
 /// no row (below the minimum) redraw nothing, and a new row adds one row.
 fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>) -> impl IntoView {
@@ -1444,7 +1740,9 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
             <tr class=class title=scientific on:click=move |_| show_window(state, start, end)>
                 {r.number.map(|n| view! { <td class="detection-col-num">{n}</td> })}
                 <td>{crate::format_time::format_time_display(start, 1)}</td>
-                <td class="detection-col-kind">{species_swatch(r.slot)}{class_name(r.label.as_ref())}</td>
+                <td class="detection-col-kind">
+                    <span class="cd-name-line">{species_swatch(r.slot)}<span>{class_name(r.label.as_ref())}</span></span>
+                </td>
                 {flag}
                 <td class="detection-col-num">{format!("{:.2}", r.confidence)}</td>
             </tr>
@@ -1470,191 +1768,89 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
     }
 }
 
-/// The selected window's top 3 classes.
-fn top_three(
-    state: AppState,
-    method: Method,
-    current_file: Memo<Option<u64>>,
-) -> Option<impl IntoView> {
-    let start = state.call_detection.selected_window().get()?;
-    state.classifier.results().with(|m| {
-        let run = current_file.get().and_then(|f| m.get(&(f, method)))?;
-        let i = run.window_at_start(start)?;
-        let w = run.windows.get(i)?;
-        // With overlapping windows the numbers change as a run adds windows
-        // between others, so only the times are given.
-        let which = if run.overlapping() {
-            String::new()
-        } else {
-            format!(" {}", i + 1)
-        };
-        let rows = w
-            .top
-            .iter()
-            .take(3)
-            .map(|s| {
-                let label = run.label(s);
+/// The selected window's top 3 classes, as the data they are drawn from, so
+/// the table is drawn again only when it changes (not on every reading).
+#[derive(Clone, PartialEq)]
+struct TopThree {
+    /// "Top 3 in window 4 (9.0s to 12.0s)"
+    title: String,
+    rows: Vec<(Option<classifier::SpeciesLabel>, f32)>,
+}
+
+/// The selected window's top 3 classes, under the list.
+fn top_three(state: AppState, method: Method, current_file: Memo<Option<u64>>) -> impl IntoView {
+    let data = Memo::new(move |_| {
+        let start = state.call_detection.selected_window().get()?;
+        state.classifier.results().with(|m| {
+            let run = current_file.get().and_then(|f| m.get(&(f, method)))?;
+            let i = run.window_at_start(start)?;
+            let w = run.windows.get(i)?;
+            let (a, b) = (
+                crate::format_time::format_time_display(w.start_s, 1),
+                crate::format_time::format_time_display(w.end_s, 1),
+            );
+            // With overlapping windows the numbers change as a run adds
+            // windows between others, so only the times are given.
+            let title = if run.overlapping() {
+                format!("Top 3 in window {a} to {b}")
+            } else {
+                format!("Top 3 in window {} ({a} to {b})", i + 1)
+            };
+            Some(TopThree {
+                title,
+                rows: w
+                    .top
+                    .iter()
+                    .take(3)
+                    .map(|s| (run.label(s).cloned(), s.confidence))
+                    .collect(),
+            })
+        })
+    });
+    move || {
+        let t = data.get()?;
+        let rows = t
+            .rows
+            .into_iter()
+            .map(|(label, conf)| {
                 let scientific = label
+                    .as_ref()
                     .filter(|l| l.is_species && l.scientific != l.common)
                     .map(|l| l.scientific.clone());
-                let flag = flag_cell(state, method, current_file.get(), label);
-                // BattyBirdNET's "Noise" and the like get no row.
-                let strip = label.filter(|l| l.is_species).map(|l| {
-                    strip_cell(state, method, l.scientific.clone(), class_name(Some(l)))
-                });
-                let strip = match strip {
-                    Some(cell) => cell.into_any(),
-                    None => view! { <td class="detection-col-strip"></td> }.into_any(),
+                let flag = flag_cell(state, method, current_file.get_untracked(), label.as_ref());
+                // BattyBirdNET's "Noise" and the like get no row above.
+                let pin = match label.as_ref().filter(|l| l.is_species) {
+                    Some(l) => {
+                        species_pin(state, method, l.scientific.clone(), class_name(Some(l)))
+                            .into_any()
+                    }
+                    None => view! { <td class="cd-col-pin"></td> }.into_any(),
                 };
                 view! {
                     <tr>
-                        {strip}
                         <td class="detection-col-kind">
-                            {class_name(label)}
+                            {class_name(label.as_ref())}
                             {scientific.map(|s| view! { <div class="detection-scientific">{s}</div> })}
                         </td>
                         {flag}
-                        <td class="detection-col-num">{format!("{:.2}", s.confidence)}</td>
+                        <td class="detection-col-num">{format!("{conf:.2}")}</td>
+                        {pin}
                     </tr>
                 }
             })
             .collect::<Vec<_>>();
         Some(view! {
             <div class="detection-top3">
-                <div class="detection-status-note">{if which.is_empty() {
-                    format!(
-                        "Top 3 in window {} to {}",
-                        crate::format_time::format_time_display(w.start_s, 1),
-                        crate::format_time::format_time_display(w.end_s, 1)
-                    )
-                } else {
-                    format!(
-                        "Top 3 in window{which} ({} to {})",
-                        crate::format_time::format_time_display(w.start_s, 1),
-                        crate::format_time::format_time_display(w.end_s, 1)
-                    )
-                }}</div>
+                <div class="detection-status-note">{t.title}</div>
                 <table class="detection-table">
                     <tbody>{rows}</tbody>
                 </table>
             </div>
         })
-    })
-}
-
-/// The "Rows above the spectrogram" group: each species picked for this
-/// method, with a button to remove it (so a species that falls below the
-/// minimum confidence, and leaves the lists, can still be removed), and for
-/// BirdNET a button per principal component.
-fn strips_group(state: AppState, method: Method, current_file: Memo<Option<u64>>) -> impl IntoView {
-    let picked = move || {
-        let file = current_file.get();
-        let list: Vec<String> = state.call_detection.strip_species().with(|v| {
-            v.iter()
-                .filter(|s| s.method == method)
-                .map(|s| s.scientific.clone())
-                .collect()
-        });
-        if list.is_empty() {
-            return ().into_any();
-        }
-        let rows = list
-            .into_iter()
-            .map(|scientific| {
-                // The common name from this file's results; the scientific
-                // name for a species this run does not have.
-                let label = state.classifier.results().with(|m| {
-                    file.and_then(|f| m.get(&(f, method))).and_then(|run| {
-                        classifier::strips::class_of(run, &scientific)
-                            .and_then(|c| run.labels.get(c as usize).cloned())
-                    })
-                });
-                let name = label
-                    .as_ref()
-                    .map_or_else(|| scientific.clone(), classifier::strips::display_name);
-                let flag = flag_cell(state, method, file, label.as_ref());
-                let remove = scientific.clone();
-                view! {
-                    <tr title=scientific>
-                        <td class="detection-col-kind">{name.clone()}</td>
-                        {flag}
-                        <td class="detection-col-num">
-                            <button
-                                class="detection-link-btn strip-remove-btn"
-                                aria-label=format!("Remove {name} row")
-                                title=format!("Remove {name} row")
-                                on:click=move |_| toggle_strip(state, method, remove.clone())
-                            >"\u{d7}"</button>
-                        </td>
-                    </tr>
-                }
-            })
-            .collect::<Vec<_>>();
-        view! {
-            <table class="detection-table">
-                <tbody>{rows}</tbody>
-            </table>
-        }
-        .into_any()
-    };
-    // BirdNET only: the components of its embedding. The count comes from
-    // the components file, loaded on first use.
-    let components = move || {
-        if method != Method::BirdNet {
-            return None;
-        }
-        let pcs = crate::components::score_strips::birdnet_components()?;
-        let buttons = pcs
-            .variance
-            .iter()
-            .enumerate()
-            .map(|(k, share)| {
-                let on = move || {
-                    state
-                        .call_detection
-                        .strip_components()
-                        .with(|v| v.contains(&k))
-                };
-                let name = format!("PC{}", k + 1);
-                let help = format!(
-                    "{name}: {:.1}% of the variation between BirdNET's classes\nShows {name} in a row above the spectrogram",
-                    share * 100.0
-                );
-                view! {
-                    <button
-                        class=move || if on() { "psd-btn psd-btn-active" } else { "psd-btn" }
-                        aria-pressed=move || on().to_string()
-                        title=help
-                        on:click=move |_| {
-                            state
-                                .call_detection
-                                .strip_components()
-                                .update(|v| classifier::strips::toggle(v, k));
-                            save_strips(state);
-                        }
-                    >{name}</button>
-                }
-            })
-            .collect::<Vec<_>>();
-        Some(view! {
-            <div class="setting-row">
-                <span class="setting-label">"Principal components"</span>
-            </div>
-            <div class="detection-annotate-row strip-pc-buttons">{buttons}</div>
-        })
-    };
-    view! {
-        <div class="setting-group">
-            <div class="setting-group-title">"Rows above the spectrogram"</div>
-            {picked}
-            {strip_search(state, method, current_file)}
-            {components}
-            {crate::components::sound_groups::controls(state, method, current_file, save_strips)}
-        </div>
     }
 }
 
-/// Most matches the species search lists at once.
+/// Most matches the search lists at once.
 const SEARCH_MATCHES: usize = 8;
 
 /// A run's label list, compared by identity: a memo of it changes only when
@@ -1672,24 +1868,45 @@ impl LabelList {
 /// (`classifier::strips::fold_labels`).
 type FoldedNames = std::sync::Arc<Vec<(String, String)>>;
 
-/// One species the search offers.
+/// One row the search offers: a species, or one of BirdNET V2.4's
+/// components.
 #[derive(Clone, PartialEq)]
 struct SearchMatch {
     name: String,
+    /// Empty for a component.
     scientific: String,
+    component: Option<usize>,
     added: bool,
 }
 
-/// The species search in "Rows above the spectrogram": type part of a
-/// common or scientific name, then pick a match (or press Enter for the
-/// highlighted one) to add its row. Searches every class of the current
-/// file's run for this method, so a species the run never scored highly can
-/// be added. Matches are listed in the panel under the field rather than in
-/// a popup, which the narrow sidebar would clip.
+/// The components a query asks for: "pc" lists them all, "pc1" those whose
+/// number starts with 1. Empty for any other query.
+fn component_matches(query: &str, n: usize) -> Vec<usize> {
+    let q = query.trim().to_lowercase();
+    let Some(rest) = q.strip_prefix("pc") else {
+        return Vec::new();
+    };
+    let rest = rest.trim();
+    if !rest.chars().all(|c| c.is_ascii_digit()) {
+        return Vec::new();
+    }
+    (0..n)
+        .filter(|k| (k + 1).to_string().starts_with(rest))
+        .collect()
+}
+
+/// The last row of the list: type part of a common or scientific name (or
+/// "PC" for BirdNET V2.4's components), then pick a match (or press Enter
+/// for the highlighted one) to add its row above the spectrogram. Searches
+/// every class of the current file's run for this method, so a species the
+/// run never scored highly can be added. Matches are listed in the panel
+/// under the field rather than in a popup, which the narrow sidebar would
+/// clip.
 fn strip_search(state: AppState, method: Method, current_file: Memo<Option<u64>>) -> impl IntoView {
     let query = RwSignal::new(String::new());
     let focused = RwSignal::new(false);
     let highlight = RwSignal::new(0usize);
+    let with_components = method == Method::BirdNet;
     let labels = Memo::new_with_compare(
         move |_| {
             let file = current_file.get()?;
@@ -1710,8 +1927,19 @@ fn strip_search(state: AppState, method: Method, current_file: Memo<Option<u64>>
         if q.trim().is_empty() {
             return Vec::new();
         }
+        let mut out = Vec::new();
+        if with_components {
+            let n = crate::components::score_strips::birdnet_components()
+                .map_or(0, |p| p.variance.len());
+            out.extend(component_matches(&q, n).into_iter().map(|k| SearchMatch {
+                name: format!("PC{}", k + 1),
+                scientific: String::new(),
+                component: Some(k),
+                added: component_picked(state, k),
+            }));
+        }
         let Some(list) = labels.get() else {
-            return Vec::new();
+            return out;
         };
         let cached = folded.with_value(|f| {
             f.as_ref()
@@ -1723,20 +1951,27 @@ fn strip_search(state: AppState, method: Method, current_file: Memo<Option<u64>>
             folded.set_value(Some((list.key(), n.clone())));
             n
         });
-        classifier::strips::find_classes(&list.0, &names, &q, SEARCH_MATCHES)
-            .into_iter()
-            .filter_map(|c| list.0.get(c as usize))
-            .map(|l| SearchMatch {
-                name: classifier::strips::display_name(l),
-                scientific: l.scientific.clone(),
-                added: strip_picked(state, method, &l.scientific),
-            })
-            .collect()
+        let room = SEARCH_MATCHES.saturating_sub(out.len());
+        out.extend(
+            classifier::strips::find_classes(&list.0, &names, &q, room)
+                .into_iter()
+                .filter_map(|c| list.0.get(c as usize))
+                .map(|l| SearchMatch {
+                    name: classifier::strips::display_name(l),
+                    scientific: l.scientific.clone(),
+                    component: None,
+                    added: strip_picked(state, method, &l.scientific),
+                }),
+        );
+        out
     });
     let open = move || focused.get() && !query.with(|q| q.trim().is_empty());
     let choose = move |m: &SearchMatch| {
         if !m.added {
-            toggle_strip(state, method, m.scientific.clone());
+            match m.component {
+                Some(k) => toggle_component(state, k),
+                None => toggle_strip(state, method, m.scientific.clone()),
+            }
         }
         query.set(String::new());
         highlight.set(0);
@@ -1787,7 +2022,8 @@ fn strip_search(state: AppState, method: Method, current_file: Memo<Option<u64>>
                 .enumerate()
                 .map(|(i, m)| {
                     let name = m.name.clone();
-                    let scientific = (m.scientific != m.name).then(|| m.scientific.clone());
+                    let scientific = (!m.scientific.is_empty() && m.scientific != m.name)
+                        .then(|| m.scientific.clone());
                     let added = m.added;
                     let class = move || {
                         if highlight.get() == i {
@@ -1828,6 +2064,11 @@ fn strip_search(state: AppState, method: Method, current_file: Memo<Option<u64>>
             )
         }
     };
+    let placeholder = if with_components {
+        "Add a species or component"
+    } else {
+        "Add a species"
+    };
     move || {
         labels
             .with(|l| l.as_ref().is_some_and(|l| !l.0.is_empty()))
@@ -1839,8 +2080,8 @@ fn strip_search(state: AppState, method: Method, current_file: Memo<Option<u64>>
                         <input
                             type="text"
                             class="strip-search-input"
-                            placeholder="Add a species"
-                            aria-label="Add a species row above the spectrogram"
+                            placeholder=placeholder
+                            aria-label="Add a row above the spectrogram"
                             role="combobox"
                             aria-autocomplete="list"
                             aria-controls=list_id
@@ -1864,5 +2105,20 @@ fn strip_search(state: AppState, method: Method, current_file: Memo<Option<u64>>
                     </div>
                 }
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::component_matches;
+
+    #[test]
+    fn components_by_name() {
+        assert_eq!(component_matches("PC", 12).len(), 12);
+        assert_eq!(component_matches("pc1", 12), vec![0, 9, 10, 11]);
+        assert_eq!(component_matches(" pc 3", 12), vec![2]);
+        assert!(component_matches("pc1x", 12).is_empty());
+        assert!(component_matches("pied", 12).is_empty());
+        assert!(component_matches("p", 12).is_empty());
     }
 }

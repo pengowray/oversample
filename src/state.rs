@@ -1911,8 +1911,6 @@ pub struct ClassifierState {
     pub device_position: Option<(f32, f32)>,
     /// Bumped by each run, rescore and cancel; older tasks stop when it changes.
     pub generation: u32,
-    /// The experimental live BirdNET view is on (`crate::live_embedding`).
-    pub live_on: bool,
     /// What the live view is doing, for its status line.
     pub live: crate::live_embedding::LiveStatus,
     /// The file and method whose results the live view is adding readings to

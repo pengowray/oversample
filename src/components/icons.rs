@@ -55,6 +55,9 @@ pub enum Icon {
     MapPin,
     /// Flag on a pole (something marked for attention).
     Flag,
+    /// Push pin (a row kept above the spectrogram). Not `MapPin`, which
+    /// means a place.
+    Pin,
     /// Page with a folded corner and lines of text (a licence or other
     /// document).
     Document,
@@ -88,6 +91,10 @@ impl Icon {
             }
             Icon::Flag => {
                 r#"<path d="M5 15s1-1 4-1 5 2 8 2 3-1 3-1V4s-1 1-3 1-5-2-8-2-4 1-4 1z"/><path d="M5 22V3"/>"#
+            }
+            // Same path as PIN_SVG in live-embedding.js.
+            Icon::Pin => {
+                r#"<path d="M12 17v5"/><path class="icon-pin-head" d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>"#
             }
             Icon::Settings => {
                 r#"<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>"#
