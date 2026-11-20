@@ -6,7 +6,6 @@
 //! register a waiter; dropping the waiters (a new run, a cancel, a worker crash)
 //! wakes every waiting task with an error, so nothing hangs.
 
-use super::types::WindowScores;
 use super::ClassifierError;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use futures_channel::oneshot;
@@ -55,11 +54,15 @@ pub enum Reply {
 
 pub type Waiter = oneshot::Receiver<Result<Reply, ClassifierError>>;
 
+/// One window from the worker, not yet in the store: start, end, scores.
+type Pending = (f64, f64, Vec<Score>);
+
 /// Where the windows of the run in progress go.
 struct Active {
     run: u32,
     key: (u64, Method),
-    windows: Vec<WindowScores>,
+    windows: Vec<Pending>,
+    /// The pending windows' embeddings, back to back.
     embeddings: Vec<f32>,
     last_flush: f64,
 }
@@ -203,7 +206,7 @@ impl Client {
     }
 
     /// Move pending windows into the store.
-    fn take_flush(&mut self) -> Option<((u64, Method), Vec<WindowScores>, Vec<f32>)> {
+    fn take_flush(&mut self) -> Option<Flush> {
         let a = self.active.as_mut()?;
         if a.windows.is_empty() {
             return None;
@@ -217,17 +220,31 @@ impl Client {
     }
 }
 
-fn flush_into_state(state: AppState, flush: Option<((u64, Method), Vec<WindowScores>, Vec<f32>)>) {
+type Flush = ((u64, Method), Vec<Pending>, Vec<f32>);
+
+/// Put pending windows into the run's results in time order, each with its
+/// embedding (`ClassifierRun::insert_reading`). A later pass's windows land
+/// between the ones already there.
+fn flush_into_state(state: AppState, flush: Option<Flush>) {
     let Some((key, windows, embeddings)) = flush else {
         return;
     };
+    let len = key.1.embedding_len();
+    let mut stored = state
+        .classifier
+        .embeddings()
+        .try_update_untracked(|m| std::mem::take(m.entry(key).or_default()))
+        .unwrap_or_default();
     state.classifier.results().update(|m| {
         if let Some(r) = m.get_mut(&key) {
-            r.windows.extend(windows);
+            for (i, (start_s, end_s, top)) in windows.into_iter().enumerate() {
+                let e = embeddings.get(i * len..(i + 1) * len).unwrap_or(&[]);
+                r.insert_reading(&mut stored, start_s, end_s, top, e);
+            }
         }
     });
     state.classifier.embeddings().update(|m| {
-        m.entry(key).or_default().extend(embeddings);
+        m.insert(key, stored);
     });
 }
 
@@ -267,16 +284,16 @@ fn on_message(ev: MessageEvent) {
                 ..
             } => {
                 if let Some(a) = client.active.as_mut().filter(|a| a.run == run) {
-                    a.windows.push(WindowScores {
-                        start_s,
-                        end_s,
-                        top,
-                    });
-                    if let Ok(e) = js_sys::Reflect::get(&data, &attach::EMBEDDING.into()) {
-                        if let Some(arr) = e.dyn_ref::<js_sys::Float32Array>() {
-                            a.embeddings.extend(arr.to_vec());
-                        }
-                    }
+                    a.windows.push((start_s, end_s, top));
+                    // A missing embedding becomes zeros, keeping the rest in line.
+                    let len = a.key.1.embedding_len();
+                    let emb = js_sys::Reflect::get(&data, &attach::EMBEDDING.into())
+                        .ok()
+                        .and_then(|e| e.dyn_into::<js_sys::Float32Array>().ok())
+                        .map(|arr| arr.to_vec())
+                        .filter(|v| v.len() == len)
+                        .unwrap_or_else(|| vec![0.0; len]);
+                    a.embeddings.extend(emb);
                     if now_ms() - a.last_flush >= FLUSH_MS {
                         flush = client.take_flush();
                     }
@@ -485,8 +502,14 @@ pub async fn ensure_bat_heads(
     Ok(())
 }
 
-/// Start run `run`; windows go to the results under `key`.
-pub fn start(run: u32, key: (u64, Method), source_rate: u32) -> Result<(), Stopped> {
+/// Start run `run`, or one pass of it: the windows at `offsets` in each
+/// window length (`ToWorker::Start`). Windows go to the results under `key`.
+pub fn start(
+    run: u32,
+    key: (u64, Method),
+    source_rate: u32,
+    offsets: Vec<u32>,
+) -> Result<(), Stopped> {
     CLIENT.with(|c| {
         let mut c = c.borrow_mut();
         let client = c.as_mut().ok_or(Stopped::Superseded)?;
@@ -502,6 +525,7 @@ pub fn start(run: u32, key: (u64, Method), source_rate: u32) -> Result<(), Stopp
                 run,
                 method: key.1,
                 source_rate,
+                offsets,
             },
             None,
             None,

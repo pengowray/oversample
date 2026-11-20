@@ -44,12 +44,16 @@
 //!   rescoring, done, or failed with a [`ClassifierError`] (its `Display` is a
 //!   sentence to show).
 //! - `results()`: `HashMap<(file_id, Method), ClassifierRun>`. Windows fill in
-//!   while a run goes (about every 100 ms). Read with `.with(..)`, not `.get()`.
+//!   while a run goes (about every 100 ms), kept in time order; with a step
+//!   shorter than the window, later passes insert windows between earlier
+//!   ones ([`ClassifierRun::insert_reading`]). Read with `.with(..)`, not
+//!   `.get()`.
 //! - `embeddings()`: `HashMap<(file_id, Method), Vec<f32>>`, 1,024 floats per
-//!   window (1,536 for Perch, 1,280 for BirdNET+ V3.0) in window order (see
-//!   [`types::embedding`]), for a
-//!   later "find similar calls" feature. Kept apart from `results` so showing
-//!   scores never copies them.
+//!   window (1,536 for Perch, 1,280 for BirdNET+ V3.0) in the order the
+//!   windows arrived, which only ever grows at the end; each window's `slot`
+//!   says where its embedding is (see [`types::embedding`]). For the sound
+//!   groups and a later "find similar calls" feature. Kept apart from
+//!   `results` so showing scores never copies them.
 //!
 //! Attribution: [`catalog::attribution`] gives the licence (CC BY-NC-SA 4.0 for
 //! BirdNET V2.4, Apache 2.0 for Perch and BirdNET+ V3.0), the "Powered by" line and link, credits,
@@ -503,9 +507,30 @@ pub fn worker_running() -> bool {
     worker::is_running()
 }
 
-/// Analyse file `file_id` (the current file) with `choice`. Replaces that
-/// file's earlier results for the same method, and cancels any other run.
-pub fn run(state: AppState, file_id: u64, choice: ModelChoice) {
+/// The step between window starts a run of `method` uses when `step_secs`
+/// is asked for, in seconds: `step_secs` when it is shorter than the window
+/// and fits a whole number of times in it, otherwise the whole window.
+/// BattyBirdNET always uses the whole window.
+pub fn step_for(method: Method, step_secs: f64) -> f64 {
+    match method {
+        Method::Bats => method.window_secs(),
+        _ => method
+            .step_samples(step_secs)
+            .map_or(method.window_secs(), |s| {
+                s as f64 / method.model_rate() as f64
+            }),
+    }
+}
+
+/// Analyse file `file_id` (the current file) with `choice`, with `step_secs`
+/// between window starts ([`step_for`]). Replaces that file's earlier results
+/// for the same method, and cancels any other run.
+///
+/// With a step shorter than the window the run goes over the recording more
+/// than once (`oversample_ipc::classifier::refine_passes`): first the windows
+/// end to end, so the whole recording has results soon, then passes that
+/// each add windows between those already done, over the whole recording.
+pub fn run(state: AppState, file_id: u64, choice: ModelChoice, step_secs: f64) {
     cancel(state);
     let generation = next_generation(state);
     let method = choice.method();
@@ -514,7 +539,7 @@ pub fn run(state: AppState, file_id: u64, choice: ModelChoice) {
         .run()
         .set(RunStatus::LoadingModel { file_id, method });
     spawn_local(async move {
-        let res = run_task(state, generation, file_id, choice).await;
+        let res = run_task(state, generation, file_id, choice, step_secs).await;
         if !is_latest(state, generation) {
             return;
         }
@@ -538,6 +563,7 @@ async fn run_task(
     generation: u32,
     file_id: u64,
     choice: ModelChoice,
+    step_secs: f64,
 ) -> Result<(), Stopped> {
     let method = choice.method();
     let file = state.library.files().with_untracked(|files| {
@@ -605,6 +631,13 @@ async fn run_task(
         return Err(Stopped::Superseded);
     }
 
+    let step_secs = step_for(method, step_secs);
+    let model_rate = method.model_rate() as f64;
+    let window = method.window_samples() as u32;
+    let passes = oversample_ipc::classifier::refine_passes(
+        window,
+        method.step_samples(step_secs).unwrap_or(window),
+    );
     let key = (file_id, method);
     state.classifier.results().update(|m| {
         m.insert(
@@ -617,8 +650,11 @@ async fn run_task(
                 source_rate: rate,
                 model_rate: method.model_rate(),
                 window_secs: method.window_secs(),
+                step_secs,
+                spacing_secs: method.window_secs(),
                 labels,
                 windows: Vec::new(),
+                whole_file: false,
                 complete: false,
             },
         );
@@ -626,35 +662,76 @@ async fn run_task(
     state.classifier.embeddings().update(|m| {
         m.insert(key, Vec::new());
     });
-    state.classifier.run().set(RunStatus::Running {
-        file_id,
-        method,
-        fraction: 0.0,
-    });
     let run_id = generation;
-    worker::start(run_id, key, rate)?;
+    for (p, pass) in passes.iter().enumerate() {
+        let refining = (p > 0).then(|| pass.spacing as f64 / model_rate);
+        state.classifier.run().set(RunStatus::Running {
+            file_id,
+            method,
+            fraction: 0.0,
+            refining,
+        });
+        worker::start(run_id, key, rate, pass.offsets.clone())?;
+        // About two windows per piece, as for the windows end to end, so a
+        // Stop never waits behind many slow windows.
+        let piece_secs = WINDOWS_PER_PIECE * method.window_secs() / pass.offsets.len() as f64;
+        let piece = ((piece_secs * rate as f64) as u64).max(4096);
+        let progress = |fraction| {
+            state.classifier.run().set(RunStatus::Running {
+                file_id,
+                method,
+                fraction,
+                refining,
+            })
+        };
+        stream_pass(
+            state, generation, file_id, &*source, run_id, piece, progress,
+        )
+        .await?;
+        state.classifier.results().update(|m| {
+            if let Some(r) = m.get_mut(&key) {
+                r.whole_file = true;
+                r.spacing_secs = pass.spacing as f64 / model_rate;
+            }
+        });
+    }
+    state.classifier.results().update(|m| {
+        if let Some(r) = m.get_mut(&key) {
+            r.complete = true;
+        }
+    });
+    Ok(())
+}
 
+/// Send the whole recording to the worker for one pass that
+/// [`worker::start`] began, `piece` samples at a time, and wait until the
+/// worker has scored its last window. `progress` gets the share of the
+/// recording done.
+async fn stream_pass(
+    state: AppState,
+    generation: u32,
+    file_id: u64,
+    source: &dyn oversample_core::audio::source::AudioSource,
+    run_id: u32,
+    piece: u64,
+    progress: impl Fn(f64),
+) -> Result<(), Stopped> {
     let total = source.total_samples();
-    let piece = ((WINDOWS_PER_PIECE * method.window_secs() * rate as f64) as u64).max(4096);
     let mut acks: std::collections::VecDeque<(worker::Waiter, u64)> = Default::default();
     let mut at = 0u64;
     let mut seq = 0u32;
     let set_progress = |done: u64| {
-        state.classifier.run().set(RunStatus::Running {
-            file_id,
-            method,
-            fraction: if total > 0 {
-                done as f64 / total as f64
-            } else {
-                1.0
-            },
-        });
+        progress(if total > 0 {
+            done as f64 / total as f64
+        } else {
+            1.0
+        })
     };
     let still_wanted = || is_latest(state, generation) && current_file_id(state) == Some(file_id);
     while at < total {
         let len = piece.min(total - at) as usize;
         let read = crate::audio::streaming_source::read_region_ready(
-            &*source,
+            source,
             ChannelView::MonoMix,
             at,
             len,
@@ -701,11 +778,6 @@ async fn run_task(
         return Err(Stopped::Superseded);
     }
     worker::wait(worker::finish(run_id)?).await?;
-    state.classifier.results().update(|m| {
-        if let Some(r) = m.get_mut(&key) {
-            r.complete = true;
-        }
-    });
     Ok(())
 }
 
@@ -789,8 +861,12 @@ async fn rescore_task(
     }
     state.classifier.results().update(|m| {
         if let Some(r) = m.get_mut(&key) {
-            for (w, t) in r.windows.iter_mut().zip(top) {
-                w.top = t;
+            // The scores come in the embeddings' order, the order the windows
+            // arrived.
+            for w in r.windows.iter_mut() {
+                if let Some(t) = top.get(w.slot as usize) {
+                    w.top = t.clone();
+                }
             }
             r.region = Some(scope);
             r.head = single_bat_head(scope);

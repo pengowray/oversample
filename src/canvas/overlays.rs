@@ -1121,8 +1121,9 @@ pub fn species_colour(slot: usize) -> (&'static str, &'static str) {
 }
 
 /// A BattyBirdNET window at or above the minimum confidence whose top class
-/// is a species, with that species' colour slot. Call boxes whose middle falls
-/// in one take its colour, so each box matches the strip label above it.
+/// is a species, with that species' colour slot, over the window's cell
+/// (`ClassifierRun::cells`). Call boxes whose middle falls in one take its
+/// colour, so each box matches the strip label above it.
 pub struct SpeciesWindow {
     pub start_s: f64,
     pub end_s: f64,
@@ -1350,11 +1351,23 @@ pub fn draw_score_strips(
     let first = strips.windows.partition_point(|&(_, e)| e <= scroll);
     let last = strips.windows.partition_point(|&(s, _)| s < end_time);
     let on_screen = first..last.max(first);
-    // Width of one window in pixels (the last window may be shorter).
-    let window_px = strips
-        .windows
-        .first()
-        .map_or(0.0, |&(s, e)| (e - s) * px_per_sec);
+    // Width of a cell in pixels: the narrowest on screen, leaving out the
+    // last window's, which can be a short padded one. Cells differ in width
+    // while a run with a shorter step fills in.
+    let last_cell = strips.windows.len().saturating_sub(1);
+    let window_px = on_screen
+        .clone()
+        .filter(|&i| i != last_cell || strips.windows.len() == 1)
+        .map(|i| (strips.windows[i].1 - strips.windows[i].0) * px_per_sec)
+        .fold(f64::INFINITY, f64::min);
+    let window_px = if window_px.is_finite() {
+        window_px
+    } else {
+        strips
+            .windows
+            .first()
+            .map_or(0.0, |&(s, e)| (e - s) * px_per_sec)
+    };
 
     for (r, row) in strips.rows.iter().enumerate() {
         let y0 = r as f64 * SCORE_ROW_H;

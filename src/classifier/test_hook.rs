@@ -66,7 +66,14 @@ fn run_text(s: &RunStatus) -> String {
             file_id,
             method,
             fraction,
-        } => format!("Running {file_id} {} {fraction:.3}", method_name(*method)),
+            refining,
+        } => {
+            let pass = refining.map_or_else(String::new, |s| format!(" refining {s}"));
+            format!(
+                "Running {file_id} {} {fraction:.3}{pass}",
+                method_name(*method)
+            )
+        }
         RunStatus::Rescoring { file_id, scope } => {
             format!("Rescoring {file_id} {}", scope.stem())
         }
@@ -113,6 +120,8 @@ fn status_json(state: AppState) -> String {
                     "windows": r.windows.len(),
                     "embeddingFloats": emb,
                     "complete": r.complete,
+                    "stepSecs": r.step_secs,
+                    "spacingSecs": r.spacing_secs,
                     "best": best,
                 })
             })
@@ -151,14 +160,18 @@ pub fn install(state: AppState) {
     );
     set(
         "run",
+        // "BirdNet", or "BirdNet@1" for a 1 s step between window starts.
         Closure::<dyn Fn(String) -> bool>::new(move |c: String| {
-            let Some(choice) = parse_choice(&c) else {
+            let (c, step) = c
+                .split_once('@')
+                .map_or((c.as_str(), 0.0), |(c, s)| (c, s.parse().unwrap_or(0.0)));
+            let Some(choice) = parse_choice(c) else {
                 return false;
             };
             let Some(file_id) = current_file_id(state) else {
                 return false;
             };
-            run(state, file_id, choice);
+            run(state, file_id, choice, step);
             true
         })
         .into_js_value(),

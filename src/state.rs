@@ -1835,8 +1835,11 @@ pub struct CallDetectionState {
     /// BirdNET and Perch: mark birds the BirdNET+ Geomodel does not expect at
     /// the recording's place and week (when its metadata has a place).
     pub mark_unexpected: bool,
-    /// BirdNET, BattyBirdNET and Perch: the window picked in the lists.
-    pub selected_window: Option<usize>,
+    /// BirdNET, BattyBirdNET and Perch: the window picked in the lists, by
+    /// its start in seconds (`ClassifierRun::window_at_start` finds it). A
+    /// window's place in the run's list changes as a run with a shorter step
+    /// adds windows between the others; its start does not.
+    pub selected_window: Option<f64>,
     /// The "Annotate Calls and Trains" choice under the pointer or keyboard
     /// focus. The spectrogram outlines the regions it would add.
     pub preview: Option<crate::call_annotations::AnnotatePreview>,

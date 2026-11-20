@@ -72,6 +72,69 @@ fn window_len(secs: f64) -> String {
     }
 }
 
+/// What the panel needs to know about this file's results for its method.
+#[derive(Clone, Copy, PartialEq)]
+struct RunInfo {
+    windows: usize,
+    complete: bool,
+    whole_file: bool,
+    region: Option<classifier::BatScope>,
+    window_secs: f64,
+    /// The step the Analyse asked for, and the step the whole recording has
+    /// so far (`ClassifierRun::step_secs`, `spacing_secs`).
+    step_secs: f64,
+    spacing_secs: f64,
+}
+
+/// "16 windows", or when windows overlap (so a count would count the same
+/// audio more than once) the time of their cells: "14 s of audio".
+fn windows_or_time(s: &summary::Summary, windows: usize, secs: f64) -> String {
+    if s.overlapping {
+        format!("{} of audio", summary::time_amount(secs))
+    } else {
+        count(windows, "window", "windows")
+    }
+}
+
+/// The Step choice under the Analyse button: the time between the starts of
+/// windows for the next Analyse, as a group of buttons like the number of
+/// Sound groups. Saved for every classifier. None for BattyBirdNET.
+fn step_row(method: Method, pick: RwSignal<summary::StepPick>) -> Option<impl IntoView> {
+    let choices = summary::step_choices(method);
+    if choices.is_empty() {
+        return None;
+    }
+    let window = method.window_secs();
+    let help = format!(
+        "Time between the starts of windows. At 1 s a new {} window starts every second, so windows overlap. Applies to the next Analyse.",
+        summary::step_text(window)
+    );
+    let buttons = choices
+        .into_iter()
+        .map(|(choice, secs)| {
+            let on = move || pick.get().secs(method) == secs;
+            let text = summary::step_text(secs);
+            view! {
+                <button
+                    class=move || if on() { "psd-btn psd-btn-active" } else { "psd-btn" }
+                    aria-pressed=move || on().to_string()
+                    aria-label=format!("Step {text}")
+                    on:click=move |_| {
+                        pick.set(choice);
+                        crate::settings::set_classifier_step(choice);
+                    }
+                >{text.clone()}</button>
+            }
+        })
+        .collect::<Vec<_>>();
+    Some(view! {
+        <div class="detection-step-row" title=help>
+            <span class="setting-label">"Step"</span>
+            <div class="psd-btn-group" role="group" aria-label="Step">{buttons}</div>
+        </div>
+    })
+}
+
 /// A small square in the colour the spectrogram's label strip gives this
 /// class, so a row in the lists can be matched to its label and call boxes.
 /// `slot` is the species' place in `summary::colour_order`; None for classes
@@ -152,9 +215,10 @@ fn strip_header() -> impl IntoView {
 
 const STRIP_HEADER_HELP: &str = "Tick a species to show its scores in a row above the spectrogram";
 
-/// Scroll the spectrogram so window `i`'s middle is in the centre, and pick it.
-pub(super) fn show_window(state: AppState, start_s: f64, end_s: f64, i: usize) {
-    state.call_detection.selected_window().set(Some(i));
+/// Scroll the spectrogram so the window from `start_s` to `end_s` has its
+/// middle in the centre, and pick it.
+pub(super) fn show_window(state: AppState, start_s: f64, end_s: f64) {
+    state.call_detection.selected_window().set(Some(start_s));
     let mid = 0.5 * (start_s + end_s);
     let files = state.library.files().get_untracked();
     let idx = state.library.current_index().get_untracked();
@@ -171,12 +235,12 @@ pub(super) fn show_window(state: AppState, start_s: f64, end_s: f64, i: usize) {
 
 /// Download what `choice` still needs (a region's classifier is about 0.1 MB,
 /// all 11 are 1.1 MB),
-/// then analyse the current file.
-fn analyse(state: AppState, file_id: u64, choice: ModelChoice) {
+/// then analyse the current file with `step_secs` between window starts.
+fn analyse(state: AppState, file_id: u64, choice: ModelChoice, step_secs: f64) {
     state.call_detection.overlay_enabled().set(true);
     state.call_detection.selected_window().set(None);
     if classifier::is_ready(state, choice) {
-        classifier::run(state, file_id, choice);
+        classifier::run(state, file_id, choice, step_secs);
         return;
     }
     let method = choice.method();
@@ -186,7 +250,7 @@ fn analyse(state: AppState, file_id: u64, choice: ModelChoice) {
         .set(RunStatus::LoadingModel { file_id, method });
     spawn_local(async move {
         match classifier::ensure_downloaded(state, choice).await {
-            Ok(()) => classifier::run(state, file_id, choice),
+            Ok(()) => classifier::run(state, file_id, choice, step_secs),
             Err(error) => state.classifier.run().set(RunStatus::Failed {
                 file_id,
                 method,
@@ -352,14 +416,23 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             .downloads()
             .with(|m| combined_status(m, &model_files(method)))
     });
-    // This file's results for this method: (windows, complete, region, window length).
+    // This file's results for this method.
     let results_info = Memo::new(move |_| {
         let file = current_file.get()?;
         state.classifier.results().with(|m| {
-            m.get(&(file, method))
-                .map(|r| (r.windows.len(), r.complete, r.region, r.window_secs))
+            m.get(&(file, method)).map(|r| RunInfo {
+                windows: r.windows.len(),
+                complete: r.complete,
+                whole_file: r.whole_file,
+                region: r.region,
+                window_secs: r.window_secs,
+                step_secs: r.step_secs,
+                spacing_secs: r.spacing_secs,
+            })
         })
     });
+    // The Step picked for the next Analyse (saved for every classifier).
+    let step_pick = RwSignal::new(crate::settings::get_classifier_step());
     let min_conf = move || classifier::min_confidence(state, method);
     let summary = Memo::new(move |_| {
         let file = current_file.get()?;
@@ -390,7 +463,12 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             let Some(file) = current_file.get() else {
                 return;
             };
-            let Some((n, _, Some(have), _)) = results_info.get() else {
+            let Some(RunInfo {
+                windows: n,
+                region: Some(have),
+                ..
+            }) = results_info.get()
+            else {
                 return;
             };
             if n > 0 && have != region && !state.classifier.run().with_untracked(|r| r.is_busy()) {
@@ -486,10 +564,24 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 RunStatus::Rescoring { scope, .. } => {
                     (format!("Relabelling for {}\u{2026}", scope.label()), None)
                 }
+                // A later pass of a run with a shorter step: the step it
+                // brings the whole recording to.
+                RunStatus::Running {
+                    fraction,
+                    refining: Some(step),
+                    ..
+                } => (
+                    format!(
+                        "Refining to a {} step: {:.0}%",
+                        summary::step_text(step),
+                        (fraction * 100.0).floor()
+                    ),
+                    Some(fraction * 100.0),
+                ),
                 RunStatus::Running { fraction, .. } => {
                     let (done, len) = results_info
                         .get()
-                        .map(|(n, _, _, len)| (n, len))
+                        .map(|r| (r.windows, r.window_secs))
                         .unwrap_or((0, method.window_secs()));
                     let total = source_rate
                         .get()
@@ -538,13 +630,22 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             } if f == file_id && m == method => Some(error),
             _ => None,
         };
-        let partial = results_info.get().and_then(|(n, complete, _, _)| {
-            (!complete && n > 0).then(|| {
-                format!(
+        let partial = results_info.get().and_then(|r| {
+            if r.complete || r.windows == 0 {
+                None
+            } else if r.whole_file {
+                // Stopped in a later pass of a run with a shorter step.
+                let asked = summary::step_text(r.step_secs);
+                Some(format!(
+                    "Stopped with a {} step, not {asked}. Analyse again for the {asked} step.",
+                    summary::step_text(r.spacing_secs)
+                ))
+            } else {
+                Some(format!(
                     "Stopped after {}. Analyse again for the whole recording.",
-                    count(n, "window", "windows")
-                )
-            })
+                    count(r.windows, "window", "windows")
+                ))
+            }
         });
         view! {
             <div class="detection-status">
@@ -552,8 +653,12 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 {partial.map(|p| view! { <div class="detection-status-note">{p}</div> })}
                 <button
                     class="sidebar-btn detection-primary-btn"
-                    on:click=move |_| analyse(state, file_id, choice())
+                    on:click=move |_| {
+                        let step = step_pick.get_untracked().secs(method);
+                        analyse(state, file_id, choice(), step)
+                    }
                 >{label}</button>
+                {step_row(method, step_pick)}
             </div>
         }
         .into_any()
@@ -562,7 +667,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     // Minimum confidence, summary, overlay, list, and the selected window.
     // The slider is built once per set of results, so dragging it re-renders
     // only the summary and the list below it.
-    let has_results = Memo::new(move |_| results_info.get().is_some_and(|(n, ..)| n > 0));
+    let has_results = Memo::new(move |_| results_info.get().is_some_and(|r| r.windows > 0));
     // The location list for this file, once it has results and while marking
     // is on (the first time downloads the Geomodel, 16 MB).
     Effect::new(move |_| {
@@ -578,11 +683,20 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     // The method and region are picked just above, so the title names the
     // region only while the results are for another one (a relabel is going
     // or failed).
+    // For the methods with a Step, the title gives the step between window
+    // starts that the shown results have, since the Step above can differ
+    // and a run stopped part way can have a longer one.
     let results_title = Memo::new(move |_| {
         let picked = bat_scope.get();
-        match results_info.get().and_then(|(_, _, region, _)| region) {
+        let info = results_info.get();
+        match info.as_ref().and_then(|r| r.region) {
             Some(r) if r != picked => format!("Results for {}", r.label()),
-            _ => "Results".to_string(),
+            _ => match info {
+                Some(r) if !summary::step_choices(method).is_empty() => {
+                    format!("Results ({} step)", summary::step_text(r.spacing_secs))
+                }
+                _ => "Results".to_string(),
+            },
         }
     });
     let headline = move || {
@@ -628,20 +742,20 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             if sounds > 0 {
                 parts.push(count(sounds, "sound", "sounds"));
             }
-            parts.push(count(s.species_windows, "window", "windows"));
+            parts.push(windows_or_time(&s, s.species_windows, s.species_secs));
             format!("{min:.2} or above: {}", parts.join(", "))
         };
         let mut notes = Vec::new();
         if s.below_windows > 0 {
             notes.push(format!(
                 "Below {min:.2}: {}",
-                count(s.below_windows, "window", "windows")
+                windows_or_time(&s, s.below_windows, s.below_secs)
             ));
         }
         if s.not_species_windows > 0 {
             notes.push(format!(
                 "Noise and other sounds: {}",
-                count(s.not_species_windows, "window", "windows")
+                windows_or_time(&s, s.not_species_windows, s.not_species_secs)
             ));
         }
         Some(view! {
@@ -751,7 +865,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     // Add as annotations.
     let annotate = move || {
         let file_id = current_file.get()?;
-        let (n, _, _, _) = results_info.get()?;
+        let n = results_info.get()?.windows;
         let any_species = summary.with(|s| s.as_ref().is_some_and(|s| s.species_windows > 0));
         if n == 0 || !any_species || busy_here() {
             return None;
@@ -1142,13 +1256,15 @@ fn species_table(
     current_file: Memo<Option<u64>>,
 ) -> impl IntoView {
     let min = classifier::min_confidence(state, method);
+    let mut overlapping = false;
     let rows = state.classifier.results().with(|m| {
         let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
             return Vec::new();
         };
         let order = summary::colour_order(run);
-        summary::summarise(run, min)
-            .species
+        let s = summary::summarise(run, min);
+        overlapping = s.overlapping;
+        s.species
             .iter()
             .map(|row| {
                 let slot = order.iter().position(|&c| c == row.class);
@@ -1156,22 +1272,28 @@ fn species_table(
                 let name = class_name(label);
                 let scientific = label.map(|l| l.scientific.clone()).unwrap_or_default();
                 let w = &run.windows[row.best_window];
-                let (start, end, i) = (w.start_s, w.end_s, row.best_window);
+                let (start, end) = (w.start_s, w.end_s);
                 let flag = flag_cell(state, method, current_file.get(), label);
                 let strip = strip_cell(state, method, scientific.clone(), name.clone());
                 let class = move || {
-                    if state.call_detection.selected_window().get() == Some(i) {
+                    if state.call_detection.selected_window().get() == Some(start) {
                         "detection-row selected"
                     } else {
                         "detection-row"
                     }
                 };
+                // Windows that overlap would count the same audio twice.
+                let amount = if s.overlapping {
+                    summary::time_amount(row.secs)
+                } else {
+                    row.windows.to_string()
+                };
                 view! {
-                    <tr class=class title=scientific on:click=move |_| show_window(state, start, end, i)>
+                    <tr class=class title=scientific on:click=move |_| show_window(state, start, end)>
                         {strip}
                         <td class="detection-col-kind">{species_swatch(slot)}{name}</td>
                         {flag}
-                        <td class="detection-col-num">{row.windows}</td>
+                        <td class="detection-col-num">{amount}</td>
                         <td class="detection-col-num">{format!("{:.2}", row.best)}</td>
                     </tr>
                 }
@@ -1186,7 +1308,7 @@ fn species_table(
                         {strip_header()}
                         <th>"Species"</th>
                         {flag_header(method)}
-                        <th class="detection-col-num">"Windows"</th>
+                        <th class="detection-col-num">{if overlapping { "Total time" } else { "Windows" }}</th>
                         <th class="detection-col-num" title="Best confidence">"Best"</th>
                     </tr>
                 </thead>
@@ -1199,10 +1321,14 @@ fn species_table(
 /// The "By window" list: windows at or above the minimum, in time order.
 fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>) -> impl IntoView {
     let min = classifier::min_confidence(state, method);
+    // With overlapping windows the numbers change as a run adds windows
+    // between others, so the column is left out.
+    let mut numbered = true;
     let rows = state.classifier.results().with(|m| {
         let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
             return Vec::new();
         };
+        numbered = !run.overlapping();
         let order = summary::colour_order(run);
         run.windows
             .iter()
@@ -1227,14 +1353,14 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
                     if other {
                         c.push_str(" detection-row-other");
                     }
-                    if state.call_detection.selected_window().get() == Some(i) {
+                    if state.call_detection.selected_window().get() == Some(start) {
                         c.push_str(" selected");
                     }
                     c
                 };
                 Some(view! {
-                    <tr class=class title=scientific on:click=move |_| show_window(state, start, end, i)>
-                        <td class="detection-col-num">{i + 1}</td>
+                    <tr class=class title=scientific on:click=move |_| show_window(state, start, end)>
+                        {numbered.then(|| view! { <td class="detection-col-num">{i + 1}</td> })}
                         <td>{crate::format_time::format_time_display(start, 1)}</td>
                         <td class="detection-col-kind">{species_swatch(slot)}{name}</td>
                         {flag}
@@ -1249,7 +1375,7 @@ fn window_table(state: AppState, method: Method, current_file: Memo<Option<u64>>
             <table class="detection-table">
                 <thead>
                     <tr>
-                        <th class="detection-col-num">"#"</th>
+                        {numbered.then(|| view! { <th class="detection-col-num">"#"</th> })}
                         <th>"Start"</th>
                         <th>"Species"</th>
                         {flag_header(method)}
@@ -1268,10 +1394,18 @@ fn top_three(
     method: Method,
     current_file: Memo<Option<u64>>,
 ) -> Option<impl IntoView> {
-    let i = state.call_detection.selected_window().get()?;
+    let start = state.call_detection.selected_window().get()?;
     state.classifier.results().with(|m| {
         let run = current_file.get().and_then(|f| m.get(&(f, method)))?;
+        let i = run.window_at_start(start)?;
         let w = run.windows.get(i)?;
+        // With overlapping windows the numbers change as a run adds windows
+        // between others, so only the times are given.
+        let which = if run.overlapping() {
+            String::new()
+        } else {
+            format!(" {}", i + 1)
+        };
         let rows = w
             .top
             .iter()
@@ -1305,12 +1439,19 @@ fn top_three(
             .collect::<Vec<_>>();
         Some(view! {
             <div class="detection-top3">
-                <div class="detection-status-note">{format!(
-                    "Top 3 in window {} ({} to {})",
-                    i + 1,
-                    crate::format_time::format_time_display(w.start_s, 1),
-                    crate::format_time::format_time_display(w.end_s, 1)
-                )}</div>
+                <div class="detection-status-note">{if which.is_empty() {
+                    format!(
+                        "Top 3 in window {} to {}",
+                        crate::format_time::format_time_display(w.start_s, 1),
+                        crate::format_time::format_time_display(w.end_s, 1)
+                    )
+                } else {
+                    format!(
+                        "Top 3 in window{which} ({} to {})",
+                        crate::format_time::format_time_display(w.start_s, 1),
+                        crate::format_time::format_time_display(w.end_s, 1)
+                    )
+                }}</div>
                 <table class="detection-table">
                     <tbody>{rows}</tbody>
                 </table>

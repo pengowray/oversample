@@ -128,6 +128,79 @@ impl Method {
             Method::Bats => Some(BATS_MIN_SOURCE_RATE),
         }
     }
+
+    /// `secs` as a step between window starts, in model samples, when it is
+    /// shorter than a window and a whole number of steps fills one window
+    /// (1 s and 0.5 s for BirdNET, BirdNET+ V3.0 and Perch). `None` for
+    /// anything else, which means the whole window.
+    pub fn step_samples(self, secs: f64) -> Option<u32> {
+        if !secs.is_finite() || secs <= 0.0 {
+            return None;
+        }
+        let step = (secs * self.model_rate() as f64).round();
+        let win = self.window_samples() as f64;
+        (step >= 1.0
+            && step < win
+            && (step - secs * self.model_rate() as f64).abs() < 1e-6
+            && (win as u64) % (step as u64) == 0)
+            .then_some(step as u32)
+    }
+}
+
+/// One pass of a run over the whole recording: the windows starting at
+/// `k * window + offset` for every whole `k` and every one of `offsets`
+/// (model samples, each less than a window), front to back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pass {
+    pub offsets: Vec<u32>,
+    /// The gap between window starts once this pass is done, in model
+    /// samples.
+    pub spacing: u32,
+}
+
+/// The passes of a run with a step of `step` model samples between window
+/// starts, for windows of `window` samples. The first pass is always the
+/// windows end to end (offset 0, the same windows a run without a step
+/// gives), so the whole recording has results first. Each later pass covers
+/// the whole recording again and halves every gap between window starts,
+/// while half a gap is a whole number of steps; one last pass then takes
+/// every start left. Every start on the step's grid is in exactly one pass.
+///
+/// Window 3 s, step 1 s: [0], [1 s, 2 s]. Step 0.5 s: [0], [1.5 s], [0.5 s,
+/// 1 s, 2 s, 2.5 s]. Window 5 s, step 1 s: [0], [1 s to 4 s]. Step 0.5 s:
+/// [0], [2.5 s], the other eight. A step that does not fit a whole number of
+/// times in the window, or is not shorter than it, gives the first pass only.
+pub fn refine_passes(window: u32, step: u32) -> Vec<Pass> {
+    let mut passes = vec![Pass {
+        offsets: vec![0],
+        spacing: window,
+    }];
+    if step == 0 || step >= window || window % step != 0 {
+        return passes;
+    }
+    let n = window / step;
+    // The gap between done starts, in steps; every gap is the same.
+    let mut gap = n;
+    while gap > 1 {
+        let (offsets, next): (Vec<u32>, u32) = if gap % 2 == 0 {
+            let half = gap / 2;
+            (
+                (0..n / gap).map(|j| (j * gap + half) * step).collect(),
+                half,
+            )
+        } else {
+            (
+                (0..n).filter(|j| j % gap != 0).map(|j| j * step).collect(),
+                1,
+            )
+        };
+        gap = next;
+        passes.push(Pass {
+            offsets,
+            spacing: gap * step,
+        });
+    }
+    passes
 }
 
 /// What a model file is to the worker. The worker holds one model of each
@@ -477,16 +550,24 @@ pub enum ToWorker {
         species: u16,
         classes: u16,
     },
-    /// Start a run. Any run before it is dropped.
+    /// Start a run, or one pass of a run (see [`refine_passes`]). Any run
+    /// before it is dropped. `offsets` picks the windows: those starting at
+    /// `k * window + offset` model samples, for each offset (each less than a
+    /// window). Empty or `[0]` is the windows end to end, with the last,
+    /// zero-padded window kept when it holds at least a third of a window.
+    /// Any other offsets take only the windows that fit inside the audio.
     Start {
         run: u32,
         method: Method,
         source_rate: u32,
+        #[serde(default)]
+        offsets: Vec<u32>,
     },
     /// The next piece of source-rate mono audio, in [`attach::SAMPLES`].
     /// Answered by `ChunkDone` after the windows it completed.
     Chunk { run: u32, seq: u32 },
-    /// No more audio: score the last, zero-padded window and answer `Done`.
+    /// No more audio: score the last windows (for the windows end to end, the
+    /// last, zero-padded one) and answer `Done`.
     Finish { run: u32 },
     /// Drop the run. Nothing is answered.
     Cancel { run: u32 },
@@ -630,6 +711,99 @@ mod tests {
         assert_eq!(Method::Bats.window_secs(), 0.5625);
         assert_eq!(Method::Perch.window_secs(), 5.0);
         assert_eq!(Method::BirdNetV3.window_secs(), 3.0);
+    }
+
+    fn secs(method: Method, passes: &[Pass]) -> Vec<(Vec<f64>, f64)> {
+        let rate = method.model_rate() as f64;
+        passes
+            .iter()
+            .map(|p| {
+                (
+                    p.offsets.iter().map(|&o| o as f64 / rate).collect(),
+                    p.spacing as f64 / rate,
+                )
+            })
+            .collect()
+    }
+
+    fn plan(method: Method, step: f64) -> Vec<(Vec<f64>, f64)> {
+        let win = method.window_samples() as u32;
+        let step = method.step_samples(step).unwrap_or(win);
+        secs(method, &refine_passes(win, step))
+    }
+
+    #[test]
+    fn passes_halve_while_they_can() {
+        assert_eq!(
+            plan(Method::BirdNet, 1.0),
+            vec![(vec![0.0], 3.0), (vec![1.0, 2.0], 1.0)]
+        );
+        assert_eq!(
+            plan(Method::BirdNet, 0.5),
+            vec![
+                (vec![0.0], 3.0),
+                (vec![1.5], 1.5),
+                (vec![0.5, 1.0, 2.0, 2.5], 0.5)
+            ]
+        );
+        assert_eq!(plan(Method::BirdNetV3, 0.5), plan(Method::BirdNet, 0.5));
+        assert_eq!(
+            plan(Method::Perch, 1.0),
+            vec![(vec![0.0], 5.0), (vec![1.0, 2.0, 3.0, 4.0], 1.0)]
+        );
+        assert_eq!(
+            plan(Method::Perch, 0.5),
+            vec![
+                (vec![0.0], 5.0),
+                (vec![2.5], 2.5),
+                (vec![0.5, 1.0, 1.5, 2.0, 3.0, 3.5, 4.0, 4.5], 0.5)
+            ]
+        );
+        // The whole window, or a step that does not fit: one pass.
+        assert_eq!(plan(Method::BirdNet, 3.0), vec![(vec![0.0], 3.0)]);
+        assert_eq!(plan(Method::BirdNet, 0.7), vec![(vec![0.0], 3.0)]);
+        assert_eq!(refine_passes(8, 1).len(), 4);
+    }
+
+    #[test]
+    fn every_start_once() {
+        for (win, step) in [
+            (6u32, 1u32),
+            (6, 2),
+            (6, 3),
+            (10, 1),
+            (10, 2),
+            (8, 1),
+            (12, 1),
+        ] {
+            let mut all: Vec<u32> = refine_passes(win, step)
+                .into_iter()
+                .flat_map(|p| p.offsets)
+                .collect();
+            all.sort_unstable();
+            assert_eq!(all, (0..win / step).map(|j| j * step).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn steps_that_fit() {
+        assert_eq!(Method::BirdNet.step_samples(1.0), Some(48_000));
+        assert_eq!(Method::BirdNet.step_samples(0.5), Some(24_000));
+        assert_eq!(Method::Perch.step_samples(0.5), Some(16_000));
+        assert_eq!(Method::BirdNetV3.step_samples(1.0), Some(32_000));
+        assert_eq!(Method::BirdNet.step_samples(3.0), None);
+        assert_eq!(Method::BirdNet.step_samples(5.0), None);
+        assert_eq!(Method::BirdNet.step_samples(0.7), None);
+        assert_eq!(Method::BirdNet.step_samples(0.0), None);
+        assert_eq!(Method::BirdNet.step_samples(f64::NAN), None);
+    }
+
+    #[test]
+    fn a_start_message_without_offsets_is_the_whole_window() {
+        let msg: ToWorker =
+            serde_json::from_str(r#"{"cmd":"Start","run":1,"method":"Perch","source_rate":48000}"#)
+                .unwrap();
+        assert!(matches!(msg, ToWorker::Start { offsets, .. } if offsets.is_empty()));
     }
 
     #[test]

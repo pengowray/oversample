@@ -30,6 +30,7 @@ use crate::classifier::sound_groups::{
     self as sg, GroupTop, Grouping, Reduced, GROUP_CHOICES, GROUP_COLOURS,
 };
 use crate::classifier::strips::{display_name, ScoreRow, ScoreRowKind};
+use crate::classifier::summary::time_amount;
 use crate::classifier::{ClassifierRun, Method, RunStatus};
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
@@ -186,8 +187,23 @@ pub fn row(
         .enumerate()
         .map(|(i, hint)| format!("Group {}: {hint}", i + 1))
         .collect();
-    let cells = (0..run.windows.len())
-        .map(|i| g.of_window.get(i).copied().flatten().map(f32::from))
+    // The grouping and the quiet flags are in the embeddings' order, the
+    // order the windows arrived; the row is in time order.
+    let cells = run
+        .windows
+        .iter()
+        .map(|w| {
+            g.of_window
+                .get(w.slot as usize)
+                .copied()
+                .flatten()
+                .map(f32::from)
+        })
+        .collect();
+    let quiet = run
+        .windows
+        .iter()
+        .map(|w| quiet.get(w.slot as usize).copied().unwrap_or(false))
         .collect();
     Some((
         ScoreRow {
@@ -199,7 +215,7 @@ pub fn row(
             cells,
         },
         names,
-        quiet.to_vec(),
+        quiet,
     ))
 }
 
@@ -316,9 +332,17 @@ fn compute(state: AppState, key: Key, k: usize, measure_levels: bool, done: ArcT
             cached_levels(key)
         };
         let quiet_checked = levels.is_some();
+        // Each window's own start and end (overlapping windows each get
+        // their whole window checked), in the embeddings' order.
         let times: Vec<(f64, f64)> = state.classifier.results().with_untracked(|m| {
             m.get(&key).map_or_else(Vec::new, |r| {
-                r.windows.iter().map(|w| (w.start_s, w.end_s)).collect()
+                let mut t = vec![(0.0, 0.0); r.windows.len()];
+                for w in &r.windows {
+                    if let Some(slot) = t.get_mut(w.slot as usize) {
+                        *slot = (w.start_s, w.end_s);
+                    }
+                }
+                t
             })
         });
         let len = key.1.embedding_len();
@@ -452,11 +476,27 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
     let quiet = cur
         .as_ref()
         .map_or(0, |c| c.quiet.iter().filter(|&&q| q).count());
-    let quiet_note = (quiet > 0).then(|| {
-        view! { <div class="detection-status-note sound-groups-note">{quiet_text(quiet)}</div> }
-    });
     state.classifier.results().with(|m| {
         let run = m.get(&(file, method))?;
+        // Overlapping windows would count the same audio more than once, so
+        // the legend gives times: the length of the windows' cells.
+        let overlapping = run.overlapping();
+        let quiet_note = (quiet > 0).then(|| {
+            let text = if overlapping {
+                let flags = cur.as_ref().map(|c| c.quiet.clone()).unwrap_or_default();
+                let secs: f64 = run
+                    .windows
+                    .iter()
+                    .zip(run.cells())
+                    .filter(|(w, _)| flags.get(w.slot as usize) == Some(&true))
+                    .map(|(_, (s, e))| e - s)
+                    .sum();
+                format!("{} of quiet audio is not grouped", time_amount(secs))
+            } else {
+                quiet_text(quiet)
+            };
+            view! { <div class="detection-status-note sound-groups-note">{text}</div> }
+        });
         let Some(g) = cur.as_ref().and_then(|c| c.grouping.clone()) else {
             // A run that will never have enough windows says so; one still
             // going may get them.
@@ -493,13 +533,22 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                     let second = top.second.map_or_else(String::new, |c| {
                         format!("\nMost often second: {}", class_name(run, c))
                     });
+                    let share = if overlapping {
+                        format!("{} of {}", time_amount(top.top_secs), time_amount(top.secs))
+                    } else {
+                        format!("{count} of {} windows", top.size)
+                    };
                     format!(
-                        "Top class in {count} of {} windows: {}\nAverage confidence: {:.2}{second}",
-                        top.size,
+                        "Top class in {share}: {}\nAverage confidence: {:.2}{second}",
                         class_name(run, class),
                         top.mean
                     )
                 });
+                let size = if overlapping {
+                    time_amount(top.secs)
+                } else {
+                    windows_text(top.size)
+                };
                 view! {
                     <tr title=detail>
                         <td class="detection-col-kind">
@@ -510,7 +559,7 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                             {format!("Group {}", i + 1)}
                             <div class="sound-groups-hint">{hint}</div>
                         </td>
-                        <td class="detection-col-num">{windows_text(top.size)}</td>
+                        <td class="detection-col-num">{size}</td>
                     </tr>
                 }
             })

@@ -948,6 +948,18 @@ body.sidebar-resizing {
     margin-bottom: 4px;
 }
 
+/* The Step choice right under the Analyse button it applies to, in the
+   button style of the Sound groups count; 24 px click targets. */
+.detection-step-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.detection-step-row .psd-btn {
+    padding: 4px 8px;
+}
+
 .detection-busy-row {
     display: flex;
     align-items: center;

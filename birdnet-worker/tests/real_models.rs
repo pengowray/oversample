@@ -110,6 +110,17 @@ fn new_out() -> Out {
 
 /// Run a whole recording through the session in 1 s pieces.
 fn analyse(s: &mut Session, method: Method, samples: &[f32], rate: u32) -> Out {
+    analyse_pass(s, method, samples, rate, Vec::new())
+}
+
+/// One pass of a run (`refine_passes`) over a whole recording, in 1 s pieces.
+fn analyse_pass(
+    s: &mut Session,
+    method: Method,
+    samples: &[f32],
+    rate: u32,
+    offsets: Vec<u32>,
+) -> Out {
     let mut out = new_out();
     send(
         s,
@@ -117,6 +128,7 @@ fn analyse(s: &mut Session, method: Method, samples: &[f32], rate: u32) -> Out {
             run: 1,
             method,
             source_rate: rate,
+            offsets,
         },
         Attached::default(),
         &mut out,
@@ -183,6 +195,71 @@ fn birdnet_finds_pauraque() {
     );
     assert_eq!(names[top.class as usize], "Nyctidromus albicollis");
     assert!(top.confidence > 0.9);
+}
+
+/// A run with a 1 s step on the Gentoo Penguin recording: its first pass
+/// gives exactly what a run without a step gives, and the second fills in the
+/// starts between, 3 times as many windows in all, each scored as if the
+/// whole run had gone front to back.
+#[test]
+fn birdnet_step_1s_on_gentoo_penguin() {
+    use oversample_ipc::classifier::refine_passes;
+    let Some(models) = models_dir() else {
+        eprintln!("BIRDNET_MODELS_DIR not set; skipped");
+        return;
+    };
+    let names = labels(&models.join("labels.txt"));
+    let mut s = Session::new();
+    load_model(
+        &mut s,
+        false,
+        &models.join("birdnet-v2.4-embeddings-fp32.onnx"),
+    );
+    let (samples, rate) = load(
+        &sounds_dir()
+            .join("bat-demo-sounds/sounds/XC540767 - Gentoo Penguin - Pygoscelis papua.mp3"),
+        18.0,
+    );
+    let duration = samples.len() as f64 / rate as f64;
+    let plain = analyse(&mut s, Method::BirdNet, &samples, rate);
+    let method = Method::BirdNet;
+    let passes = refine_passes(
+        method.window_samples() as u32,
+        method.step_samples(1.0).unwrap(),
+    );
+    assert_eq!(passes.len(), 2);
+    let coarse = analyse_pass(&mut s, method, &samples, rate, passes[0].offsets.clone());
+    let fine = analyse_pass(&mut s, method, &samples, rate, passes[1].offsets.clone());
+    // Step 3 s: the same windows and scores as before.
+    assert_eq!(coarse.windows, plain.windows);
+    assert_eq!(coarse.embeddings, plain.embeddings);
+    let mut all: Vec<(f64, f64, Vec<Score>)> = coarse.windows.clone();
+    all.extend(fine.windows.iter().cloned());
+    all.sort_by(|a, b| a.0.total_cmp(&b.0));
+    eprintln!(
+        "{duration:.2} s at {rate} Hz: {} windows end to end, {} with a 1 s step",
+        plain.windows.len(),
+        all.len()
+    );
+    // Starts every 1 s, no start twice, every window inside the recording.
+    for (k, w) in all.iter().enumerate() {
+        assert_eq!(w.0, k as f64);
+        assert!(w.1 <= duration + 1e-9);
+    }
+    assert_eq!(all.len(), 3 * plain.windows.len() - 2);
+    for w in &all {
+        let top = w.2[0];
+        eprintln!(
+            "{:>4.1} to {:>4.1} s: {} {:.3}",
+            w.0, w.1, names[top.class as usize], top.confidence
+        );
+    }
+    // Every window hears penguins, as the 3 s ones do.
+    let penguin = all
+        .iter()
+        .filter(|w| names[w.2[0].class as usize] == "Pygoscelis papua")
+        .count();
+    assert!(penguin * 10 >= all.len() * 8, "{penguin} of {}", all.len());
 }
 
 /// `PERCH_MODELS_DIR`: a folder with `perch_v2_embed.tract.onnx`,
@@ -340,6 +417,7 @@ fn bats_refuse_low_sample_rate() {
             run: 1,
             method: Method::Bats,
             source_rate: 48_000,
+            offsets: Vec::new(),
         },
         Attached::default(),
         &mut out,

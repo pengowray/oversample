@@ -161,7 +161,7 @@ pub(super) fn SpeciesMapDialog(
                 .map(|w| (w.start_s, w.end_s))
         });
         if let Some((s, e)) = times {
-            show_window(state, s, e, i);
+            show_window(state, s, e);
         }
     })
     .into_js_value();
@@ -188,6 +188,7 @@ pub(super) fn SpeciesMapDialog(
                     .get(class as usize)
                     .is_some_and(|l| location::unlikely_here(state, file, method, l))
             };
+            let selected = selected.and_then(|t| run.window_at_start(t));
             let mut d = windows_json(run, &m, spec.radius, min, selected, &unlikely);
             let any = d["unlikely"].as_array().is_some_and(|a| !a.is_empty());
             if any_unlikely.get_untracked() != any {
@@ -249,7 +250,9 @@ pub(super) fn SpeciesMapDialog(
                 (
                     n,
                     min,
-                    selected.is_some_and(|i| i < run.windows.len() && shown(i)),
+                    selected
+                        .and_then(|t| run.window_at_start(t))
+                        .is_some_and(shown),
                 )
             })
         })

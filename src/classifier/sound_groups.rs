@@ -309,10 +309,15 @@ fn number_by_size(assign: &[usize]) -> (Vec<u8>, Vec<usize>) {
 pub struct GroupTop {
     /// Windows in the group.
     pub size: usize,
+    /// The length of the group's windows' cells (`ClassifierRun::cells`),
+    /// in seconds: shown instead of `size` when windows overlap.
+    pub secs: f64,
     /// The class that is the top class of the most windows in the group,
     /// whatever its score, and how many windows it tops. `None` when no
     /// window in the group has a score.
     pub top: Option<(u16, usize)>,
+    /// The length of the cells of the windows `top`'s class tops, in seconds.
+    pub top_secs: f64,
     /// That class's average confidence over the windows it tops.
     pub mean: f32,
     /// The class most often in second place in the group's windows, other
@@ -332,30 +337,40 @@ fn most_frequent(counts: &std::collections::HashMap<u16, usize>) -> Option<(u16,
 /// For each group of `g`, its most frequent top class in `run`. Windows
 /// without scores count in the group's size; windows with no group (quiet)
 /// are not counted anywhere. Equal counts go to the lower class number.
+///
+/// `g` was made from the run's embeddings, which are in the order the
+/// windows arrived, so `g.of_window` is looked up by each window's
+/// [`super::WindowScores::slot`]. A window that arrived after the grouping
+/// was made has no group yet.
 pub fn group_tops(g: &Grouping, run: &ClassifierRun) -> Vec<GroupTop> {
     use std::collections::HashMap;
     let n = g.sizes.len();
+    let cells = run.cells();
     let grouped = || {
-        run.windows
-            .iter()
-            .zip(&g.of_window)
-            .filter_map(|(w, grp)| grp.map(|grp| (w, grp as usize)))
+        run.windows.iter().zip(&cells).filter_map(|(w, c)| {
+            let grp = g.of_window.get(w.slot as usize).copied().flatten()?;
+            Some((w, c.1 - c.0, grp as usize))
+        })
     };
+    let mut secs = vec![0.0f64; n];
     let mut firsts: Vec<HashMap<u16, usize>> = vec![HashMap::new(); n];
-    for (w, grp) in grouped() {
+    for (w, len, grp) in grouped() {
+        secs[grp] += len;
         if let Some(s) = w.top.first() {
             *firsts[grp].entry(s.class).or_default() += 1;
         }
     }
     let tops: Vec<Option<(u16, usize)>> = firsts.iter().map(most_frequent).collect();
     let mut sums = vec![0.0f32; n];
+    let mut top_secs = vec![0.0f64; n];
     let mut seconds: Vec<HashMap<u16, usize>> = vec![HashMap::new(); n];
-    for (w, grp) in grouped() {
+    for (w, len, grp) in grouped() {
         let Some((class, _)) = tops[grp] else {
             continue;
         };
         if w.top.first().is_some_and(|s| s.class == class) {
             sums[grp] += w.top[0].confidence;
+            top_secs[grp] += len;
         }
         if let Some(s) = w.top.get(1).filter(|s| s.class != class) {
             *seconds[grp].entry(s.class).or_default() += 1;
@@ -364,7 +379,9 @@ pub fn group_tops(g: &Grouping, run: &ClassifierRun) -> Vec<GroupTop> {
     (0..n)
         .map(|i| GroupTop {
             size: g.sizes[i],
+            secs: secs[i],
             top: tops[i],
+            top_secs: top_secs[i],
             mean: tops[i].map_or(0.0, |(_, count)| sums[i] / count as f32),
             second: most_frequent(&seconds[i]).map(|(c, _)| c),
         })
@@ -600,6 +617,8 @@ mod tests {
             source_rate: 48_000,
             model_rate: 48_000,
             window_secs: 3.0,
+            step_secs: 3.0,
+            spacing_secs: 3.0,
             labels: Arc::new(labels),
             windows: tops
                 .iter()
@@ -607,6 +626,7 @@ mod tests {
                 .map(|(i, t)| WindowScores {
                     start_s: i as f64 * 3.0,
                     end_s: (i + 1) as f64 * 3.0,
+                    slot: i as u32,
                     top: t
                         .iter()
                         .map(|&class| Score {
@@ -616,6 +636,7 @@ mod tests {
                         .collect(),
                 })
                 .collect(),
+            whole_file: true,
             complete: true,
         }
     }
@@ -679,6 +700,34 @@ mod tests {
         // Class 0 tops both quiet windows but no group.
         assert_eq!((tops[0].size, tops[0].top), (2, Some((1, 1))));
         assert_eq!((tops[1].size, tops[1].top), (1, Some((2, 1))));
+    }
+
+    /// Windows that arrived out of time order (a later pass of a run with a
+    /// shorter step) are grouped by their embeddings' order, and each
+    /// group's time is the length of its windows' cells.
+    #[test]
+    fn groups_follow_each_window_s_embedding() {
+        // Windows at 0, 3 and 6 s came first (slots 0 to 2), then 1.5 and
+        // 4.5 s (slots 3 and 4).
+        let mut r = run(&[Some(1), Some(2), Some(1), Some(2), Some(1)]);
+        let starts = [0.0, 1.5, 3.0, 4.5, 6.0];
+        for ((w, s), slot) in r.windows.iter_mut().zip(starts).zip([0, 3, 1, 4, 2]) {
+            w.start_s = s;
+            w.end_s = s + 3.0;
+            w.slot = slot;
+        }
+        // By slot: 0, 3 and 6 s in group 0; 1.5 and 4.5 s in group 1.
+        let g = Grouping {
+            of_window: [0, 0, 0, 1, 1].map(Some).to_vec(),
+            sizes: vec![3, 2],
+        };
+        let tops = group_tops(&g, &r);
+        // Cells: 0-2.25, 2.25-3.75, 3.75-5.25, 5.25-6.75, 6.75-9.
+        assert_eq!(tops[0].top, Some((1, 3)));
+        assert_eq!(tops[1].top, Some((2, 2)));
+        assert!((tops[0].secs - 6.0).abs() < 1e-9);
+        assert!((tops[1].secs - 3.0).abs() < 1e-9);
+        assert!((tops[1].top_secs - 3.0).abs() < 1e-9);
     }
 
     #[test]

@@ -60,8 +60,16 @@ pub struct ScoreRow {
 /// Everything the strips draw for the current file.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScoreStrips {
-    /// Each window's start and end, in seconds.
+    /// Each window's cell (`ClassifierRun::cells`), in seconds: where its
+    /// values are drawn and hovered. Cells never overlap, also when the
+    /// windows do.
     pub windows: Vec<(f64, f64)>,
+    /// Each window's own start and end, in seconds: the audio the model
+    /// heard, for the hover text.
+    pub heard: Vec<(f64, f64)>,
+    /// Windows are numbered in the hover text: false when they overlap,
+    /// since a later pass of a run renumbers them.
+    pub numbered: bool,
     pub rows: Vec<ScoreRow>,
     /// Per window, the lowest stored score when the window holds a full top
     /// 10: a species missing from it scored below this (`window_floors`).
@@ -127,19 +135,21 @@ pub fn display_name(label: &super::SpeciesLabel) -> String {
 }
 
 /// For each component in `picked` (0 for PC1), each window's percentile.
-/// `embeddings` holds `method`'s embeddings back to back in window order
-/// (`ClassifierState::embeddings`); a window without one yet gets `None`.
-/// `percentiles` maps one embedding to its percentile on every component.
+/// `embeddings` holds `method`'s embeddings back to back in the order the
+/// windows arrived (`ClassifierState::embeddings`); `slots` is each window's
+/// place in it (`WindowScores::slot`), in window order. A window without one
+/// yet gets `None`. `percentiles` maps one embedding to its percentile on
+/// every component.
 pub fn component_cells(
     embeddings: &[f32],
     method: Method,
-    windows: usize,
+    slots: &[u32],
     picked: &[usize],
     percentiles: impl Fn(&[f32]) -> Vec<f32>,
 ) -> Vec<Vec<Option<f32>>> {
-    let mut rows = vec![Vec::with_capacity(windows); picked.len()];
-    for i in 0..windows {
-        let p = super::types::embedding(embeddings, method, i).map(&percentiles);
+    let mut rows = vec![Vec::with_capacity(slots.len()); picked.len()];
+    for &slot in slots {
+        let p = super::types::embedding(embeddings, method, slot as usize).map(&percentiles);
         for (row, &k) in rows.iter_mut().zip(picked) {
             row.push(p.as_ref().and_then(|p| p.get(k).copied()));
         }
@@ -153,6 +163,20 @@ pub fn window_at(windows: &[(f64, f64)], t: f64) -> Option<usize> {
     let i = windows.partition_point(|&(start, _)| start <= t);
     let i = i.checked_sub(1)?;
     (t < windows[i].1).then_some(i)
+}
+
+/// The window starting at `start` (within `types::SAME_WINDOW_S`), given
+/// each window's start and end in time order.
+pub fn start_index(windows: &[(f64, f64)], start: f64) -> Option<usize> {
+    let at = windows.partition_point(|&(s, _)| s < start);
+    [at.checked_sub(1), Some(at)]
+        .into_iter()
+        .flatten()
+        .find(|&i| {
+            windows
+                .get(i)
+                .is_some_and(|&(s, _)| (s - start).abs() < super::types::SAME_WINDOW_S)
+        })
 }
 
 /// When windows are narrower than a pixel or two, one value per pixel column
@@ -453,6 +477,8 @@ mod tests {
             source_rate: 48_000,
             model_rate: 48_000,
             window_secs: 3.0,
+            step_secs: 3.0,
+            spacing_secs: 3.0,
             labels: Arc::new(labels),
             windows: windows
                 .into_iter()
@@ -460,12 +486,14 @@ mod tests {
                 .map(|(i, top)| WindowScores {
                     start_s: i as f64 * 3.0,
                     end_s: (i + 1) as f64 * 3.0,
+                    slot: i as u32,
                     top: top
                         .into_iter()
                         .map(|(class, confidence)| Score { class, confidence })
                         .collect(),
                 })
                 .collect(),
+            whole_file: true,
             complete: true,
         }
     }
@@ -494,13 +522,16 @@ mod tests {
         e[len] = 0.75;
         // A stand-in for the percentiles: component k is the first value + k/10.
         let p = |x: &[f32]| (0..3).map(|k| x[0] + k as f32 / 10.0).collect::<Vec<f32>>();
-        let rows = component_cells(&e, Method::BirdNet, 3, &[2, 0], p);
+        let rows = component_cells(&e, Method::BirdNet, &[0, 1, 2], &[2, 0], p);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0], vec![Some(0.45), Some(0.95), None]);
         assert_eq!(rows[1], vec![Some(0.25), Some(0.75), None]);
         // A component past the file's count has no value.
-        let rows = component_cells(&e, Method::BirdNet, 1, &[7], p);
+        let rows = component_cells(&e, Method::BirdNet, &[0], &[7], p);
         assert_eq!(rows[0], vec![None]);
+        // Windows whose embeddings arrived in another order.
+        let rows = component_cells(&e, Method::BirdNet, &[1, 0], &[0], p);
+        assert_eq!(rows[0], vec![Some(0.75), Some(0.25)]);
     }
 
     #[test]

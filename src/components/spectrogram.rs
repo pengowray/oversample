@@ -68,6 +68,12 @@ fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Opti
     state.classifier.results().with(|m| {
         let run = m.get(&(file, method))?;
         let order = colour_order(run);
+        // Each window is drawn over its cell, so overlapping windows give one
+        // box per stretch, not a stack. Ticks mark the window boundaries
+        // inside a stretch only for windows end to end; with a shorter step
+        // they would be a comb.
+        let cells = run.cells();
+        let ticks = !run.overlapping();
         let mut spans: Vec<spectrogram_renderer::StripSpan> = Vec::new();
         let mut windows = Vec::new();
         let mut last: Option<(usize, u16)> = None;
@@ -76,29 +82,32 @@ fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Opti
             if kind == WindowKind::Below {
                 continue;
             }
+            let (start_s, end_s) = cells[i];
             let top = w.top[0];
             let colour = (kind == WindowKind::Species)
                 .then(|| order.iter().position(|&c| c == top.class))
                 .flatten();
             if let Some(slot) = colour {
                 windows.push(spectrogram_renderer::SpeciesWindow {
-                    start_s: w.start_s,
-                    end_s: w.end_s,
+                    start_s,
+                    end_s,
                     slot,
                 });
             }
             let joins = last.is_some_and(|(j, c)| j + 1 == i && c == top.class);
             match spans.last_mut() {
                 Some(s) if joins => {
-                    s.inner_bounds.push(w.start_s);
-                    s.end_s = w.end_s;
+                    if ticks {
+                        s.inner_bounds.push(start_s);
+                    }
+                    s.end_s = end_s;
                 }
                 _ => {
                     let label = run.label(&top);
                     let name = label.map_or("Unknown", |l| l.common.as_str());
                     spans.push(spectrogram_renderer::StripSpan {
-                        start_s: w.start_s,
-                        end_s: w.end_s,
+                        start_s,
+                        end_s,
                         label: format!("{name} {:.2}", top.confidence),
                         colour,
                         inner_bounds: Vec::new(),
@@ -110,7 +119,10 @@ fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Opti
             }
             last = Some((i, top.class));
         }
+        // The audio the selected window heard: its whole window, so it can
+        // be found in the sound.
         let selected = selected
+            .and_then(|t| run.window_at_start(t))
             .and_then(|i| run.windows.get(i))
             .map(|w| (w.start_s, w.end_s));
         Some(SpeciesStrip {

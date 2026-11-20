@@ -153,7 +153,7 @@ pub struct SpectInteraction {
     pub pending_selection_hit: RwSignal<bool>,
     /// BirdNET / BattyBirdNET window under a press on the label strip,
     /// selected on mouseup if the press was a click (panning takes priority)
-    pub pending_strip_window: RwSignal<Option<usize>>,
+    pub pending_strip_window: RwSignal<Option<f64>>,
     /// Pointer is over a window's label on the strip: shows a pointer cursor
     pub strip_hover: RwSignal<bool>,
 }
@@ -200,8 +200,10 @@ const TAP_SLOP_TOUCH: f64 = 8.0;
 /// seconds). `reach` is how far down the hit area goes: the strip's height
 /// for a mouse, more for a finger. Only windows the strip draws count: those
 /// at or above the minimum confidence, for the method picked in the Call
-/// detection tab.
-fn strip_window_at(state: AppState, px_y: f64, t: f64, reach: f64) -> Option<usize> {
+/// detection tab. A window's label covers its cell (`ClassifierRun::cells`),
+/// so overlapping windows each have their own part. Returns the window's
+/// start, which is how the selection names it.
+fn strip_window_at(state: AppState, px_y: f64, t: f64, reach: f64) -> Option<f64> {
     use crate::classifier::summary::{window_kind, WindowKind};
     if !(0.0..reach).contains(&px_y) || !state.call_detection.overlay_enabled().get_untracked() {
         return None;
@@ -211,9 +213,9 @@ fn strip_window_at(state: AppState, px_y: f64, t: f64, reach: f64) -> Option<usi
     let min = crate::classifier::min_confidence_untracked(state, method);
     state.classifier.results().with_untracked(|m| {
         let run = m.get(&(file, method))?;
-        run.windows.iter().enumerate().position(|(i, w)| {
-            w.start_s <= t && t < w.end_s && window_kind(run, i, min) != WindowKind::Below
-        })
+        let cells = run.cells();
+        let i = crate::classifier::strips::window_at(&cells, t)?;
+        (window_kind(run, i, min) != WindowKind::Below).then(|| run.windows[i].start_s)
     })
 }
 

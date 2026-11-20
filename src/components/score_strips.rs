@@ -120,11 +120,10 @@ fn build(state: AppState) -> Option<ScoreStrips> {
                 .copied()
                 .filter(|&k| k < pcs.variance.len())
                 .collect();
+            let slots: Vec<u32> = run.windows.iter().map(|w| w.slot).collect();
             let cells = state.classifier.embeddings().with(|e| {
                 let e = e.get(&(file, method)).map_or(&[][..], |v| &v[..]);
-                component_cells(e, method, run.windows.len(), &picked, |x| {
-                    pcs.percentiles(x)
-                })
+                component_cells(e, method, &slots, &picked, |x| pcs.percentiles(x))
             });
             for (k, cells) in picked.iter().zip(cells) {
                 rows.push(ScoreRow {
@@ -149,7 +148,9 @@ fn build(state: AppState) -> Option<ScoreStrips> {
             }
         }
         (!rows.is_empty()).then(|| ScoreStrips {
-            windows: run.windows.iter().map(|w| (w.start_s, w.end_s)).collect(),
+            windows: run.cells(),
+            heard: run.windows.iter().map(|w| (w.start_s, w.end_s)).collect(),
+            numbered: !run.overlapping(),
             rows,
             floors: window_floors(run),
             min_confidence: min,
@@ -162,13 +163,18 @@ fn build(state: AppState) -> Option<ScoreStrips> {
 /// The hover text for row `r`, window `i`: two lines.
 fn hover_text(strips: &ScoreStrips, r: usize, i: usize) -> Option<(String, String)> {
     let row = strips.rows.get(r)?;
-    let (s, e) = *strips.windows.get(i)?;
-    let window = format!(
-        "Window {} ({} to {})",
-        i + 1,
+    // The audio the window heard, which with a shorter step is longer than
+    // its cell.
+    let (s, e) = *strips.heard.get(i)?;
+    let (s, e) = (
         crate::format_time::format_time_display(s, 1),
-        crate::format_time::format_time_display(e, 1)
+        crate::format_time::format_time_display(e, 1),
     );
+    let window = if strips.numbered {
+        format!("Window {} ({s} to {e})", i + 1)
+    } else {
+        format!("Window {s} to {e}")
+    };
     let cell = row.cells.get(i).copied().flatten();
     let line = match (row.kind, cell) {
         (ScoreRowKind::Species, Some(v)) => format!("{}: confidence {v:.2}", row.label),
@@ -257,6 +263,8 @@ pub fn ScoreStripsRow() -> impl IntoView {
                 return;
             };
             let _ = ctx.set_transform(dpr, 0.0, 0.0, dpr, 0.0, 0.0);
+            let selected =
+                selected.and_then(|t| crate::classifier::strips::start_index(&s.heard, t));
             draw_score_strips(&ctx, s, selected, scroll, w * sec_per_px, w);
         });
     });
@@ -363,7 +371,12 @@ pub fn ScoreStripsRow() -> impl IntoView {
                     on:pointerdown=move |ev: web_sys::PointerEvent| {
                         // A click (or tap) picks the window, as in the lists.
                         if let Some((_, _, i)) = cell_at(&ev) {
-                            state.call_detection.selected_window().set(Some(i));
+                            let start = strips.with_untracked(|s| {
+                                s.as_ref().and_then(|s| s.heard.get(i)).map(|h| h.0)
+                            });
+                            if let Some(start) = start {
+                                state.call_detection.selected_window().set(Some(start));
+                            }
                         }
                         show_hover(&ev);
                     }

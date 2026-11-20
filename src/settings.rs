@@ -64,6 +64,10 @@ pub mod keys {
     /// species (with their method) and BirdNET's principal components, as
     /// JSON (`classifier::strips::to_stored`).
     pub const SCORE_STRIPS: &str = "oversample_score_strips";
+    /// The Step beside the Analyse button in the Call detection tab, for
+    /// every classifier: "window" (the model's whole window) or seconds
+    /// ("1", "0.5") (`classifier::summary::StepPick`).
+    pub const CLASSIFIER_STEP: &str = "oversample_classifier_step";
     /// Developer override for the proxy base URL (e.g. `http://localhost:8080`).
     /// No UI; set it from the browser console. Unset means the build default.
     pub const XC_API_BASE_OVERRIDE: &str = "oversample_xc_api_base";
@@ -171,6 +175,15 @@ pub fn set_score_strips(picks: &crate::classifier::strips::StripPicks) {
         keys::SCORE_STRIPS,
         &crate::classifier::strips::to_stored(picks),
     );
+}
+
+/// The saved Step for classifier runs; the whole window when unset.
+pub fn get_classifier_step() -> crate::classifier::summary::StepPick {
+    crate::classifier::summary::StepPick::from_stored(get_raw(keys::CLASSIFIER_STEP).as_deref())
+}
+
+pub fn set_classifier_step(pick: crate::classifier::summary::StepPick) {
+    set_raw(keys::CLASSIFIER_STEP, &pick.to_stored());
 }
 
 /// The saved "Lowest bat frequency" in Hz, or the default.

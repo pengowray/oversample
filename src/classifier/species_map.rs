@@ -146,6 +146,8 @@ mod tests {
             source_rate: 48_000,
             model_rate: 48_000,
             window_secs: 3.0,
+            step_secs: 3.0,
+            spacing_secs: 3.0,
             labels: Arc::new(parse_labels("A a_A\nB b_B\nC c_C\n")),
             windows: tops
                 .iter()
@@ -153,12 +155,14 @@ mod tests {
                 .map(|(i, t)| WindowScores {
                     start_s: i as f64 * 3.0,
                     end_s: (i + 1) as f64 * 3.0,
+                    slot: i as u32,
                     top: t
                         .iter()
                         .map(|&(class, confidence)| Score { class, confidence })
                         .collect(),
                 })
                 .collect(),
+            whole_file: true,
             complete: true,
         }
     }

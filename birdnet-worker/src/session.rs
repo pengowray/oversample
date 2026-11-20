@@ -164,6 +164,7 @@ impl Session {
                 run,
                 method,
                 source_rate,
+                offsets,
             } => {
                 self.run = None;
                 if let Some(min) = method.min_source_rate() {
@@ -191,7 +192,7 @@ impl Session {
                 self.run = Some(Run {
                     id: run,
                     method,
-                    windower: Windower::new(method, source_rate),
+                    windower: Windower::with_offsets(method, source_rate, &offsets),
                 });
             }
             ToWorker::Chunk { run, seq } => {
