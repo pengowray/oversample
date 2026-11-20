@@ -22,12 +22,13 @@
 //!   else has no background to tell apart;
 //! - digital silence is always quiet.
 //!
-//! So noise with texture (rain drops, insects, a shopping mall, wind) has
-//! sound in every window, while steady hiss is quiet: the same hiss stretch
-//! is quiet in a recording that also has calls. One loud event does not turn
-//! rain into quiet, because each rain window has its own drops. A recording
-//! of noise that only swells and fades slowly, with one loud event, does lose
-//! the windows at the bottom of the swell.
+//! So noise with texture (rain drops, insects, a shopping mall) has sound in
+//! every window, while steady hiss is quiet: the same hiss stretch is quiet
+//! in a recording that also has calls. One loud event does not turn rain
+//! into quiet, because each rain window has its own drops. Noise that only
+//! swells and fades slowly does lose the windows at the bottom of the swell
+//! when something louder happens: a lull in a recording of howling wind is
+//! quiet.
 //!
 //! Tuned on real recordings (Gentoo Penguin XC540767, bat soundscapes
 //! XC809053 and XC825336, Cardioderma XC843108, a jaguar, Baird's Sandpiper,
@@ -70,8 +71,11 @@ pub const MAX_BANDS: usize = 8;
 pub const MIN_BAND_CELLS: f32 = 24.0;
 /// The floor's percentile among all frame levels.
 const FLOOR_PERCENTILE: f64 = 10.0;
-/// Mean square below this (-120 dBFS) is digital silence.
+/// A frame whose mean square in the band is below this (-120 dBFS) counts
+/// as digital silence.
 const SILENT: f64 = 1e-12;
+/// A frame whose samples are all under this (-120 dBFS) is digital silence.
+const SILENT_AMPLITUDE: f32 = 1e-6;
 /// A part's level is never put lower than this, in dB.
 const LOWEST_DB: f32 = -140.0;
 /// A part's level in hundredths of a dB, for a digitally silent frame.
@@ -139,14 +143,8 @@ impl FrameLevels {
 /// Measures [`FrameLevels`] from samples fed in pieces, so a long recording
 /// need not be in memory at once.
 pub struct LevelMeter {
-    /// Sum of squares of the samples of the frame being read, for digital
-    /// silence (the second differences ring on past the sound).
-    raw_sum: f64,
-    raw_count: usize,
     /// Samples fed.
     fed: usize,
-    /// Per frame, whether it is digital silence.
-    silent: Vec<bool>,
     /// Samples in a frame.
     frame_len: usize,
     frame_secs: f64,
@@ -172,33 +170,19 @@ pub struct LevelMeter {
     band_cdb: Vec<i16>,
 }
 
-/// Sum of squares, in 8 lanes so it can use SIMD.
-fn sum_squares(x: &[f32]) -> f64 {
-    let mut lanes = [0.0f32; 8];
-    let chunks = x.chunks_exact(8);
-    let tail: f32 = chunks.remainder().iter().map(|v| v * v).sum();
-    for c in chunks {
-        for (l, v) in lanes.iter_mut().zip(c) {
-            *l += v * v;
-        }
-    }
-    f64::from(lanes.iter().sum::<f32>() + tail)
-}
-
 /// Sum of `w * |c|^2`, in 8 lanes so it can use SIMD.
 fn weighted_power(c: &[Complex<f32>], w: &[f32]) -> f64 {
     let mut lanes = [0.0f32; 8];
-    let mut cs = c.chunks_exact(8);
-    let mut ws = w.chunks_exact(8);
-    for (c8, w8) in (&mut cs).zip(&mut ws) {
+    let (cs, c_rest) = c.as_chunks::<8>();
+    let (ws, w_rest) = w.as_chunks::<8>();
+    for (c8, w8) in cs.iter().zip(ws) {
         for ((l, c), w) in lanes.iter_mut().zip(c8).zip(w8) {
             *l += w * (c.re * c.re + c.im * c.im);
         }
     }
-    let tail: f32 = cs
-        .remainder()
+    let tail: f32 = c_rest
         .iter()
-        .zip(ws.remainder())
+        .zip(w_rest)
         .map(|(c, w)| w * c.norm_sqr())
         .sum();
     f64::from(lanes.iter().sum::<f32>() + tail)
@@ -286,10 +270,7 @@ impl LevelMeter {
             })
             .collect();
         Self {
-            raw_sum: 0.0,
-            raw_count: 0,
             fed: 0,
-            silent: Vec::new(),
             frame_len,
             frame_secs,
             pending: Vec::new(),
@@ -310,25 +291,8 @@ impl LevelMeter {
     /// The next samples of the recording.
     pub fn push(&mut self, samples: &[f32]) {
         self.fed += samples.len();
-        let mut rest = samples;
-        while !rest.is_empty() {
-            let n = (self.frame_len - self.raw_count).min(rest.len());
-            self.raw_sum += sum_squares(&rest[..n]);
-            self.raw_count += n;
-            rest = &rest[n..];
-            if self.raw_count == self.frame_len {
-                self.close_raw_frame();
-            }
-        }
         self.pending.extend_from_slice(samples);
         self.measure_pending(None);
-    }
-
-    fn close_raw_frame(&mut self) {
-        self.silent
-            .push(self.raw_sum / (self.raw_count as f64) < SILENT);
-        self.raw_sum = 0.0;
-        self.raw_count = 0;
     }
 
     /// Samples a frame is measured from: its span and 2 before it.
@@ -356,7 +320,12 @@ impl LevelMeter {
             if at + reach > pending.len() || end.is_some_and(|_| self.db.len() >= self.target()) {
                 break;
             }
-            self.measure_frame(&pending[at..at + reach]);
+            // Digital silence: every sample of the frame itself (not its
+            // tapers) under -120 dBFS. Stops at the first sound.
+            let i = self.db.len() * self.frame_len - self.start;
+            let core = &pending[i..(i + self.frame_len).min(pending.len())];
+            let silent = core.iter().all(|v| v.abs() < SILENT_AMPLITUDE);
+            self.measure_frame(&pending[at..at + reach], silent);
         }
         self.pending = pending;
         let keep = self
@@ -374,8 +343,13 @@ impl LevelMeter {
     }
 
     /// Measures one frame from its span and the 2 samples before it.
-    fn measure_frame(&mut self, x: &[f32]) {
-        let frame = self.db.len();
+    fn measure_frame(&mut self, x: &[f32], silent: bool) {
+        if silent {
+            self.db.push(f32::NEG_INFINITY);
+            self.band_cdb
+                .extend(std::iter::repeat_n(SILENT_CDB, self.bands.len()));
+            return;
+        }
         // Differenced twice, then weighted.
         let span = self.window.len();
         for (((i, &w), &a), (&b, &c)) in self
@@ -397,7 +371,7 @@ impl LevelMeter {
         }
         let parts = &parts[..self.bins.len()];
         let total: f64 = parts.iter().sum();
-        if self.silent.get(frame).copied().unwrap_or(false) || total < SILENT {
+        if total < SILENT {
             self.db.push(f32::NEG_INFINITY);
             self.band_cdb
                 .extend(std::iter::repeat_n(SILENT_CDB, parts.len()));
@@ -413,9 +387,6 @@ impl LevelMeter {
     /// The levels; a last part-frame of at least half a frame counts.
     pub fn finish(mut self) -> FrameLevels {
         let frames = self.target();
-        if self.raw_count * 2 >= self.frame_len {
-            self.close_raw_frame();
-        }
         // A recording shorter than a span is padded with silence.
         let short = self.reach().saturating_sub(self.fed);
         self.pending.extend(std::iter::repeat_n(0.0, short));
@@ -978,8 +949,10 @@ mod tests {
             .collect();
         let bytes = std::fs::read(path).unwrap();
         let x: Vec<f32> = bytes
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&b| f32::from_le_bytes(b))
             .collect();
         let mut m = LevelMeter::new(rate, win / FRAMES_PER_WINDOW as f64, (band[0], band[1]));
         for piece in x.chunks(1 << 20) {
