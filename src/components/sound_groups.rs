@@ -520,11 +520,16 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                 }
             })
             .collect::<Vec<_>>();
+        let shared_note = sg::shared_class(&tops).map(|class| {
+            let text = sg::shared_note(tops.len(), &class_name(run, class));
+            view! { <div class="detection-status-note sound-groups-note">{text}</div> }
+        });
         Some(
             view! {
                 <table class="detection-table sound-groups-legend">
                     <tbody>{rows}</tbody>
                 </table>
+                {shared_note}
                 {quiet_note}
             }
             .into_any(),

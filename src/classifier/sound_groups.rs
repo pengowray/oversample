@@ -389,6 +389,26 @@ pub fn hint(top: &GroupTop, name: impl Fn(u16) -> String) -> String {
     }
 }
 
+/// The class every group is named after, when there are two or more groups
+/// and all of them are "mostly" the same class. The file then holds one kind
+/// of sound as far as the model can tell, and the groups differ in how loud
+/// or clear it is, not in what it is.
+pub fn shared_class(tops: &[GroupTop]) -> Option<u16> {
+    let first = named_class(tops.first()?)?;
+    (tops.len() >= 2 && tops.iter().all(|t| named_class(t) == Some(first))).then_some(first)
+}
+
+/// The legend's note for [`shared_class`]: "Both groups are mostly Gentoo
+/// Penguin. They differ in how loud or clear the sound is."
+pub fn shared_note(groups: usize, name: &str) -> String {
+    let which = if groups == 2 {
+        "Both groups".to_string()
+    } else {
+        format!("All {groups} groups")
+    };
+    format!("{which} are mostly {name}. They differ in how loud or clear the sound is.")
+}
+
 /// Each group's hint. Groups named after the same class also get that
 /// class's average confidence in the group, which is what tells them apart:
 /// "mostly Gentoo Penguin, avg 0.97".
@@ -598,6 +618,25 @@ mod tests {
                 .collect(),
             complete: true,
         }
+    }
+
+    #[test]
+    fn shared_class_needs_every_group_named_the_same() {
+        let top = |class, count, size| GroupTop {
+            size,
+            top: Some((class, count)),
+            ..Default::default()
+        };
+        assert_eq!(shared_class(&[top(1, 3, 4), top(1, 2, 2)]), Some(1));
+        assert_eq!(shared_class(&[top(1, 3, 4), top(2, 2, 2)]), None);
+        // The second group is "mixed".
+        assert_eq!(shared_class(&[top(1, 3, 4), top(1, 1, 5)]), None);
+        assert_eq!(shared_class(&[top(1, 3, 4)]), None);
+        assert_eq!(
+            shared_note(2, "Bravo"),
+            "Both groups are mostly Bravo. They differ in how loud or clear the sound is."
+        );
+        assert!(shared_note(3, "Bravo").starts_with("All 3 groups are mostly Bravo."));
     }
 
     #[test]
