@@ -23,6 +23,8 @@ status line). The worker message is `ToWorker::Live` in
 - One request is in flight at a time. The next goes out after the answer and
   at least 250 ms after the last one, so a slow device updates less often and
   nothing queues.
+- While a file is open and nothing plays or listens, the view makes one
+  reading of the 3 s that Play would start with (the paused reading, see 8).
 
 ## Measured
 
@@ -50,7 +52,8 @@ In the app, the live view and the classifier agreed on the test recordings:
    sidebar this is the part that reads at a glance. Below the minimum
    confidence (the same setting as the results) it says "No species at 0.50 or
    above" and lists the highest scores in grey, so a weak match never looks
-   like a hit.
+   like a hit. A bird that is unlikely at the place and month gets the
+   app's flag after its name (see 9).
 2. **A strip of scores over the last 20 s**, one row per class, coloured by
    score, newest on the right. A class gets a row when it scores 0.1 or more
    anywhere in the 20 s and keeps its place while it is in that window; with
@@ -83,8 +86,12 @@ In the app, the live view and the classifier agreed on the test recordings:
    the reading's species. Names and lookups are a canvas and DOM layer over
    the chart, about 0.5 to 1 ms per reading.
 
-5. **Component maps (prototype)**: eight small copies of the species map, four
-   to a row, one per principal component, under the main map.
+5. **Component maps (prototype)**: small copies of the species map, one per
+   principal component, under the main map: 12 for the class-row components
+   (the default), 8 for `?pc=rec`. The count comes from the file's header.
+   The sidebar has 4 to a row; wider places (full screen) have more, as many
+   as fit at 70 px or wider, with the rows filled evenly (12 maps: 3 rows of
+   4 in the sidebar, 2 rows of 6 in the 440 px full-screen column).
    - Layout: the main map and the small maps share one layout, UMAP of the
      class rows (`species_umap.py`, `birdnet-umap.bin`) by default or the
      t-SNE of `research/species-map`, chosen with the Layout buttons above
@@ -137,11 +144,31 @@ In the app, the live view and the classifier agreed on the test recordings:
    - Beside each name, a small pie shows the component's share of the
      variation (1.8% for PC1 of the class rows, so a thin slice; 21% for PC1
      of the recordings).
+   - 12 class-row components (was 8, since 2026-11-20). Shares of the class
+     rows' variance, PC1 to PC12: 1.79, 1.33, 1.10, 0.95, 0.88, 0.77, 0.69,
+     0.64, 0.60, 0.57, 0.57 and 0.53% (10.4% together). The same PCA on the
+     rows with each column shuffled gives 0.18% per component, so every one of
+     the first 24 is above noise; variance does not say where to stop.
+     Compactness does: the share of each species' 10 nearest neighbours on
+     the UMAP layout in the same half of a component is 0.84, 0.82, 0.84,
+     0.72, 0.68, 0.70, 0.67, 0.70, 0.65, 0.69, 0.68 and 0.65 for PC1 to PC12
+     (t-SNE: 0.85 to 0.68), then 0.62, 0.63, 0.63 and 0.58 for PC13 to PC16
+     (0.5 is chance). Past PC12 the maps are close to speckle, so the file
+     stops at 12. The first 8 are the same axes as before (cosine 0.997 or
+     more, same sign), so their colours and ends are unchanged.
+   - Ends of the new components (from `pc_bands.txt`): PC9 South Asian
+     laughingthrushes and babblers against Australian and New Guinea birds;
+     PC10 a mix (harrier, crake, thornbird, hornero, plover) against European
+     crows, jays and tits; PC11 South American pigeons, tinamou and motmot
+     against a mix (hummingbird, booby, avocet, grebe); PC12 Himalayan
+     warblers, treecreepers and tits against a mix (antpitta, frogmouth,
+     myna, drongo).
    - Pointing at a small map says what the colour there stands for: the
      share of the species around the pointer that are in the area's fifth.
      Pointing at a graph gives the percentile and time of that reading.
    - Cost: a reading redraws eight map copies and graphs in about 0.3 ms; a
-     zoom or pan redraws all species once per frame.
+     zoom or pan redraws all species once per frame. Not measured again with
+     12 maps.
    - Removed: the `?pclight=` looks (regions, regions5, two, outer, halves,
      fine, typical). Zooming in now gives the `regions` look.
 
@@ -153,6 +180,39 @@ In the app, the live view and the classifier agreed on the test recordings:
    species. A kept list has a Close button and, beside each species, a
    button that opens Find recordings with that species' scientific name. It
    also closes on Escape, on a press outside it, and on a pan.
+
+8. **Paused reading**: while a file is open and nothing plays or listens,
+   the view reads the 3 s that Play would start with, so the map shows where
+   playback will begin. The start follows the Play button's start setting
+   (Auto, All, Here, Sel) by the same rules as the button
+   (`audio::playback::play_start_time`): the start of the file, the dashed
+   "here" line, or the start of the selection. The window is the 3 s
+   starting there; within 3 s of the end of the file it is the last 3 s.
+   This differs on purpose from the live reading, which is the 3 s ending at
+   the playhead: the paused reading is what is heard first. One request goes
+   out 300 ms after the start stops moving (scrolling, a new selection, a
+   new file), and only while the live view is on. It does not go into the
+   strip, the change trace, the trail, the component graphs or the Live
+   explorer. On the maps it is a blue play triangle, in the blue of the
+   spectrogram's "here" line; the readout shows its species with the window
+   in front ("12.4s to 15.4s", in the same blue), and the status line says
+   "The 3 s from where Play starts (blue triangle on the map)". The trail of
+   earlier readings is hidden meanwhile. When playback or the microphone
+   starts, the triangle goes at once and the live readings take over. The
+   classifier's stored windows were not used: a stored window that contains
+   the position is not the 3 s starting at it, so the marker would sit
+   elsewhere. Timelines get no paused reading.
+
+9. **Unlikely here**: with "Mark birds unlikely here" on, the app's flag
+   (as in the results lists) follows a bird's name in the strip and in the
+   readout, with "Unlikely at this place and month" as its tooltip. The
+   place is the one the classifier results use: during file playback (or
+   paused) the file's own place, or this device's position (if "Use my
+   location" gave one this session) in the file's week; while the microphone
+   listens, this device's position in the current week, and no flags without
+   it. The location list is worked out the first time it is needed for a
+   place (`classifier::location::scores_at`), which downloads the Geomodel
+   (16 MB) if it is not on the device yet.
 
    **Second version (`?pc=rec` in the address): PCA of recordings' embeddings**
    (`pc_rec.py`, output and checks in `pc_rec.txt`, data `birdnet-pc.bin`).
@@ -199,6 +259,14 @@ In the app, the live view and the classifier agreed on the test recordings:
    | 6 | 0.23, 0.32, 0.61 | 0.24, 0.41, 0.65 |
    | 7 | 0.45, 0.46, 0.06 | 0.23, 0.33, 0.48 |
    | 8 | 0.45, 0.46, 0.15 | 0.19, 0.29, 0.55 |
+   | 9 | 0.31, 0.30, -0.14 | |
+   | 10 | 0.28, 0.31, 0.20 | |
+   | 11 | 0.36, 0.32, -0.26 | |
+   | 12 | 0.28, 0.31, 0.22 | |
+
+   On PC9 and PC11 the reading's percentile runs against its top class's
+   (negative correlation), so on those two the graph under the map can sit
+   at the other end from the species the marker is among.
 
 ## Tried and dropped
 
@@ -267,6 +335,8 @@ space (see the parity test).
 
 ## Limits
 
+- The paused reading needs the region decoded: for a long file still
+  streaming in, it waits until that part is loaded.
 - Bat and other ultrasonic recordings: BirdNET hears 0 to 15 kHz. For audio
   at 96 kHz or more the view says "BirdNET hears up to 15 kHz, so bat calls
   above that do not show here." It still runs, since such recordings often

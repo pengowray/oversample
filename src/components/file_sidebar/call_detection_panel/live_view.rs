@@ -80,6 +80,15 @@ pub(super) fn LiveView() -> impl IntoView {
             interval_ms / 1000.0
         )),
         LiveStatus::Ready { .. } if sound_on() => Some("Starting\u{2026}".to_string()),
+        // A file is open and paused: the readout and the map show the 3 s
+        // Play would start with (live_embedding's paused reading). Not for
+        // a timeline, which gets no paused reading.
+        LiveStatus::Ready { .. }
+            if state.library.current_index().get().is_some()
+                && state.timeline.active().with(Option::is_none) =>
+        {
+            Some("The 3 s from where Play starts (blue triangle on the map)".to_string())
+        }
         LiveStatus::Ready { .. } => Some("Play a file or listen with the microphone.".to_string()),
         LiveStatus::Failed(e) => Some(format!("Live view stopped: {e}")),
     };

@@ -4,11 +4,15 @@
 // Called from src/live_embedding.rs:
 //   oversampleLiveEmbedding.update(el, json, speciesJson)
 //   oversampleLiveEmbedding.dispose(el)
-// `json` is { min, top: [[name, score]...],
+// `json` is { min, top: [[name, score, unlikelyHere]...],
 //   trail: [[x, y, secondsAgo, score, umapX, umapY]...] (x, y on the t-SNE layout),
-//   rows: [name...], strip: [[secondsAgo, row, score]...],
+//   rows: [name...], rowsUnlikely: [bool...], heard (any reading in the history),
+//   strip: [[secondsAgo, row, score]...],
 //   change: [[secondsAgo, distance]...], history,
-//   pcHist: [[secondsAgo, percentile on PC1, on PC2, ...]...] (0 to 1) }
+//   pcHist: [[secondsAgo, percentile on PC1, on PC2, ...]...] (0 to 1),
+//   preview: null, or while nothing plays the reading of the 3 s Play would
+//     start with: { at: { x, y, ux, uy, s } or null, from, to (seconds) };
+//     `top` is then that reading's }
 // `speciesJson` is [[x, y, name, scientific]...] for the map's species (t-SNE
 // places), or null when it was sent before. `pcJson` comes with it:
 // { variance: [share...], ranks: [[0..255 per species]...],
@@ -40,6 +44,22 @@
   const MUTED = '#9a9a9a';
   const GRID = '#333333';
   const HIT = '#50dc96';
+  // The "unlikely here" flag: the colour of .unlikely-flag (style.css) and
+  // the legend's wording (species_map.rs, classifier_section.rs).
+  const FLAG_COLOUR = '#ffcc88';
+  const FLAG_GLYPH = '\u2691';
+  const UNLIKELY_TEXT = 'Unlikely at this place and month';
+  // The app's flag icon (Icon::Flag in icons.rs), for the DOM readout.
+  const FLAG_SVG =
+    '<svg class="icon" viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 15s1-1 4-1 5 2 8 2 3-1 3-1V4s-1 1-3 1-5-2-8-2-4 1-4 1z"/><path d="M5 22V3"/></svg>';
+  const flagHtml = () =>
+    `<span class="unlikely-flag" role="img" aria-label="${UNLIKELY_TEXT}" title="${UNLIKELY_TEXT}">${FLAG_SVG}</span>`;
+  // The paused reading's marker: a play triangle in the blue of the
+  // spectrogram's dashed "here" line (rgba(100, 160, 255) in
+  // spectrogram.rs). A triangle, not a ring, so it differs from the dashed
+  // ring of a live reading below the minimum confidence, and from the blue
+  // of the component colours.
+  const PLAY_BLUE = '#64a0ff';
   const TOOLTIP = {
     confine: true,
     backgroundColor: '#262626',
@@ -62,6 +82,7 @@
 
   function stripOptions(d) {
     const rows = d.rows;
+    const unlikely = d.rowsUnlikely || [];
     const rowsH = Math.max(rows.length, 1) * ROW_H;
     // Each reading's cell runs to the next reading's time (the newest to 0).
     const times = [...new Set(d.strip.map((c) => c[0]))].sort((a, b) => a - b);
@@ -98,6 +119,10 @@
             fontSize: 11,
             textShadowColor: '#000',
             textShadowBlur: 3,
+            // The "unlikely here" flag after the name, in the colour of
+            // .unlikely-flag. A text glyph: axis labels are drawn on canvas.
+            formatter: (v, i) => (unlikely[i] ? `${v} {flag|${FLAG_GLYPH}}` : v),
+            rich: { flag: { color: FLAG_COLOUR, fontSize: 11 } },
           },
           axisLine: { show: false },
           axisTick: { show: false },
@@ -115,7 +140,7 @@
         },
       ],
       graphic: [
-        ...(rows.length
+        ...(rows.length || !d.heard
           ? []
           : [
               {
@@ -155,7 +180,8 @@
           },
           tooltip: {
             formatter: (p) =>
-              `${esc(rows[p.value[1]])}<br>${p.value[2].toFixed(2)} <span style="color:${MUTED}">${ago(p.value[0])}</span>`,
+              `${esc(rows[p.value[1]])}<br>${p.value[2].toFixed(2)} <span style="color:${MUTED}">${ago(p.value[0])}</span>` +
+              (unlikely[p.value[1]] ? `<br><span style="color:${FLAG_COLOUR}">${FLAG_GLYPH}</span> ${UNLIKELY_TEXT}` : ''),
           },
         },
         {
@@ -218,9 +244,27 @@
   // The trail on the active layout: [[x, y, secondsAgo, score]...].
   const trailOf = (el, d) => (isUmap(el) ? d.trail.map((p) => [p[4], p[5], p[2], p[3]]) : d.trail);
 
-  function mapSeries(el, d) {
+  // The paused reading's place on the active layout, [x, y], or null.
+  function previewAt(el, d) {
+    const a = d.preview && d.preview.at;
+    if (!a) return null;
+    return isUmap(el) ? [a.ux, a.uy] : [a.x, a.y];
+  }
+
+  // Where the map's marker is: the paused reading's place while it is
+  // shown, else the newest live reading's. [x, y] or undefined.
+  function markerAt(el, d) {
+    if (d.preview) return previewAt(el, d) || undefined;
     const trail = trailOf(el, d);
+    return trail[trail.length - 1];
+  }
+
+  function mapSeries(el, d) {
+    // While the paused reading is shown, it is the only marker: the trail
+    // is of the audio heard before the pause.
+    const trail = d.preview ? [] : trailOf(el, d);
     const last = trail[trail.length - 1];
+    const play = previewAt(el, d);
     const hit = last && last[3] >= d.min;
     const far = jump(el);
     // The line joins readings that are close on the map; a null breaks it.
@@ -259,7 +303,23 @@
         id: 'now',
         type: 'scatter',
         silent: true,
-        data: last
+        data: play
+          ? [
+              {
+                value: play,
+                // A triangle pointing right, as a path so no rotation is needed.
+                symbol: 'path://M0,0 L10,6 L0,12 Z',
+                symbolSize: [14, 16],
+                itemStyle: {
+                  color: 'transparent',
+                  borderColor: PLAY_BLUE,
+                  borderWidth: 2,
+                  shadowColor: 'rgba(0,0,0,0.9)',
+                  shadowBlur: 3,
+                },
+              },
+            ]
+          : last
           ? [
               {
                 value: last,
@@ -521,8 +581,7 @@
       taken.push({ x: ex.key.offsetLeft, y: ex.key.offsetTop, w: ex.key.offsetWidth, h: ex.key.offsetHeight });
     }
     const want = [];
-    const trail = trailOf(el, el.__last);
-    const last = trail[trail.length - 1];
+    const last = markerAt(el, el.__last);
     if (last) {
       const [mx, my] = map.convertToPixel({ gridIndex: 0 }, [last[0], last[1]]);
       taken.push({ x: mx - 12, y: my - 12, w: 24, h: 24 });
@@ -597,7 +656,17 @@
   const PC_FIFTHS = ['lowest', 'low', 'middle', 'high', 'highest'];
   const PC_MIXED = '#555555';
   const PC_PLAIN = 'rgba(170,170,170,0.3)';
-  const PC_PER_ROW = 4;
+  // Component maps per row: at least 4 (the sidebar), more where they fit
+  // at PC_MIN_CELL px or wider (full screen), with the rows filled evenly.
+  // 12 maps: 3 rows of 4 in the sidebar, 2 rows of 6 in a 440 px column.
+  // 8 maps: 2 rows of 4 in both.
+  const PC_MIN_COLS = 4;
+  const PC_MIN_CELL = 70;
+  function pcColumns(n, width, gap) {
+    const fit = Math.max(PC_MIN_COLS, Math.floor((width + gap) / (PC_MIN_CELL + gap)));
+    const rows = Math.ceil(n / Math.min(fit, n));
+    return Math.ceil(n / rows);
+  }
   // Cells per side of the grid that areas are worked out on.
   const PC_GRID = 24;
   const PC_GRID_REACH = 1; // cells around a cell that count as its surroundings
@@ -619,6 +688,10 @@
     ['North American orioles and thrashers', 'a mix: canastero, flowerpecker, bay owl, hornbill'],
     ['dry-country thrashers, meadowlark, wheatear', 'South Asian sunbirds, coucal, crow'],
     ['terns and Asian forest birds', 'African doves, turacos, coucals'],
+    ['South Asian laughingthrushes and babblers', 'Australian and New Guinea birds: cockatoos, honeyeaters, bowerbird'],
+    ['a mix: harrier, crake, thornbird, hornero, plover', 'European crows, jays and tits'],
+    ['South American pigeons, tinamou, motmot', 'a mix: hummingbird, booby, avocet, grebe'],
+    ['Himalayan warblers, treecreepers and tits', 'a mix: antpitta, frogmouth, myna, drongo'],
   ];
 
   // Per component: each species' own fifth, and the fifth and strength of
@@ -832,7 +905,9 @@
     const pc = el.__pc;
     const n = pc.variance.length;
     const gap = 4;
-    const size = Math.floor((div.clientWidth - gap * (PC_PER_ROW - 1)) / PC_PER_ROW) - 2;
+    const cols = pcColumns(n, div.clientWidth, gap);
+    div.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    const size = Math.floor((div.clientWidth - gap * (cols - 1)) / cols) - 2;
     if (size < 20) return null;
     const dpr = window.devicePixelRatio || 1;
     const px = Math.round(size * dpr);
@@ -962,8 +1037,7 @@
     if (!b) return;
     const v = el.__view || WHOLE;
     const comps = colours(el);
-    const trail = trailOf(el, d);
-    const last = trail[trail.length - 1];
+    const last = markerAt(el, d);
     // The species nearest the reading: the dot takes its colour.
     const near = last ? nearestSpecies(el, last[0], last[1], jump(el), 1)[0] : undefined;
     const u = b.dpr;
@@ -975,12 +1049,29 @@
         const y = ((v.y1 - last[1]) / (v.y1 - v.y0)) * b.px;
         const band = near === undefined ? -1 : comps[k].band[near];
         m.ctx.beginPath();
-        m.ctx.arc(x, y, 3 * u, 0, 2 * Math.PI);
-        m.ctx.fillStyle = band < 0 ? PC_MIXED : PC_COLOURS[band];
-        m.ctx.fill();
-        m.ctx.lineWidth = u;
-        m.ctx.strokeStyle = '#ffffff';
-        m.ctx.stroke();
+        if (d.preview) {
+          // The paused reading: the same blue play triangle as the large
+          // map, outlined in black so it shows on the coloured areas.
+          const r = 4.5 * u;
+          m.ctx.moveTo(x + r, y);
+          m.ctx.lineTo(x - r / 2, y - r * 0.87);
+          m.ctx.lineTo(x - r / 2, y + r * 0.87);
+          m.ctx.closePath();
+          m.ctx.lineJoin = 'round';
+          m.ctx.lineWidth = 3 * u;
+          m.ctx.strokeStyle = '#000000';
+          m.ctx.stroke();
+          m.ctx.lineWidth = 1.5 * u;
+          m.ctx.strokeStyle = PLAY_BLUE;
+          m.ctx.stroke();
+        } else {
+          m.ctx.arc(x, y, 3 * u, 0, 2 * Math.PI);
+          m.ctx.fillStyle = band < 0 ? PC_MIXED : PC_COLOURS[band];
+          m.ctx.fill();
+          m.ctx.lineWidth = u;
+          m.ctx.strokeStyle = '#ffffff';
+          m.ctx.stroke();
+        }
       }
       // The graph: percentile (low at the bottom) over the last d.history
       // seconds, each stretch in the colour of the fifth it is in.
@@ -1023,16 +1114,26 @@
 
   function readout(el, d) {
     const [first, ...rest] = d.top;
-    if (!first) return;
-    const others = rest.map(([n, s]) => `${esc(n)} ${s.toFixed(2)}`).join(', ');
+    if (!first) {
+      el.innerHTML = '';
+      return;
+    }
+    // A name with the "unlikely here" flag after it when it has one.
+    const named = (t, cls) =>
+      (cls ? `<span class="${cls}">${esc(t[0])}</span>` : esc(t[0])) + (t[2] ? flagHtml() : '');
+    const others = rest.map((t) => `${named(t)} ${t[1].toFixed(2)}`).join(', ');
+    // The paused reading names the part of the file it is of, as positions.
+    const range = d.preview
+      ? `<span class="live-emb-range">${d.preview.from.toFixed(1)}s to ${d.preview.to.toFixed(1)}s</span> `
+      : '';
     let html;
     let next;
     if (first[1] >= d.min) {
-      html = `<span class="live-emb-name">${esc(first[0])}</span> <span class="live-emb-score">${first[1].toFixed(2)}</span>`;
+      html = `${range}${named(first, 'live-emb-name')} <span class="live-emb-score">${first[1].toFixed(2)}</span>`;
       next = others ? `Next: ${others}` : '';
     } else {
-      html = `<span class="live-emb-none">No species at ${d.min.toFixed(2)} or above</span>`;
-      next = `Highest: ${esc(first[0])} ${first[1].toFixed(2)}${others ? ', ' + others : ''}`;
+      html = `${range}<span class="live-emb-none">No species at ${d.min.toFixed(2)} or above</span>`;
+      next = `Highest: ${named(first)} ${first[1].toFixed(2)}${others ? ', ' + others : ''}`;
       // Bat recordings: say why nothing is found.
       if (d.ultrasonic) next += '<br>BirdNET hears up to 15 kHz, so bat calls do not show here.';
     }

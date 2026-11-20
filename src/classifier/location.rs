@@ -50,6 +50,9 @@ thread_local! {
     static GEO: RefCell<Option<Arc<GeoNames>>> = const { RefCell::new(None) };
     static CACHE: RefCell<HashMap<(i32, i32, u32), Arc<Vec<f32>>>> = RefCell::new(HashMap::new());
     static NEXT_REQ: Cell<u32> = const { Cell::new(1) };
+    /// Places [`scores_at`] has started working out.
+    static TRIED: RefCell<std::collections::HashSet<(i32, i32, u32)>> =
+        RefCell::new(std::collections::HashSet::new());
 }
 
 /// Parse the Geomodel's labels file: code, scientific name, English name.
@@ -166,6 +169,30 @@ pub fn update(state: AppState, file_id: u64) {
     });
 }
 
+/// The location list at `place`, for a caller with no file (the live view
+/// while the microphone listens) or one that polls. Not reactive. The first
+/// call for a place starts working it out, downloading the Geomodel (16 MB)
+/// the first time, and returns `None`; later calls return the scores once
+/// they are in. A place whose list failed is not tried again this session.
+pub fn scores_at(state: AppState, place: Place) -> Option<Arc<Vec<f32>>> {
+    let key = place.key();
+    if let Some(s) = CACHE.with(|c| c.borrow().get(&key).cloned()) {
+        return Some(s);
+    }
+    if !TRIED.with(|t| t.borrow_mut().insert(key)) {
+        return None;
+    }
+    spawn_local(async move {
+        match scores(state, place).await {
+            Ok(s) => {
+                CACHE.with(|c| c.borrow_mut().insert(key, s));
+            }
+            Err(e) => log::warn!("location list: {e}"),
+        }
+    });
+    None
+}
+
 async fn scores(state: AppState, place: Place) -> Result<Arc<Vec<f32>>, ClassifierError> {
     for f in catalog::GEOMODEL_FILES {
         super::download_file(state, f).await?;
@@ -195,7 +222,11 @@ async fn scores(state: AppState, place: Place) -> Result<Arc<Vec<f32>>, Classifi
 /// `Some(false)` expected, `None` when it can't say (not a bird, a class the
 /// Geomodel doesn't know, or no scores yet).
 pub fn unlikely(occurrence: &Occurrence, label: &SpeciesLabel) -> Option<bool> {
-    let scores = occurrence.scores.as_ref()?;
+    unlikely_in(occurrence.scores.as_ref()?, label)
+}
+
+/// [`unlikely`] for a location list not tied to a file (see [`scores_at`]).
+pub fn unlikely_in(scores: &[f32], label: &SpeciesLabel) -> Option<bool> {
     let geo = GEO.with(|g| g.borrow().clone())?;
     let i = *geo.by_name.get(&label.scientific)? as usize;
     if !geo.species.get(i)?.bird {

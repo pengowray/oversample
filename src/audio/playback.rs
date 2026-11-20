@@ -170,6 +170,55 @@ pub fn effective_selection(state: &AppState) -> Option<Selection> {
     })
 }
 
+/// Where the Play button would start in the current file, in seconds, by the
+/// same rules as the button and its start setting (Auto, All, Here, Sel):
+/// see `do_start_playback` in `bottom_toolbar.rs` and [`play`], which plays
+/// from "here" when the selection is off screen. `None` with no file, or
+/// while a timeline is open. Not reactive, and reads no whole file list, so
+/// it can be polled.
+pub fn play_start_time(state: &AppState) -> Option<f64> {
+    use crate::state::PlayStartMode;
+    if state.timeline.active().get_untracked().is_some() {
+        return None;
+    }
+    let idx = state.library.current_index().get_untracked()?;
+    let (duration, time_res) = state.library.files().with_untracked(|f| {
+        f.get(idx)
+            .map(|f| (f.audio.duration_secs, f.spectrogram.time_resolution))
+    })?;
+    let scroll = state.view.scroll_offset().get_untracked();
+    let visible = viewport::visible_time(
+        state.viewmode.spectrogram_canvas_width().get_untracked(),
+        state.view.zoom_level().get_untracked(),
+        time_res,
+    );
+    // As `current_play_from_here_time` and `is_selection_in_viewport`.
+    let here = || {
+        if visible <= 0.0 {
+            state.playback.from_here_time().get_untracked()
+        } else {
+            viewport::play_from_here_time(scroll, visible)
+        }
+    };
+    let on_screen =
+        |s: &Selection| visible <= 0.0 || (s.time_start < scroll + visible && s.time_end > scroll);
+    let t = match state.playback.start_mode().get_untracked() {
+        PlayStartMode::All => 0.0,
+        PlayStartMode::FromHere => here(),
+        PlayStartMode::Selected => match effective_selection(state) {
+            Some(s) if on_screen(&s) => s.time_start,
+            Some(_) => here(),
+            None => 0.0,
+        },
+        PlayStartMode::Auto => match effective_selection(state) {
+            Some(s) if on_screen(&s) => s.time_start,
+            _ if scroll <= 0.0 => 0.0,
+            _ => here(),
+        },
+    };
+    Some(t.clamp(0.0, duration.max(0.0)))
+}
+
 fn cancel_replay_timer() {
     REPLAY_TIMER.with(|t| {
         if let Some(handle) = t.borrow_mut().take() {
