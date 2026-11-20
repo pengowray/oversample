@@ -805,6 +805,9 @@ pub fn FindRecordings() -> impl IntoView {
         near_mode.set(NearMode::Anywhere);
         near_point.set(None);
     };
+    // "All recordings" lists rows, or is loading them; false while it shows
+    // "No recordings match the filters above".
+    let all_has_rows = Memo::new(move |_| recs.total.get() > 0 || recs.loading.get());
     let filtered_empty = move || {
         view! {
             <p class="find-empty">
@@ -2004,7 +2007,9 @@ pub fn FindRecordings() -> impl IntoView {
                     {no_rate_note}
                 </div>
                 {move || (recs.total.get() == 0 && !recs.loading.get()).then(filtered_empty)}
-                {recordings_table(true)}
+                // No column headings under "No recordings match", as in a
+                // species' list.
+                {move || all_has_rows.get().then(|| recordings_table(true))}
                 {move || recs.loading.get().then(|| view! { <p class="xc-loading">"Loading\u{2026}"</p> })}
             }
             .into_any(),
