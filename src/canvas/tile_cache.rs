@@ -2465,7 +2465,7 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
             crate::dsp::heterodyne::heterodyne_comb_mix(samples, sample_rate, &carriers, cutoff)
         }
         // Playback's own steps: the shifter, then the output shift when
-        // one is set (OUT button), with playback's parameters.
+        // one is set ("Fine output adjustment"), with playback's parameters.
         PlaybackMode::PitchShift => {
             let params = crate::audio::playback::snapshot_dsp_params(&state, None, sample_rate);
             crate::audio::streaming_playback::apply_dsp_mode(samples, sample_rate, &params)

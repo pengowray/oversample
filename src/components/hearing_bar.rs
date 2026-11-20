@@ -605,7 +605,6 @@ pub fn HearingBar() -> impl IntoView {
                     <div class="bar-controls band-affected-controls">
                         <HfrSwitch/>
                         <crate::components::hear_sheet::HearChip/>
-                        <crate::components::output_range_button::OutputRangeCombo/>
                         <BandpassCombo/>
                     </div>
                 </div>
@@ -644,7 +643,6 @@ pub fn HearingBar() -> impl IntoView {
                 <div class="bar-controls band-affected-controls">
                     <HfrSwitch/>
                     <ModeRadioGroup/>
-                    <crate::components::output_range_button::OutputRangeCombo/>
                     <BandpassCombo/>
                 </div>
             </div>

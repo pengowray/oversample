@@ -15,6 +15,7 @@
 // were previously inside `ModeButton`.
 
 use crate::components::layer_panel::toggle_panel;
+use crate::components::fine_output::FineOutputSection;
 use crate::components::popup::{Align, PopupPanel, Side};
 use crate::dsp::pitch_shift::PitchFactor;
 use crate::state::store_fields::*;
@@ -893,6 +894,7 @@ fn ModeSettingsBody() -> impl IntoView {
                                 />
                             </div>
                         </Show>
+                        <FineOutputSection mode=PlaybackMode::Heterodyne/>
                     }.into_any(),
 
                     PlaybackMode::TimeExpansion => view! {
@@ -945,6 +947,7 @@ fn ModeSettingsBody() -> impl IntoView {
                                 }}</div>
                             </div>
                         </Show>
+                        <FineOutputSection mode=PlaybackMode::TimeExpansion/>
                     }.into_any(),
 
                     PlaybackMode::PitchShift => {
@@ -991,13 +994,18 @@ fn ModeSettingsBody() -> impl IntoView {
                                         on:mouseleave=clear_output_highlight
                                     >"Output: "{move || {
                                         let f = state.transform.ps_factor().get().signed();
-                                        let lo = output_freq(state.filter.band_ff_freq_lo().get(), f);
-                                        let hi = output_freq(state.filter.band_ff_freq_hi().get(), f);
+                                        let band_lo = state.filter.band_ff_freq_lo().get();
+                                        // The output shift set under "Fine output adjustment".
+                                        let shift = crate::components::fine_output::effective_ps_shift(
+                                            state.transform.ps_shift_hz().get(), band_lo, f);
+                                        let lo = (output_freq(band_lo, f) - shift).max(0.0);
+                                        let hi = (output_freq(state.filter.band_ff_freq_hi().get(), f) - shift).max(0.0);
                                         let (lo, hi) = if lo < hi { (lo, hi) } else { (hi, lo) };
                                         format!("{}\u{2013}{}", format_freq_khz(lo), format_freq_khz(hi))
                                     }}</div>
                                 </div>
                             </Show>
+                            <FineOutputSection mode=PlaybackMode::PitchShift/>
                         }.into_any()
                     },
 
@@ -1011,6 +1019,7 @@ fn ModeSettingsBody() -> impl IntoView {
                             />
                             <span>{move || format!("\u{00f7}{}", state.transform.zc_factor().get() as u32)}</span>
                         </div>
+                        <FineOutputSection mode=PlaybackMode::ZeroCrossing/>
                     }.into_any(),
 
                     PlaybackMode::Normal => view! {

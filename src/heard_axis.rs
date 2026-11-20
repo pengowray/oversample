@@ -22,8 +22,8 @@ use crate::state::{AppState, PlaybackMode};
 use leptos::prelude::*;
 
 /// "r,g,b" of labels and notes that give heard values: the green of the
-/// HEAR bar's "OUT ÷10" button (`.layer-btn.active`, #8fc), which gives the
-/// same factor. Not the amber of the HFR band's text beside it, which gives
+/// HEAR bar's selected mode button (`.layer-btn.active`, #8fc), also used
+/// for the heard values in "Fine output adjustment". Not the amber of the HFR band's text beside it, which gives
 /// frequencies of the recording. The recording's own values are white.
 pub const HEARD_RGB: &str = "136,255,204";
 /// "r,g,b" of labels that give the recording's own values.
@@ -271,7 +271,7 @@ fn mode_axis(state: &AppState, track: Track) -> Option<HeardAxis> {
     // The shift playback applies, which is the stored one limited by the
     // band's lower edge.
     let shift = |factor: PitchFactor| {
-        crate::components::output_range_button::effective_ps_shift(
+        crate::components::fine_output::effective_ps_shift(
             stored_shift,
             band_lo,
             factor.signed(),

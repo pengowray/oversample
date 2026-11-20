@@ -621,13 +621,13 @@ impl RightSidebarTab {
     ];
 }
 
-/// Snap policy for the Output Range gutter.
+/// Snap policy for drags in "Fine output adjustment" (fine_output.rs).
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum OutputSnap {
     /// Continuous — factor at 0.1 resolution, carrier at 100 Hz.
+    #[default]
     Free,
     /// Powers of 2 + 10 for divide; multiples of 5 kHz for carrier.
-    #[default]
     Standard,
     /// Powers of 2 only — preserves pitch-class / musical intervals.
     EqualChroma,
@@ -1160,10 +1160,6 @@ pub enum LayerPanel {
     Bandpass,
     /// Mic settings dropdown in the Transport bar (strategy + device + capture format).
     Mic,
-    /// Output range dropdown in the Hearing bar — visualises and edits how
-    /// the active playback mode maps input frequencies into the 0–2000 Hz
-    /// target listening range.
-    OutputRange,
 }
 
 impl LayerPanel {
@@ -1179,8 +1175,7 @@ impl LayerPanel {
             | LayerPanel::Bandpass
             | LayerPanel::Noise
             | LayerPanel::Gain
-            | LayerPanel::ListenMode
-            | LayerPanel::OutputRange => Bar::Hearing,
+            | LayerPanel::ListenMode => Bar::Hearing,
             LayerPanel::MainView | LayerPanel::Tool | LayerPanel::Xform => Bar::View,
             LayerPanel::PlayMode
             | LayerPanel::RecordMode
@@ -2584,6 +2579,8 @@ pub struct ViewModeState {
     /// Output frequency range to highlight (set by hover in HFR panel).
     pub output_freq_highlight: Option<(f64, f64)>,
     pub output_snap: OutputSnap,
+    /// Whether "Fine output adjustment" is open in the mode settings panels.
+    pub fine_output_open: bool,
     /// When false, the Range button is hidden at full range.
     pub always_show_view_range: bool,
     pub shield_style: ShieldStyle,
@@ -3192,7 +3189,8 @@ impl AppState {
                 main_view: MainView::Spectrogram,
                 last_spectrogram_kind: MainView::Spectrogram,
                 output_freq_highlight: None,
-                output_snap: OutputSnap::Standard,
+                output_snap: OutputSnap::Free,
+                fine_output_open: false,
                 always_show_view_range: false,
                 shield_style: crate::settings::get_raw(crate::settings::keys::SHIELD_STYLE)
                     .map(|v| ShieldStyle::from_key(&v))

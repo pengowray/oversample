@@ -588,7 +588,7 @@ pub(crate) fn snapshot_dsp_params(
                 }
                 _ => 1.0,
             };
-            crate::components::output_range_button::effective_ps_shift(stored, band_lo, f)
+            crate::components::fine_output::effective_ps_shift(stored, band_lo, f)
         },
         zc_factor: state.transform.zc_factor().get_untracked(),
         zc_lowest_bat_hz: state.lowest_bat_hz_untracked(),

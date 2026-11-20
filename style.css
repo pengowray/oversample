@@ -8686,246 +8686,127 @@ button.canvas-overflow-action-btn.disabled {
     margin: 2px 0;
 }
 
-/* ── Output Range button (single, with dropdown chevron) ───────────────
-   Skinnier than the combo split-button — it's a single trigger that
-   opens the popup; nothing to toggle on the left half. */
-.out-range-btn-wrap {
-    display: inline-flex;
-    align-items: stretch;
+/* ── "Fine output adjustment" (fine_output.rs) ─────────────────────────
+   A section of the HET, TE, PS and ZC settings panels. The diagram's left
+   column is the recording and its right column is what is heard.
+   Colours: the recording's band is the amber of the HFR band's text, heard
+   values are #8fc, the green of heard values on the spectrogram's axes
+   (HEARD_RGB in heard_axis.rs). */
+.fine-out {
+    margin-top: 6px;
+    border-top: 1px solid #2a2a2a;
+    padding-top: 4px;
 }
-.out-range-btn {
-    display: inline-flex;
+.fine-out-head {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 6px 2px 8px;
+    width: 100%;
+    min-height: 24px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #ccc;
+    cursor: pointer;
+    border-radius: 4px;
 }
-.out-range-btn-label {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: flex-start;
-    line-height: 1.1;
-    min-width: 0;
+.fine-out-head:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
+.fine-out-head:focus-visible { outline: 1px solid rgba(0, 200, 255, 0.6); }
+.fine-out-head svg {
+    width: 12px;
+    height: 12px;
+    color: #808080;
+    transition: transform 0.12s;
 }
-.out-range-btn .combo-btn-arrow {
-    margin-left: 2px;
-    opacity: 0.6;
-    font-size: 8px;
-}
-.out-range-btn.open .combo-btn-arrow {
-    opacity: 1;
-}
-
-/* ── Output Range popup ────────────────────────────────────────────────
-   Two-column layout: mode-aware controls on the left, vertical 0–10 kHz
-   gutter on the right. Mirrors how the existing mode popups feel but
-   adds the output-side gutter visualisation. */
-.output-range-popup {
-    display: flex;
-    flex-direction: row;
-    align-items: stretch;
-    gap: 10px;
-    padding: 6px 8px 8px;
-    min-height: 220px;
-}
-.output-range-controls {
-    flex: 1 1 auto;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-.output-range-section-label {
-    font-size: 10px;
-    color: #888;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 4px 4px 2px;
-    cursor: help;
-}
-.output-range-help {
-    margin-left: 4px;
-    opacity: 0.5;
-    font-size: 9px;
-}
-.output-range-presets {
+.fine-out-head.open svg { transform: rotate(90deg); }
+/* The diagram is drawn 330 units wide; the panel grows to fit it, and on a
+   narrow screen the diagram scales down with the panel. */
+.fine-out-body { width: 330px; max-width: 100%; }
+.fine-out-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
-    padding: 0 4px;
-}
-.output-range-presets .factor-preset.auto.on {
-    background: rgba(80, 160, 255, 0.18);
-    border-color: rgba(80, 160, 255, 0.5);
-    color: #8cf;
-}
-.output-range-shift-row {
-    display: flex;
     align-items: center;
     gap: 6px;
-    padding: 2px 6px;
-}
-.output-range-num {
-    width: 60px;
-    background: #1a1a1a;
-    border: 1px solid #444;
-    border-radius: 3px;
-    color: #ddd;
-    font-size: 12px;
-    padding: 2px 6px;
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-}
-.output-range-num-suffix {
-    font-size: 11px;
-    color: #777;
-}
-.output-range-snap-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 6px 4px;
+    padding: 4px 10px;
     font-size: 11px;
     color: #aaa;
 }
-.output-range-snap-label {
-    font-size: 10px;
-    color: #777;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-.output-range-snap-group {
+.fine-out-gap { flex: 1; }
+.fine-out-dim { color: #808080; }
+.fine-out-seg {
     display: inline-flex;
-    gap: 0;
-}
-.snap-btn {
-    font-size: 10px;
-    padding: 2px 8px;
-    background: #1a1a1a;
+    flex-shrink: 0;
     border: 1px solid #444;
+    border-radius: 4px;
+    overflow: hidden;
+}
+.fine-out-seg button {
+    all: unset;
+    padding: 5px 8px;
+    font-size: 11px;
     color: #999;
     cursor: pointer;
-    margin-left: -1px;
-    font-family: inherit;
+    white-space: nowrap;
 }
-.snap-btn:first-of-type {
-    border-radius: 3px 0 0 3px;
-    margin-left: 0;
+.fine-out-seg button:hover { color: #ddd; background: rgba(255, 255, 255, 0.06); }
+.fine-out-seg button.sel { color: #0cf; background: rgba(0, 200, 255, 0.15); }
+.fine-out-seg button:focus-visible { outline: 1px solid rgba(0, 200, 255, 0.6); outline-offset: -1px; }
+.fine-out-snap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: #808080;
 }
-.snap-btn:last-of-type {
-    border-radius: 0 3px 3px 0;
-}
-.snap-btn:hover {
-    background: #252525;
-    color: #ccc;
-}
-.snap-btn.sel {
-    background: #2a3a4a;
-    color: #8cf;
-    border-color: #4a6a8a;
-    z-index: 1;
-}
-.output-range-summary {
-    margin-top: auto;
-    padding: 6px 6px 2px;
-    font-size: 11px;
-    color: #bbb;
-    font-variant-numeric: tabular-nums;
-    line-height: 1.5;
-}
-.output-range-summary .dim {
-    color: #666;
-    margin-right: 6px;
-}
-.output-range-empty {
-    padding: 8px 6px;
-    font-size: 11px;
-    color: #888;
-    line-height: 1.5;
-}
-
-/* ── Vertical 0–2000 Hz "output gutter" ─────────────────────────────────
-   Coordinate system: 0 Hz at bottom, GUTTER_MAX_HZ at top. The .band
-   uses `bottom` + `height` percentages so it grows upward like the
-   spectrogram's frequency axis. */
-.output-gutter-wrap {
-    flex: 0 0 90px;
-    display: flex;
-    align-items: stretch;
-}
-.output-gutter {
-    position: relative;
-    flex: 1;
-    background: linear-gradient(to top, #111 0%, #181818 100%);
-    border: 1px solid #333;
+.fine-out-snap select {
+    font: inherit;
+    color: #ddd;
+    background: #1c1c1c;
+    border: 1px solid #444;
     border-radius: 3px;
-    cursor: ns-resize;
+    padding: 2px 4px;
+    width: 86px;
+    min-height: 24px;
+}
+.fine-out-num { width: 48px; min-width: 48px; }
+.fine-out-diagram { padding: 2px 0; }
+.fine-out-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    font-variant-numeric: tabular-nums;
     user-select: none;
     -webkit-user-select: none;
+}
+.fine-out-svg text { font-size: 10px; fill: #ddd; pointer-events: none; }
+.fine-out-svg text.fine-out-col { font-size: 9px; fill: #808080; letter-spacing: 0.5px; }
+.fine-out-svg text.fine-out-tick { font-size: 9px; fill: #808080; }
+.fine-out-svg text.fine-out-in { fill: #e8b458; }
+.fine-out-svg text.fine-out-value { font-size: 11px; font-weight: 600; fill: #8fc; }
+/* 13px: at 11px the division sign reads as a plus. */
+.fine-out-svg text.fine-out-factor { font-size: 13px; font-weight: 600; fill: #8fc; }
+.fine-out-svg text.fine-out-shift { fill: #8fc; }
+.fine-out-band {
+    fill: rgba(136, 255, 204, 0.16);
+    stroke: rgba(136, 255, 204, 0.6);
+    cursor: grab;
     touch-action: none;
 }
-.output-gutter-ticks {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-}
-.output-gutter-tick {
-    position: absolute;
-    left: 0;
-    right: 0;
-    height: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.07);
-}
-.output-gutter-tick-label {
-    position: absolute;
-    left: 4px;
-    bottom: 1px;
-    font-size: 9px;
-    color: #666;
-    font-variant-numeric: tabular-nums;
-}
-.output-gutter-band {
-    position: absolute;
-    left: 0;
-    right: 0;
-    background: rgba(140, 200, 255, 0.18);
-    border-top: 1px solid rgba(140, 200, 255, 0.6);
-    border-bottom: 1px solid rgba(140, 200, 255, 0.6);
-    cursor: grab;
-    box-sizing: border-box;
-}
-.output-gutter-band:active { cursor: grabbing; }
-.output-gutter-band-label {
-    position: absolute;
-    right: 4px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 10px;
-    color: rgba(220, 240, 255, 0.85);
-    font-variant-numeric: tabular-nums;
-    pointer-events: none;
-    white-space: nowrap;
-    text-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
-}
-.output-gutter-handle {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 26px;
-    height: 8px;
-    border-radius: 3px;
-    background: rgba(180, 220, 255, 0.9);
-    cursor: ns-resize;
-    z-index: 2;
-}
-.output-gutter-handle:hover {
-    background: rgba(220, 240, 255, 1.0);
-    box-shadow: 0 0 4px rgba(140, 200, 255, 0.7);
-}
-.output-gutter-handle-hi { top: -4px; }
-.output-gutter-handle-lo { bottom: -4px; }
-.output-gutter:hover .output-gutter-band {
-    background: rgba(140, 200, 255, 0.26);
-}
+.fine-out-band:hover { fill: rgba(136, 255, 204, 0.24); }
+.fine-out-band:active { cursor: grabbing; }
+.fine-out-band.still { cursor: default; pointer-events: none; }
+/* The ribbon runs from the recording's amber to the heard green; one flat
+   colour between the two reads as joining them. */
+.fine-out-ribbon { fill: #b8d890; opacity: 0.32; pointer-events: none; }
+.fine-out-grip { pointer-events: none; }
+.fine-out-grip line { stroke: #cfeee0; stroke-width: 1.5; stroke-linecap: round; }
+.fine-out-handle { cursor: ns-resize; touch-action: none; }
+.fine-out-hit { fill: transparent; }
+.fine-out-knob { fill: #cfeee0; }
+.fine-out-handle:hover .fine-out-knob { fill: #fff; }
+.fine-out-carriers { fill: transparent; cursor: ns-resize; touch-action: none; }
+.fine-out-carriers.locked { cursor: default; }
 
 /* ── Wikimedia Commons import ───────────────────────────────────────── */
 

@@ -28,7 +28,7 @@ pub mod live_explorer;
 pub mod modal;
 pub mod mode_button;
 pub mod noise_button;
-pub mod output_range_button;
+pub mod fine_output;
 pub mod overflow_menu;
 pub mod overview;
 pub mod pinch;
