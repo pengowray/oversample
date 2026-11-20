@@ -8080,6 +8080,11 @@ button.toolbar-overflow-btn {
     white-space: nowrap;
 }
 
+/* On the selected chip's green or blue fill, #888 is 3.6:1; #a8a8a8 is 5.6:1. */
+.bat-book-chip.selected .bat-book-chip-freq {
+    color: #a8a8a8;
+}
+
 /* Divider between echolocating and non-echolocating entries */
 .bat-book-divider {
     flex-shrink: 0;

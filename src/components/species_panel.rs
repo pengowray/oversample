@@ -337,11 +337,15 @@ fn not_drawn_reason(form: Form<'static>) -> Option<&'static str> {
     }
 }
 
-fn out_of_view_text(o: OutOfView) -> String {
+/// `touch`: on a phone or tablet, where there is no Shift key or scroll wheel.
+fn out_of_view_text(o: OutOfView, touch: bool) -> String {
+    let how = if touch {
+        "Zoom out on frequency to see them."
+    } else {
+        "Zoom out on frequency (Shift + scroll wheel) to see them."
+    };
     match o {
-        OutOfView::Above => "Calls are above the top of the spectrogram. Zoom out on frequency \
-                             (Shift + scroll wheel) to see them."
-            .to_string(),
+        OutOfView::Above => format!("Calls are above the top of the spectrogram. {how}"),
         OutOfView::AboveRecording {
             lo_khz,
             hi_khz,
@@ -353,9 +357,7 @@ fn out_of_view_text(o: OutOfView) -> String {
             fmt(hi_khz),
             fmt(top_khz)
         ),
-        OutOfView::Below => "Calls are below the bottom of the spectrogram. Zoom out on frequency \
-                             (Shift + scroll wheel) to see them."
-            .to_string(),
+        OutOfView::Below => format!("Calls are below the bottom of the spectrogram. {how}"),
     }
 }
 
@@ -842,7 +844,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
     // their width doesn't matter.
     let warning = Signal::derive(move || {
         if let Some(o) = out_of_view.get() {
-            return Some(out_of_view_text(o));
+            return Some(out_of_view_text(o, state.status.is_mobile().get()));
         }
         let lay = layout.get()?;
         if lay.too_small {
