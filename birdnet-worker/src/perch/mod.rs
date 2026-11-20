@@ -80,16 +80,34 @@ impl Embedding {
 /// highest first. Perch's head was trained with a softmax, so its logits are
 /// only meaningful relative to each other.
 pub fn top_scores(logits: &[f32]) -> Vec<Score> {
-    let Some(max) = logits.iter().copied().reduce(f32::max) else {
+    let Some((max, sum)) = softmax_terms(logits) else {
         return Vec::new();
     };
-    let sum: f64 = logits.iter().map(|&l| ((l - max) as f64).exp()).sum();
     let mut top = crate::engine::top_scores(logits);
     for s in &mut top {
         s.confidence = (((logits[s.class as usize] - max) as f64).exp() / sum) as f32;
     }
     debug_assert!(top.len() <= TOP_K);
     top
+}
+
+/// Every class's softmax probability, in class order: the same numbers
+/// [`top_scores`] gives for its classes.
+pub fn softmax(logits: &[f32]) -> Vec<f32> {
+    let Some((max, sum)) = softmax_terms(logits) else {
+        return Vec::new();
+    };
+    logits
+        .iter()
+        .map(|&l| (((l - max) as f64).exp() / sum) as f32)
+        .collect()
+}
+
+/// The highest logit and the sum of `exp(logit - highest)`.
+fn softmax_terms(logits: &[f32]) -> Option<(f32, f64)> {
+    let max = logits.iter().copied().reduce(f32::max)?;
+    let sum: f64 = logits.iter().map(|&l| ((l - max) as f64).exp()).sum();
+    Some((max, sum))
 }
 
 #[cfg(test)]
@@ -104,5 +122,10 @@ mod tests {
         assert!((total - 1.0).abs() < 1e-5);
         assert!((top[0].confidence - top[1].confidence).abs() < 1e-6);
         assert_eq!(top[2].class, 2);
+        let all = softmax(&logits);
+        assert!((all.iter().sum::<f32>() - 1.0).abs() < 1e-5);
+        for s in &top {
+            assert_eq!(all[s.class as usize], s.confidence);
+        }
     }
 }
