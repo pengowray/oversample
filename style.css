@@ -8770,6 +8770,9 @@ button.canvas-overflow-action-btn.disabled {
     min-height: 24px;
 }
 .fine-out-num { width: 48px; min-width: 48px; }
+.fine-out-range { flex: 1; min-width: 80px; }
+/* Fixed width: the text changes between "Off" and "÷2.5" as the slider moves. */
+.fine-out-post { width: 30px; text-align: right; color: #8fc; font-variant-numeric: tabular-nums; }
 .fine-out-diagram { padding: 2px 0; }
 .fine-out-svg {
     display: block;

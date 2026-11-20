@@ -2462,7 +2462,12 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
                 band,
             );
             let cutoff = state.transform.het_cutoff().get_untracked();
-            crate::dsp::heterodyne::heterodyne_comb_mix(samples, sample_rate, &carriers, cutoff)
+            let mixed = crate::dsp::heterodyne::heterodyne_comb_mix(samples, sample_rate, &carriers, cutoff);
+            // "Then pitch shift", as playback applies it.
+            crate::audio::streaming_playback::het_post_pitch_shift(
+                mixed,
+                state.transform.het_ps_factor().get_untracked(),
+            )
         }
         // Playback's own steps: the shifter, then the output shift when
         // one is set ("Fine output adjustment"), with playback's parameters.

@@ -106,6 +106,27 @@ test("HET draws one band per carrier and the handle sets the LP cutoff", async (
   await expect(cutoff).not.toHaveText(before!);
 });
 
+test("HET: Then pitch shift halves what is heard and leaves the LP cutoff", async ({ page }, testInfo) => {
+  await openSweep(page);
+  await openSection(page, "HET");
+  const heard = page.locator(".fine-out-value").first();
+  const cutoff = page.locator(".het-value").first();
+  await expect(heard).toHaveText(/^15\.0\skHz$/);
+  await expect(page.locator(".fine-out-post")).toHaveText("Off");
+  await page.locator("#fine-out-het-ps").fill("2");
+  await expect(page.locator(".fine-out-post")).toHaveText("÷2");
+  await expect(page.locator(".fine-out-factor")).toHaveText("÷2");
+  await expect(heard).toHaveText(/^7\.5\skHz$/);
+  await expect(cutoff).toHaveText("15.0 kHz");
+  await page.screenshot({ path: testInfo.outputPath("het-ps.png") });
+  // The handle still sets the LP cutoff: 2 kHz lower heard is 4 kHz lower cutoff.
+  await (await dragHandle(page, 0, 30)).release();
+  await expect(cutoff).not.toHaveText("15.0 kHz");
+  // A double click on the slider turns the pitch shift off.
+  await page.locator("#fine-out-het-ps").dblclick();
+  await expect(page.locator(".fine-out-post")).toHaveText("Off");
+});
+
 test("TE and ZC: the handle changes the factor", async ({ page }) => {
   await openSweep(page);
   await openSection(page, "TE");

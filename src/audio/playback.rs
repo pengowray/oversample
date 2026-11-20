@@ -573,6 +573,7 @@ pub(crate) fn snapshot_dsp_params(
         het_cutoff: state.transform.het_cutoff().get_untracked(),
         het_comb_count: state.transform.het_comb_count().get_untracked().max(1),
         het_comb_spacing: state.transform.het_comb_spacing().get_untracked(),
+        het_ps_factor: state.transform.het_ps_factor().get_untracked(),
         te_factor: state.transform.te_factor().get_untracked(),
         ps_factor: state.transform.ps_factor().get_untracked(),
         ps_shift_hz: {

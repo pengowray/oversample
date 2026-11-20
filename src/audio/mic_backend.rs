@@ -2140,6 +2140,7 @@ mod tests {
             het_cutoff: 15_000.0,
             het_comb_count: 1,
             het_comb_spacing: 0.0,
+            het_ps_factor: 1.0,
             te_factor: 10.0,
             ps_factor: PitchFactor::down(10.0),
             ps_shift_hz: 0.0,

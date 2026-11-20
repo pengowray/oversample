@@ -65,6 +65,7 @@ pub fn ExportPanel() -> impl IntoView {
         state.transform.te_factor().track();
         state.transform.ps_factor().track();
         state.transform.het_frequency().track();
+        state.transform.het_ps_factor().track();
         state.transform.het_comb_count().track();
         state.transform.zc_factor().track();
         state.viewmode.channel_view().track();

@@ -2095,6 +2095,9 @@ pub struct TransformState {
     pub het_interacting: bool,
     pub het_freq_auto: bool,
     pub het_cutoff_auto: bool,
+    /// Divide factor of a pitch shift applied to the HET output ("Then pitch
+    /// shift" in "Fine output adjustment"). 1 = none.
+    pub het_ps_factor: f64,
     pub te_factor: f64,
     pub te_factor_auto: bool,
     pub ps_factor: PitchFactor,
@@ -2761,6 +2764,7 @@ impl AppState {
                 het_interacting: false,
                 het_freq_auto: true,
                 het_cutoff_auto: true,
+                het_ps_factor: 1.0,
                 te_factor: 10.0,
                 te_factor_auto: true,
                 ps_factor: PitchFactor::down(10.0),
@@ -3558,6 +3562,7 @@ impl AppState {
         let _ = self.transform.zc_factor().get();
         let _ = self.transform.het_frequency().get();
         let _ = self.transform.het_cutoff().get();
+        let _ = self.transform.het_ps_factor().get();
         let _ = self.gain.db().get();
         let _ = self.gain.auto().get();
         let _ = self.gain.mode().get();
@@ -3595,6 +3600,7 @@ impl AppState {
         let _ = self.filter.bandpass_mode().get();
         let _ = self.transform.het_frequency().get();
         let _ = self.transform.het_cutoff().get();
+        let _ = self.transform.het_ps_factor().get();
         let _ = self.transform.ps_shift_hz().get();
         mode
     }

@@ -12,6 +12,7 @@
 //   PS       heard = recording ÷ factor − shift   (`ps_shift_hz`)
 //   HET      heard = |recording − carrier|, low-passed at the LP cutoff. With
 //            several carriers every carrier's band lands on 0 to the cutoff.
+//            "Then pitch shift" (`het_ps_factor`) divides that output again.
 //
 // A drag does not write the playback settings on every pointer move. The
 // diagram follows the pointer from a draft value; the settings are written
@@ -912,9 +913,13 @@ fn HetDiagram() -> impl IntoView {
             selection_band.get(),
         )
     });
+    // "Then pitch shift": the factor the HET output is divided by. 1 = off.
+    let post = Memo::new(move |_| state.transform.het_ps_factor().get().max(1.0));
+    // The highest frequency heard: the LP cutoff, divided by that factor.
+    let heard_hi = move || setting.get().1 / post.get();
     let top = Memo::new(move |prev: Option<&f64>| match prev {
         Some(prev) if dragging.get() => *prev,
-        _ => heard_top_for(setting.get().1),
+        _ => heard_top_for(heard_hi()),
     });
 
     let commit = move |(carrier, cutoff): HetSetting| {
@@ -977,9 +982,10 @@ fn HetDiagram() -> impl IntoView {
         };
         let hz_at = heard_hz_at(&el, top.get_untracked());
         let (carrier, cutoff) = setting.get_untracked();
-        let grab = cutoff - hz_at(ev.client_y() as f64);
+        let post = post.get_untracked();
+        let grab = cutoff / post - hz_at(ev.client_y() as f64);
         run_drag(Rc::new(move |client_y| {
-            let hz = ((hz_at(client_y) + grab) / 100.0).round() * 100.0;
+            let hz = ((hz_at(client_y) + grab) * post / 100.0).round() * 100.0;
             (carrier, hz.clamp(1_000.0, 30_000.0))
         }));
     };
@@ -1008,7 +1014,7 @@ fn HetDiagram() -> impl IntoView {
         let nyq = nyquist.get();
         let cutoff = setting.get().1;
         let top = top.get();
-        let (out_lo, out_hi) = (y_of(0.0, top), y_of(cutoff, top));
+        let (out_lo, out_hi) = (y_of(0.0, top), y_of(cutoff / post.get(), top));
         carriers
             .get()
             .into_iter()
@@ -1033,7 +1039,13 @@ fn HetDiagram() -> impl IntoView {
             })
             .collect::<Vec<_>>()
     };
-    let cutoff_y = move || y_of(setting.get().1, top.get());
+    let cutoff_y = move || y_of(heard_hi(), top.get());
+    let on_post_input = move |ev: web_sys::Event| {
+        if let Ok(factor) = event_target_value(&ev).parse::<f64>() {
+            freeze_spectrogram(&state);
+            state.transform.het_ps_factor().set(factor.clamp(1.0, 8.0));
+        }
+    };
 
     let on_carrier_input = move |ev: web_sys::Event| {
         let el: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
@@ -1093,7 +1105,15 @@ fn HetDiagram() -> impl IntoView {
                     </g>
                     <text class="fine-out-value" x=OUT_X + OUT_W / 2.0 text-anchor="middle"
                         y=move || cutoff_y() - 8.0
-                    >{move || freq_label(setting.get().1)}</text>
+                    >{move || freq_label(heard_hi())}</text>
+                    // The pitch shift's factor, beside the heard band, as in
+                    // the other modes.
+                    <text class="fine-out-factor" x=OUT_X + OUT_W + 30.0
+                        y=move || (cutoff_y() + BOT) / 2.0 + 4.0
+                    >{move || {
+                        let post = post.get();
+                        (post > 1.0).then(|| format!("\u{00f7}{}", format_factor_value(post)))
+                    }}</text>
                 </svg>
             </div>
             <div class="fine-out-row">
@@ -1116,6 +1136,23 @@ fn HetDiagram() -> impl IntoView {
                         {format!("{}\u{00A0}kHz apart", khz_number(state.transform.het_comb_spacing().get()))}
                     </span>
                 })}
+            </div>
+            <div class="fine-out-row"
+                title="Divides every frequency of the HET output by this factor. At \u{00f7}2, a call heard at 8 kHz is heard at 4 kHz."
+            >
+                <label for="fine-out-het-ps">"Then pitch shift"</label>
+                <input type="range" id="fine-out-het-ps" class="fine-out-range" min="1" max="8" step="0.5"
+                    prop:value=move || post.get().to_string()
+                    on:input=on_post_input
+                    on:dblclick=move |_| {
+                        freeze_spectrogram(&state);
+                        state.transform.het_ps_factor().set(1.0);
+                    }
+                />
+                <span class="fine-out-post">{move || {
+                    let post = post.get();
+                    if post > 1.0 { format!("\u{00f7}{}", format_factor_value(post)) } else { "Off".to_string() }
+                }}</span>
             </div>
             <div class="fine-out-row">
                 <span class="fine-out-gap"></span>

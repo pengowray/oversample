@@ -146,6 +146,8 @@ pub(crate) struct PlaybackParams {
     pub het_comb_count: u32,
     /// Spacing (Hz) between comb carriers.
     pub het_comb_spacing: f64,
+    /// Divide factor of a pitch shift applied to the HET output. 1 = none.
+    pub het_ps_factor: f64,
     pub te_factor: f64,
     pub ps_factor: PitchFactor,
     /// Output-side heterodyne shift (Hz) applied AFTER pitch shifting
@@ -847,6 +849,17 @@ fn ps_post_shift_cutoff(filter_freq_high: f64, factor: f64, sample_rate: u32) ->
         .min(nyquist * 0.9)
 }
 
+/// The pitch shift HET can apply to its own output: every heard frequency
+/// divided by `factor`, the duration kept. HET's output reaches up to the LP
+/// cutoff (15 kHz by default), and this brings it lower, where it is easier
+/// to hear. A factor of 1 or less changes nothing.
+pub(crate) fn het_post_pitch_shift(mixed: Vec<f32>, factor: f64) -> Vec<f32> {
+    if !factor.is_finite() || factor <= 1.0 {
+        return mixed;
+    }
+    pitch_shift_realtime(&mixed, crate::dsp::pitch_shift::PitchFactor::down(factor))
+}
+
 pub(crate) fn apply_dsp_mode(
     samples: &[f32],
     sample_rate: u32,
@@ -867,7 +880,8 @@ pub(crate) fn apply_dsp_mode(
                 params.het_comb_spacing,
                 band,
             );
-            heterodyne_comb_mix(samples, sample_rate, &carriers, params.het_cutoff)
+            let mixed = heterodyne_comb_mix(samples, sample_rate, &carriers, params.het_cutoff);
+            het_post_pitch_shift(mixed, params.het_ps_factor)
         }
         PlaybackMode::TimeExpansion => {
             // Rate change handled by AudioContext sample rate, not sample transform

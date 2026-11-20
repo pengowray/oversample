@@ -400,20 +400,26 @@ pub(crate) fn transform_suffix(params: &PlaybackParams) -> String {
             let has_sel =
                 params.has_selection && (params.sel_freq_low > 0.0 || params.sel_freq_high > 0.0);
             let khz = |hz: f64| factor_tag((hz / 100.0).round() / 10.0);
+            // "-PS2": the HET output pitch shifted down by 2.
+            let post = if params.het_ps_factor > 1.0 {
+                format!("-PS{}", factor_tag(params.het_ps_factor))
+            } else {
+                String::new()
+            };
             if params.het_comb_count <= 1 {
                 let carrier = if has_sel {
                     (params.sel_freq_low + params.sel_freq_high) / 2.0
                 } else {
                     params.het_freq
                 };
-                format!("_HET{}k", khz(carrier))
+                format!("_HET{}k{post}", khz(carrier))
             } else {
                 let base = if has_sel {
                     params.sel_freq_low
                 } else {
                     params.het_freq
                 };
-                format!("_HET{}k-comb{}", khz(base), params.het_comb_count)
+                format!("_HET{}k-comb{}{post}", khz(base), params.het_comb_count)
             }
         }
         PlaybackMode::ZeroCrossing => format!("_ZC{}", params.zc_factor as u32),
@@ -978,6 +984,42 @@ mod tests {
         assert_eq!(factor_tag(42.5), "42.5");
     }
 
+    /// HET at 40 kHz turns a 48 kHz tone into 8 kHz; "Then pitch shift" ÷2
+    /// brings that to 4 kHz, and the file name says so.
+    #[test]
+    fn het_output_can_be_pitch_shifted() {
+        use crate::audio::streaming_playback::apply_dsp_mode;
+        let rate = 192_000u32;
+        let tone: Vec<f32> = (0..rate as usize / 2)
+            .map(|i| (2.0 * std::f32::consts::PI * 48_000.0 * i as f32 / rate as f32).sin() * 0.5)
+            .collect();
+        let heard_hz = |post: f64| {
+            let params = PlaybackParams {
+                mode: PlaybackMode::Heterodyne,
+                het_ps_factor: post,
+                ..ps_params()
+            };
+            let out = apply_dsp_mode(&tone, rate, &params);
+            // Frequency from the zero crossings of the middle half.
+            let mid = &out[out.len() / 4..out.len() * 3 / 4];
+            let crossings = mid.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count();
+            crossings as f64 / 2.0 / (mid.len() as f64 / rate as f64)
+        };
+        assert!((heard_hz(1.0) - 8_000.0).abs() < 200.0, "{}", heard_hz(1.0));
+        assert!((heard_hz(2.0) - 4_000.0).abs() < 200.0, "{}", heard_hz(2.0));
+
+        let named = |post: f64| {
+            transform_suffix(&PlaybackParams {
+                mode: PlaybackMode::Heterodyne,
+                het_ps_factor: post,
+                ..ps_params()
+            })
+        };
+        assert_eq!(named(1.0), "_HET40k");
+        assert_eq!(named(2.0), "_HET40k-PS2");
+        assert_eq!(named(2.5), "_HET40k-PS2.5");
+    }
+
     /// Playback parameters for pitch shift down by 10 with nothing else on.
     fn ps_params() -> PlaybackParams {
         use crate::dsp::pitch_shift::PitchFactor;
@@ -987,6 +1029,7 @@ mod tests {
             het_cutoff: 15_000.0,
             het_comb_count: 1,
             het_comb_spacing: 0.0,
+            het_ps_factor: 1.0,
             te_factor: 10.0,
             ps_factor: PitchFactor::down(10.0),
             ps_shift_hz: 0.0,
