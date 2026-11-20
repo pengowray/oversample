@@ -342,23 +342,33 @@ impl ClassifierRun {
 
     /// The windows the live view made ([`WindowScores::live`]) and their
     /// embeddings, from `embeddings` (this run's), as a new run starts with
-    /// them: in time order, with slots 0, 1, 2... and the embeddings in that
-    /// order.
+    /// them: the windows in time order, their embeddings in the order they
+    /// arrived, as before, in slots 0, 1, 2...
     pub fn live_windows(&self, embeddings: &[f32]) -> (Vec<WindowScores>, Vec<f32>) {
         let len = self.method.embedding_len();
-        let mut kept = Vec::new();
-        let mut emb = Vec::new();
-        for w in self.windows.iter().filter(|w| w.live) {
-            let e = embedding(embeddings, self.method, w.slot as usize);
-            match e {
+        let mut old_slots: Vec<u32> = self
+            .windows
+            .iter()
+            .filter(|w| w.live)
+            .map(|w| w.slot)
+            .collect();
+        old_slots.sort_unstable();
+        let mut emb = Vec::with_capacity(old_slots.len() * len);
+        for &s in &old_slots {
+            match embedding(embeddings, self.method, s as usize) {
                 Some(e) => emb.extend_from_slice(e),
                 None => emb.resize(emb.len() + len, 0.0),
             }
-            kept.push(WindowScores {
-                slot: kept.len() as u32,
-                ..w.clone()
-            });
         }
+        let kept = self
+            .windows
+            .iter()
+            .filter(|w| w.live)
+            .map(|w| WindowScores {
+                slot: old_slots.partition_point(|&s| s < w.slot) as u32,
+                ..w.clone()
+            })
+            .collect();
         (kept, emb)
     }
 

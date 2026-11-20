@@ -1104,7 +1104,9 @@ fn stored_payload(state: AppState, window: &FileWindow, full: bool) -> Option<Ve
 /// Keep a reading of `window` in the file's results (`played`), if it is one
 /// to keep.
 fn keep(state: AppState, window: FileWindow, top: Vec<Score>, embedding: &[f32]) {
-    if !window.keep || top.is_empty() {
+    // Only while the Live view in the Call detection tab is on: the Live
+    // explorer on its own does not add to a file's results.
+    if !window.keep || top.is_empty() || USERS.with(|u| u.get()) & LIVE_VIEW == 0 {
         return;
     }
     classifier::played::keep(

@@ -122,32 +122,42 @@ pub fn stored(
     source_rate: u32,
     start_s: f64,
 ) -> Option<(Vec<Score>, Vec<f32>)> {
-    let waiting = WAITING.with(|w| {
-        w.borrow()
-            .iter()
-            .find(|r| {
-                r.file_id == file_id
-                    && r.method == method
-                    && r.source_rate == source_rate
-                    && (r.start_s - start_s).abs() < super::types::SAME_WINDOW_S
-            })
-            .map(|r| (r.top.clone(), r.embedding.clone()))
-    });
-    if waiting.is_some() {
-        return waiting;
-    }
     let key = (file_id, method);
-    let (top, slot) = state.classifier.results().with_untracked(|m| {
-        let run = m.get(&key).filter(|r| r.source_rate == source_rate)?;
-        let w = run.full_window_at(start_s)?;
-        Some((w.top.clone(), w.slot as usize))
-    })?;
-    let embedding = state.classifier.embeddings().with_untracked(|m| {
-        m.get(&key)
-            .and_then(|e| super::types::embedding(e, method, slot))
-            .map(<[f32]>::to_vec)
-    })?;
-    Some((top, embedding))
+    WAITING.with(|w| {
+        state.classifier.results().with_untracked(|results| {
+            state.classifier.embeddings().with_untracked(|embeddings| {
+                find(
+                    &w.borrow(),
+                    results.get(&key),
+                    embeddings.get(&key).map(Vec::as_slice),
+                    (key, source_rate, start_s),
+                )
+            })
+        })
+    })
+}
+
+/// [`stored`] in `waiting` (readings not in the results yet), then in the
+/// file's `run` and its `embeddings`, for the window `(key, source_rate,
+/// start_s)`.
+pub fn find(
+    waiting: &[Reading],
+    run: Option<&ClassifierRun>,
+    embeddings: Option<&[f32]>,
+    (key, source_rate, start_s): (Key, u32, f64),
+) -> Option<(Vec<Score>, Vec<f32>)> {
+    let same = |r: &Reading| {
+        (r.file_id, r.method) == key
+            && r.source_rate == source_rate
+            && (r.start_s - start_s).abs() < super::types::SAME_WINDOW_S
+    };
+    if let Some(r) = waiting.iter().find(|r| same(r)) {
+        return Some((r.top.clone(), r.embedding.clone()));
+    }
+    let run = run.filter(|r| r.source_rate == source_rate)?;
+    let w = run.full_window_at(start_s)?;
+    let e = super::types::embedding(embeddings?, key.1, w.slot as usize)?;
+    Some((w.top.clone(), e.to_vec()))
 }
 
 /// Keep `reading`. It goes into the results with the next move, at most
@@ -433,6 +443,50 @@ mod tests {
         assert_eq!(run.windows[0].top[0].class, 0);
     }
 
+    /// Which stored reading the live view shows instead of running the model.
+    #[test]
+    fn stored_readings_are_found_waiting_or_in_the_results() {
+        let key = (1, Method::BirdNet);
+        let mut results = HashMap::new();
+        let mut embeddings = HashMap::new();
+        merge(
+            &mut results,
+            &mut embeddings,
+            vec![reading(1, 6.0, 4)],
+            run_for,
+        );
+        // A run's zero-padded last window, 9 s to 10.5 s.
+        {
+            let run = results.get_mut(&key).unwrap();
+            let e = embeddings.get_mut(&key).unwrap();
+            run.insert_reading(e, 9.0, 10.5, vec![score(8, 0.9)], &[8.0; 1024]);
+        }
+        let waiting = vec![reading(1, 2.5, 7)];
+        let look = |start: f64, rate: u32| {
+            find(
+                &waiting,
+                results.get(&key),
+                embeddings.get(&key).map(Vec::as_slice),
+                (key, rate, start),
+            )
+            .map(|(top, e)| (top[0].class, e[0]))
+        };
+        // Waiting to go into the results, and within 20 ms of the start.
+        assert_eq!(look(2.51, 44_100), Some((7, 7.0)));
+        // In the results, with its own embedding.
+        assert_eq!(look(5.99, 44_100), Some((4, 4.0)));
+        // 30 ms off: another window.
+        assert_eq!(look(6.03, 44_100), None);
+        // A zero-padded window is not the whole window that starts there.
+        assert_eq!(look(9.0, 44_100), None);
+        // The file at another sample rate (a rate correction since).
+        assert_eq!(look(6.0, 441_000), None);
+        assert_eq!(look(2.5, 441_000), None);
+        // Another file.
+        let other = find(&waiting, None, None, ((2, Method::BirdNet), 44_100, 2.5));
+        assert_eq!(other, None);
+    }
+
     /// Analyse keeps the live view's readings, with their embeddings, and
     /// drops the windows of the Analyse before; its own windows then go in
     /// around them, and one at a kept reading's start is not added twice.
@@ -462,15 +516,16 @@ mod tests {
         let (kept, kept_emb) = old.live_windows(&embeddings[&key]);
         let starts: Vec<f64> = kept.iter().map(|w| w.start_s).collect();
         assert_eq!(starts, vec![1.25, 6.0]);
-        assert_eq!(kept.iter().map(|w| w.slot).collect::<Vec<_>>(), vec![0, 1]);
-        assert!(embedding(&kept_emb, Method::BirdNet, 0)
-            .unwrap()
-            .iter()
-            .all(|&v| v == 5.0));
-        assert!(embedding(&kept_emb, Method::BirdNet, 1)
-            .unwrap()
-            .iter()
-            .all(|&v| v == 4.0));
+        // The embeddings keep the order they arrived in: 6.0 s first.
+        assert_eq!(kept.iter().map(|w| w.slot).collect::<Vec<_>>(), vec![1, 0]);
+        for w in &kept {
+            let want = w.top[0].class as f32;
+            assert!(embedding(&kept_emb, Method::BirdNet, w.slot as usize)
+                .unwrap()
+                .iter()
+                .all(|&v| v == want));
+        }
+        assert_eq!(kept_emb.len(), 2 * 1024);
         // The new Analyse starts from them.
         let mut run = run_for(&reading(1, 0.0, 0)).unwrap();
         run.windows = kept;

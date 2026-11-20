@@ -436,12 +436,18 @@ pub fn drive(state: AppState) {
             | RunStatus::LoadingModel { file_id, method: m } => *file_id == file && *m == method,
             _ => false,
         }) || state.classifier.live_filling().get() == Some(key);
+        // Too few windows for `k` groups even with none quiet (a paused
+        // reading or two from the live view): the file's levels are not
+        // measured for them.
+        let too_few = windows <= k;
         let cached = CACHE.with(|c| {
             c.borrow().get(&key).map(|e| {
                 (
                     // Made from these windows, and with the quiet check
                     // once the run has stopped.
-                    e.windows == windows && e.first == first && (running || e.quiet_checked),
+                    e.windows == windows
+                        && e.first == first
+                        && (running || too_few || e.quiet_checked),
                     e.done_at + RUN_GAP_MS.max(10.0 * e.took_ms),
                 )
             })
@@ -464,7 +470,7 @@ pub fn drive(state: AppState) {
                     tick.notify();
                 });
             }
-            _ => compute(state, key, k, !running, tick.clone()),
+            _ => compute(state, key, k, !running && !too_few, tick.clone()),
         }
     });
 }
