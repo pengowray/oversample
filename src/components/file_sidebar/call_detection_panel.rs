@@ -538,8 +538,9 @@ fn InbuiltDetection() -> impl IntoView {
     };
     let hide_preview = move || state.call_detection.preview().set(None);
     // True while the preview shown is for the radio button with keyboard
-    // focus. Clicking a radio button moves the focus too, and the blur that
-    // causes must not clear the preview of the choice under the pointer.
+    // focus. Only then does a blur clear the preview: clicking a radio button
+    // also moves the focus, which blurs the button that had it, and the
+    // choice under the pointer must keep its preview.
     let preview_from_focus = StoredValue::new(false);
     // A new search or another file clears the results and hides the
     // choices, so clear the preview too.
