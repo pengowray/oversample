@@ -55,6 +55,7 @@ pub mod bat_pick;
 pub mod location;
 pub mod species_map;
 pub mod store;
+pub mod strips;
 pub mod summary;
 pub mod test_hook;
 pub mod types;

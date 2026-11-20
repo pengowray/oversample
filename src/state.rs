@@ -1836,6 +1836,11 @@ pub struct CallDetectionState {
     /// The "Annotate Calls and Trains" choice under the pointer or keyboard
     /// focus. The spectrogram outlines the regions it would add.
     pub preview: Option<crate::call_annotations::AnnotatePreview>,
+    /// Score strips above the spectrogram (`crate::classifier::strips`): the
+    /// species picked, each with its method, in the order picked.
+    pub strip_species: Vec<crate::classifier::strips::StripSpecies>,
+    /// The BirdNET principal components picked for strips, 0 for PC1.
+    pub strip_components: Vec<usize>,
 }
 
 /// The methods in the Call detection tab.
@@ -3078,6 +3083,8 @@ impl AppState {
                 mark_unexpected: true,
                 selected_window: None,
                 preview: None,
+                strip_species: Vec::new(),
+                strip_components: Vec::new(),
             }),
 
             classifier: Store::new(ClassifierState::default()),

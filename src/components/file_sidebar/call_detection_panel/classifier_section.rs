@@ -91,15 +91,50 @@ fn species_swatch(slot: Option<usize>) -> impl IntoView {
 
 /// A class name as shown: BattyBirdNET's lower-case classes get a capital.
 fn class_name(label: Option<&classifier::SpeciesLabel>) -> String {
-    let Some(l) = label else {
-        return "Unknown".to_string();
-    };
-    let mut c = l.common.chars();
-    match c.next() {
-        Some(first) => first.to_uppercase().chain(c).collect(),
-        None => String::new(),
+    label.map_or_else(|| "Unknown".to_string(), classifier::strips::display_name)
+}
+
+/// True when this species has a row above the spectrogram. Reactive.
+fn strip_picked(state: AppState, method: Method, scientific: &str) -> bool {
+    state.call_detection.strip_species().with(|v| {
+        v.iter()
+            .any(|s| s.method == method && s.scientific == scientific)
+    })
+}
+
+/// Add or remove this species' row above the spectrogram.
+fn toggle_strip(state: AppState, method: Method, scientific: String) {
+    state.call_detection.strip_species().update(|v| {
+        classifier::strips::toggle(v, classifier::strips::StripSpecies { method, scientific })
+    });
+}
+
+/// The cell with a species' "Show" checkbox: adds or removes its row above
+/// the spectrogram. A click on it leaves the row's own click (show the
+/// window) alone.
+fn strip_cell(state: AppState, method: Method, scientific: String, name: String) -> impl IntoView {
+    let sci = scientific.clone();
+    view! {
+        <td class="detection-col-strip" on:click=|ev| ev.stop_propagation()>
+            <input
+                type="checkbox"
+                aria-label=format!("Show {name} scores above the spectrogram")
+                title=format!("Show {name} scores above the spectrogram")
+                prop:checked=move || strip_picked(state, method, &sci)
+                on:change=move |_| toggle_strip(state, method, scientific.clone())
+            />
+        </td>
     }
 }
+
+/// The header above [`strip_cell`].
+fn strip_header() -> impl IntoView {
+    view! {
+        <th class="detection-col-strip" title=STRIP_HEADER_HELP>"Show"</th>
+    }
+}
+
+const STRIP_HEADER_HELP: &str = "Tick a species to show its scores in a row above the spectrogram";
 
 /// Scroll the spectrogram so window `i`'s middle is in the centre, and pick it.
 pub(super) fn show_window(state: AppState, start_s: f64, end_s: f64, i: usize) {
@@ -683,6 +718,15 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         })
     };
 
+    // Rows above the spectrogram: the species picked, and BirdNET's
+    // components.
+    let strips = move || {
+        if !has_results.get() {
+            return None;
+        }
+        Some(strips_group(state, method, current_file))
+    };
+
     // Add as annotations.
     let annotate = move || {
         let file_id = current_file.get()?;
@@ -834,6 +878,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         <div>
             {action}
             {results}
+            {strips}
             {annotate}
             {model}
         </div>
@@ -1091,6 +1136,7 @@ fn species_table(
                 let w = &run.windows[row.best_window];
                 let (start, end, i) = (w.start_s, w.end_s, row.best_window);
                 let flag = flag_cell(state, method, current_file.get(), label);
+                let strip = strip_cell(state, method, scientific.clone(), name.clone());
                 let class = move || {
                     if state.call_detection.selected_window().get() == Some(i) {
                         "detection-row selected"
@@ -1100,6 +1146,7 @@ fn species_table(
                 };
                 view! {
                     <tr class=class title=scientific on:click=move |_| show_window(state, start, end, i)>
+                        {strip}
                         <td class="detection-col-kind">{species_swatch(slot)}{name}</td>
                         {flag}
                         <td class="detection-col-num">{row.windows}</td>
@@ -1114,6 +1161,7 @@ fn species_table(
             <table class="detection-table">
                 <thead>
                     <tr>
+                        {strip_header()}
                         <th>"Species"</th>
                         {flag_header(method)}
                         <th class="detection-col-num">"Windows"</th>
@@ -1212,8 +1260,17 @@ fn top_three(
                     .filter(|l| l.is_species && l.scientific != l.common)
                     .map(|l| l.scientific.clone());
                 let flag = flag_cell(state, method, current_file.get(), label);
+                // BattyBirdNET's "Noise" and the like get no row.
+                let strip = label.filter(|l| l.is_species).map(|l| {
+                    strip_cell(state, method, l.scientific.clone(), class_name(Some(l)))
+                });
+                let strip = match strip {
+                    Some(cell) => cell.into_any(),
+                    None => view! { <td class="detection-col-strip"></td> }.into_any(),
+                };
                 view! {
                     <tr>
+                        {strip}
                         <td class="detection-col-kind">
                             {class_name(label)}
                             {scientific.map(|s| view! { <div class="detection-scientific">{s}</div> })}
@@ -1238,4 +1295,118 @@ fn top_three(
             </div>
         })
     })
+}
+
+/// The "Rows above the spectrogram" group: each species picked for this
+/// method, with a button to remove it (so a species that falls below the
+/// minimum confidence, and leaves the lists, can still be removed), and for
+/// BirdNET a button per principal component.
+fn strips_group(state: AppState, method: Method, current_file: Memo<Option<u64>>) -> impl IntoView {
+    let picked = move || {
+        let file = current_file.get();
+        let list: Vec<String> = state.call_detection.strip_species().with(|v| {
+            v.iter()
+                .filter(|s| s.method == method)
+                .map(|s| s.scientific.clone())
+                .collect()
+        });
+        if list.is_empty() {
+            return view! {
+                <div class="detection-status-note detection-annotate-row">
+                    "Tick a species in \u{201c}By species\u{201d} to add its row."
+                </div>
+            }
+            .into_any();
+        }
+        let rows = list
+            .into_iter()
+            .map(|scientific| {
+                // The common name from this file's results; the scientific
+                // name for a species this run does not have.
+                let label = state.classifier.results().with(|m| {
+                    file.and_then(|f| m.get(&(f, method))).and_then(|run| {
+                        classifier::strips::class_of(run, &scientific)
+                            .and_then(|c| run.labels.get(c as usize).cloned())
+                    })
+                });
+                let name = label
+                    .as_ref()
+                    .map_or_else(|| scientific.clone(), classifier::strips::display_name);
+                let flag = flag_cell(state, method, file, label.as_ref());
+                let remove = scientific.clone();
+                view! {
+                    <tr title=scientific>
+                        <td class="detection-col-kind">{name.clone()}</td>
+                        {flag}
+                        <td class="detection-col-num">
+                            <button
+                                class="detection-link-btn strip-remove-btn"
+                                aria-label=format!("Remove {name} row")
+                                title=format!("Remove {name} row")
+                                on:click=move |_| toggle_strip(state, method, remove.clone())
+                            >"\u{d7}"</button>
+                        </td>
+                    </tr>
+                }
+            })
+            .collect::<Vec<_>>();
+        view! {
+            <table class="detection-table">
+                <tbody>{rows}</tbody>
+            </table>
+        }
+        .into_any()
+    };
+    // BirdNET only: the components of its embedding. The count comes from
+    // the components file, loaded on first use.
+    let components = move || {
+        if method != Method::BirdNet {
+            return None;
+        }
+        let pcs = crate::components::score_strips::birdnet_components()?;
+        let buttons = pcs
+            .variance
+            .iter()
+            .enumerate()
+            .map(|(k, share)| {
+                let on = move || {
+                    state
+                        .call_detection
+                        .strip_components()
+                        .with(|v| v.contains(&k))
+                };
+                let name = format!("PC{}", k + 1);
+                let help = format!(
+                    "{name}: {:.1}% of the variation between BirdNET's classes\nShows {name} in a row above the spectrogram",
+                    share * 100.0
+                );
+                view! {
+                    <button
+                        class=move || if on() { "psd-btn psd-btn-active" } else { "psd-btn" }
+                        aria-pressed=move || on().to_string()
+                        title=help
+                        on:click=move |_| {
+                            state
+                                .call_detection
+                                .strip_components()
+                                .update(|v| classifier::strips::toggle(v, k))
+                        }
+                    >{name}</button>
+                }
+            })
+            .collect::<Vec<_>>();
+        Some(view! {
+            <div class="setting-row">
+                <span class="setting-label">"Principal components"</span>
+            </div>
+            <div class="detection-annotate-row strip-pc-buttons">{buttons}</div>
+        })
+    };
+    view! {
+        <div class="setting-group">
+            <div class="setting-group-title">"Rows above the spectrogram"</div>
+            {picked}
+            {components}
+        </div>
+    }
 }

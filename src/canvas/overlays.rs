@@ -1280,6 +1280,167 @@ pub const SPECIES_STRIP_H: f64 = 16.0;
 /// Colour of the flag on a bird unlikely at the recording's place.
 const UNLIKELY_FLAG_COLOUR: &str = "#ffcc88";
 
+/// The flag before the name of a bird unlikely at the recording's place and
+/// month: 10 px tall from `top`, 8 px wide from `x`. Same colour as
+/// `.unlikely-flag` in the lists.
+fn draw_unlikely_flag(ctx: &CanvasRenderingContext2d, x: f64, top: f64) {
+    ctx.set_fill_style_str(UNLIKELY_FLAG_COLOUR);
+    ctx.fill_rect(x, top, 1.25, 10.0);
+    ctx.begin_path();
+    ctx.move_to(x + 1.0, top);
+    ctx.line_to(x + 7.0, top + 2.5);
+    ctx.line_to(x + 1.0, top + 5.0);
+    ctx.close_path();
+    ctx.fill();
+}
+
+/// Height of one score strip row, in CSS pixels (the live view's strip rows
+/// are 18 px too).
+pub const SCORE_ROW_H: f64 = 18.0;
+
+/// Colours of the five fifths of a component, lowest to highest: blue, grey
+/// in the middle, orange. The same as `PC_COLOURS` in `live-embedding.js`,
+/// so a component row reads like the live view's component graphs.
+const PC_FIFTH_COLOURS: [&str; 5] = ["#4a8ee0", "#2f66b8", "#6a6963", "#b25e18", "#e8843c"];
+
+/// Draw the score strips (`crate::classifier::strips`): one row per picked
+/// species or component, each window of the run a cell, on the spectrogram's
+/// time axis (`scroll` seconds at the left edge, `visible_time` seconds across
+/// `width` pixels).
+///
+/// A species row fills each window green, more opaque for higher scores and
+/// with a step at the minimum confidence; a window without a stored score
+/// (outside its top 10) stays empty. A component row draws each window's
+/// percentile as a level line (low at the bottom), in the colour of its
+/// fifth. The name is written over the left end of each row, as in the live
+/// view, and the selected window is shaded across all rows.
+pub fn draw_score_strips(
+    ctx: &CanvasRenderingContext2d,
+    strips: &crate::classifier::strips::ScoreStrips,
+    selected: Option<usize>,
+    scroll: f64,
+    visible_time: f64,
+    width: f64,
+) {
+    use crate::classifier::strips::{column_max, fifth, species_alpha, ScoreRowKind};
+    let height = strips.rows.len() as f64 * SCORE_ROW_H;
+    ctx.set_fill_style_str("#0a0a0a");
+    ctx.fill_rect(0.0, 0.0, width, height);
+    if visible_time <= 0.0 {
+        return;
+    }
+    let px_per_sec = width / visible_time;
+    let x_of = |t: f64| (t - scroll) * px_per_sec;
+    let end_time = scroll + visible_time;
+    // Windows on screen: they are in time order.
+    let first = strips.windows.partition_point(|&(_, e)| e <= scroll);
+    let last = strips.windows.partition_point(|&(s, _)| s < end_time);
+    let on_screen = first..last.max(first);
+    // Width of one window in pixels (the last window may be shorter).
+    let window_px = strips
+        .windows
+        .first()
+        .map_or(0.0, |&(s, e)| (e - s) * px_per_sec);
+
+    for (r, row) in strips.rows.iter().enumerate() {
+        let y0 = r as f64 * SCORE_ROW_H;
+        // Row separator.
+        ctx.set_fill_style_str("#222222");
+        ctx.fill_rect(0.0, y0 + SCORE_ROW_H - 1.0, width, 1.0);
+        let inner_h = SCORE_ROW_H - 1.0;
+        match row.kind {
+            ScoreRowKind::Species if window_px < 2.0 => {
+                // Zoomed out: one cell per pixel column, the highest score.
+                let cols = column_max(
+                    &strips.windows[on_screen.clone()],
+                    row.cells.get(on_screen.clone()).unwrap_or(&[]),
+                    x_of,
+                    width.ceil() as usize,
+                );
+                for (x, score) in cols.into_iter().enumerate() {
+                    let Some(score) = score else { continue };
+                    let a = species_alpha(score, strips.min_confidence);
+                    ctx.set_fill_style_str(&format!("rgba(80, 220, 150, {a:.3})"));
+                    ctx.fill_rect(x as f64, y0 + 1.0, 1.0, inner_h - 1.0);
+                }
+            }
+            ScoreRowKind::Species => {
+                // A pixel gap between windows so neighbours stay apart, once
+                // a window is wide enough to spare it.
+                let gap = if window_px >= 4.0 { 1.0 } else { 0.0 };
+                for i in on_screen.clone() {
+                    let Some(score) = row.cells.get(i).copied().flatten() else {
+                        continue;
+                    };
+                    let (s, e) = strips.windows[i];
+                    let x0 = x_of(s).max(0.0);
+                    let x1 = x_of(e).min(width);
+                    let a = species_alpha(score, strips.min_confidence);
+                    ctx.set_fill_style_str(&format!("rgba(80, 220, 150, {a:.3})"));
+                    ctx.fill_rect(x0, y0 + 1.0, (x1 - x0 - gap).max(1.0), inner_h - 1.0);
+                }
+            }
+            ScoreRowKind::Component => {
+                // The 50th percentile.
+                ctx.set_fill_style_str("#2c2c2c");
+                ctx.fill_rect(0.0, (y0 + inner_h / 2.0).round(), width, 1.0);
+                let y_of = |p: f32| y0 + 2.0 + (1.0 - p as f64) * (inner_h - 4.0);
+                ctx.set_line_width(1.5);
+                let mut prev: Option<f64> = None;
+                for i in on_screen.clone() {
+                    let Some(p) = row.cells.get(i).copied().flatten() else {
+                        prev = None;
+                        continue;
+                    };
+                    let (s, e) = strips.windows[i];
+                    let (x0, x1) = (x_of(s), x_of(e));
+                    let y = y_of(p);
+                    ctx.set_stroke_style_str(PC_FIFTH_COLOURS[fifth(p)]);
+                    ctx.begin_path();
+                    // Joined to the window before, so the line reads as one.
+                    ctx.move_to(x0, prev.unwrap_or(y));
+                    ctx.line_to(x0, y);
+                    ctx.line_to(x1, y);
+                    ctx.stroke();
+                    prev = Some(y);
+                }
+            }
+        }
+    }
+
+    // The selected window, across all rows.
+    if let Some((s, e)) = selected.and_then(|i| strips.windows.get(i)) {
+        if *e >= scroll && *s <= end_time {
+            let x0 = x_of(*s).max(0.0);
+            let x1 = x_of(*e).min(width);
+            ctx.set_fill_style_str("rgba(255, 180, 50, 0.12)");
+            ctx.fill_rect(x0, 0.0, x1 - x0, height);
+            ctx.set_stroke_style_str("rgba(255, 200, 80, 0.9)");
+            ctx.set_line_width(1.5);
+            ctx.stroke_rect(x0 + 0.75, 0.75, (x1 - x0 - 1.5).max(1.0), height - 1.5);
+        }
+    }
+
+    // Names over the left end of each row, on a dark box so they read over
+    // full-strength cells.
+    ctx.set_font("11px sans-serif");
+    ctx.set_text_baseline("middle");
+    for (r, row) in strips.rows.iter().enumerate() {
+        let y0 = r as f64 * SCORE_ROW_H;
+        let flag_w = if row.unlikely { 10.0 } else { 0.0 };
+        let text_w = ctx.measure_text(&row.label).map_or(0.0, |m| m.width());
+        ctx.set_fill_style_str("rgba(10, 10, 10, 0.8)");
+        ctx.fill_rect(0.0, y0, 4.0 + flag_w + text_w + 4.0, SCORE_ROW_H - 1.0);
+        let mut x = 4.0;
+        if row.unlikely {
+            draw_unlikely_flag(ctx, x, y0 + (SCORE_ROW_H - 1.0 - 10.0) / 2.0);
+            x += flag_w;
+        }
+        ctx.set_fill_style_str("rgba(240, 240, 245, 0.95)");
+        let _ = ctx.fill_text(&row.label, x, y0 + (SCORE_ROW_H - 1.0) / 2.0 + 0.5);
+    }
+}
+
 /// Draw BirdNET or BattyBirdNET results as a strip along the top of the
 /// spectrogram: one box per stretch of windows with the same species, with
 /// ticks at the window boundaries, and the selected window shaded down the
@@ -1349,16 +1510,8 @@ pub fn draw_species_strip(
             let mut text_x = x0 + 4.0;
             if span.unlikely {
                 // Before the label, not after it: a label is cut to its box,
-                // so a mark at the end would be the first thing lost. Same
-                // colour as `.unlikely-flag` in the lists.
-                ctx.set_fill_style_str(UNLIKELY_FLAG_COLOUR);
-                ctx.fill_rect(text_x, 3.0, 1.25, 10.0);
-                ctx.begin_path();
-                ctx.move_to(text_x + 1.0, 3.0);
-                ctx.line_to(text_x + 7.0, 5.5);
-                ctx.line_to(text_x + 1.0, 8.0);
-                ctx.close_path();
-                ctx.fill();
+                // so a mark at the end would be the first thing lost.
+                draw_unlikely_flag(ctx, text_x, 3.0);
                 text_x += 10.0;
             }
             ctx.set_fill_style_str(if span.colour.is_some() {

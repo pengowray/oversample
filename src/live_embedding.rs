@@ -161,7 +161,7 @@ pub struct SessionPoint {
 const PC_FILE: &str = "birdnet-pc.bin";
 /// The first version, PCA of the class rows (`pc_bands.py`), shown with
 /// `?pc=rows` in the address.
-const PC_FILE_ROWS: &str = "birdnet-pc-rows.bin";
+pub const PC_FILE_ROWS: &str = "birdnet-pc-rows.bin";
 /// Readings averaged for the component graphs: 4 at 0.25 s apart, so a line
 /// settles within about a second.
 const PC_SMOOTH: usize = 4;
