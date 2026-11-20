@@ -11,8 +11,10 @@
 //   change: [[secondsAgo, distance]...], history,
 //   pcHist: [[secondsAgo, percentile on PC1, on PC2, ...]...] (0 to 1),
 //   preview: null, or while nothing plays the reading of the 3 s Play would
-//     start with: { at: { x, y, ux, uy, s } or null, from, to (seconds) };
-//     `top` is then that reading's }
+//     start with: { at: { x, y, ux, uy, s } or null, range ("12.4s to 15.4s") };
+//     `top` is then that reading's,
+//   pending: paused and that reading not in yet; `top` is then empty and the
+//     map shows no marker }
 // `speciesJson` is [[x, y, name, scientific]...] for the map's species (t-SNE
 // places), or null when it was sent before. `pcJson` comes with it:
 // { variance: [share...], ranks: [[0..255 per species]...],
@@ -254,6 +256,7 @@
   // Where the map's marker is: the paused reading's place while it is
   // shown, else the newest live reading's. [x, y] or undefined.
   function markerAt(el, d) {
+    if (d.pending) return undefined;
     if (d.preview) return previewAt(el, d) || undefined;
     const trail = trailOf(el, d);
     return trail[trail.length - 1];
@@ -262,7 +265,7 @@
   function mapSeries(el, d) {
     // While the paused reading is shown, it is the only marker: the trail
     // is of the audio heard before the pause.
-    const trail = d.preview ? [] : trailOf(el, d);
+    const trail = d.preview || d.pending ? [] : trailOf(el, d);
     const last = trail[trail.length - 1];
     const play = previewAt(el, d);
     const hit = last && last[3] >= d.min;
@@ -1122,10 +1125,8 @@
     const named = (t, cls) =>
       (cls ? `<span class="${cls}">${esc(t[0])}</span>` : esc(t[0])) + (t[2] ? flagHtml() : '');
     const others = rest.map((t) => `${named(t)} ${t[1].toFixed(2)}`).join(', ');
-    // The paused reading names the part of the file it is of, as positions.
-    const range = d.preview
-      ? `<span class="live-emb-range">${d.preview.from.toFixed(1)}s to ${d.preview.to.toFixed(1)}s</span> `
-      : '';
+    // The paused reading names the part of the file it is of.
+    const range = d.preview ? `<span class="live-emb-range">${esc(d.preview.range)}</span> ` : '';
     let html;
     let next;
     if (first[1] >= d.min) {

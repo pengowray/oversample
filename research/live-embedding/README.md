@@ -195,9 +195,13 @@ In the app, the live view and the classifier agreed on the test recordings:
    strip, the change trace, the trail, the component graphs or the Live
    explorer. On the maps it is a blue play triangle, in the blue of the
    spectrogram's "here" line; the readout shows its species with the window
-   in front ("12.4s to 15.4s", in the same blue), and the status line says
-   "The 3 s from where Play starts (blue triangle on the map)". The trail of
-   earlier readings is hidden meanwhile. When playback or the microphone
+   in front ("12.4s to 15.4s" or "1m02.4s to 1m05.4s", the app's position
+   format, in the same blue), and the status line says "The 3 s from where
+   Play starts (blue triangle on the map)". The trail of earlier readings is
+   hidden meanwhile. While the start moves and its reading is not in yet,
+   the map has no marker and the readout is blank, so the reading from
+   before the pause is never taken for the play start. A reading that does
+   not arrive is asked for again after 10 s. When playback or the microphone
    starts, the triangle goes at once and the live readings take over. The
    classifier's stored windows were not used: a stored window that contains
    the position is not the 3 s starting at it, so the marker would sit
@@ -212,7 +216,8 @@ In the app, the live view and the classifier agreed on the test recordings:
    listens, this device's position in the current week, and no flags without
    it. The location list is worked out the first time it is needed for a
    place (`classifier::location::scores_at`), which downloads the Geomodel
-   (16 MB) if it is not on the device yet.
+   (16 MB) if it is not on the device yet, and starts the classifier's
+   worker for it. A place whose list fails is tried again after 60 s.
 
    **Second version (`?pc=rec` in the address): PCA of recordings' embeddings**
    (`pc_rec.py`, output and checks in `pc_rec.txt`, data `birdnet-pc.bin`).

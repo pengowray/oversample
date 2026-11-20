@@ -15,6 +15,7 @@
 //! error) goes through the store, so nothing reactive changes per reading.
 
 use crate::classifier::{self, catalog, location, ClassifierError, Method, SpeciesLabel};
+use crate::format_time::format_time_display;
 use crate::recording_place::{file_place, file_week, Place};
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
@@ -137,14 +138,26 @@ thread_local! {
     static LAST_SPECTRUM: Cell<f64> = const { Cell::new(f64::NEG_INFINITY) };
     /// The paused reading: the 3 s Play would start with, while nothing plays.
     static PREVIEW: RefCell<Option<Preview>> = const { RefCell::new(None) };
-    /// The paused reading's request: its number and what it reads. Kept after
-    /// the answer, so a failed reading is not sent again for the same place.
-    static PREVIEW_REQ: Cell<Option<(u32, PreviewKey)>> = const { Cell::new(None) };
+    /// The paused reading's request: its number, what it reads, and when it
+    /// went out. Kept after the answer, so a reading that failed is sent again
+    /// only after [`PREVIEW_RETRY_MS`].
+    static PREVIEW_REQ: Cell<Option<(u32, PreviewKey, f64)>> = const { Cell::new(None) };
     /// The play-start window last seen, and since when (for the debounce).
     static PREVIEW_WANT: Cell<Option<(PreviewKey, f64)>> = const { Cell::new(None) };
-    /// The paused reading the chart shows now, if any.
-    static PREVIEW_DRAWN: Cell<Option<PreviewKey>> = const { Cell::new(None) };
+    /// What the chart shows for the pause now.
+    static PAUSED_DRAWN: Cell<PausedView> = const { Cell::new(None) };
+    /// Whether the chart's flags were drawn with a location list.
+    static FLAGS_DRAWN: Cell<bool> = const { Cell::new(false) };
 }
+
+/// What the chart shows while paused: `None` when something plays (or no
+/// file is open, or the live view is off), `Some(None)` while the paused
+/// reading for the current play start is not in yet, `Some(Some(key))` the
+/// paused reading for `key`.
+type PausedView = Option<Option<PreviewKey>>;
+
+/// Wait before a paused reading that did not arrive is asked for again.
+const PREVIEW_RETRY_MS: f64 = 10_000.0;
 
 /// Which audio a paused reading is of: the file's id, and the start and end
 /// of the window in ms.
@@ -344,7 +357,7 @@ pub fn restart(state: AppState) {
     PREVIEW.with(|p| *p.borrow_mut() = None);
     PREVIEW_REQ.with(|p| p.set(None));
     PREVIEW_WANT.with(|p| p.set(None));
-    PREVIEW_DRAWN.with(|p| p.set(None));
+    PAUSED_DRAWN.with(|p| p.set(None));
     ROWS.with(|r| r.borrow_mut().clear());
     INTERVAL.with(|i| i.set(0.0));
     if USERS.with(|u| u.get()) == 0 {
@@ -406,7 +419,7 @@ pub fn class_name(c: usize) -> String {
 pub fn set_chart(el: Option<web_sys::HtmlElement>) {
     CHART.with(|c| *c.borrow_mut() = el);
     // A new element shows nothing yet, so the paused reading is drawn again.
-    PREVIEW_DRAWN.with(|p| p.set(None));
+    PAUSED_DRAWN.with(|p| p.set(None));
 }
 
 async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
@@ -568,8 +581,8 @@ fn on_message(state: AppState, gen: u32, ev: MessageEvent) {
             }
             let preview = PREVIEW_REQ
                 .with(|p| p.get())
-                .filter(|&(r, _)| r == req)
-                .map(|(_, key)| key);
+                .filter(|&(r, ..)| r == req)
+                .map(|(_, key, _)| key);
             if let Some(key) = preview {
                 if sound_on(state) {
                     // Playback or the microphone started meanwhile: the live
@@ -662,34 +675,44 @@ fn preview_key(state: AppState) -> Option<PreviewKey> {
     (to > from).then(|| (id, ms(from), ms(to)))
 }
 
-/// The paused reading the chart should show now: the one for the current
-/// play-start window, while nothing plays and the live view is on.
-fn preview_shown(state: AppState) -> Option<PreviewKey> {
+/// What the chart should show for the pause now (see [`PausedView`]).
+/// `key` is [`preview_key`], asked for only while paused.
+fn paused_view(state: AppState, key: impl FnOnce() -> Option<PreviewKey>) -> PausedView {
     if sound_on(state) || USERS.with(|u| u.get()) & LIVE_VIEW == 0 {
         return None;
     }
-    let key = preview_key(state)?;
-    PREVIEW
-        .with(|p| p.borrow().as_ref().is_some_and(|p| p.key == key))
-        .then_some(key)
+    let key = key()?;
+    Some(
+        PREVIEW
+            .with(|p| p.borrow().as_ref().is_some_and(|p| p.key == key))
+            .then_some(key),
+    )
 }
 
 /// While nothing plays: redraw when the paused reading to show changes, and
 /// read the play-start window once it has stayed put for
 /// [`PREVIEW_DEBOUNCE_MS`].
 async fn preview_tick(state: AppState, gen: u32, now: f64) {
-    if PREVIEW_DRAWN.with(|p| p.get()) != preview_shown(state) {
-        draw(state);
+    let key = preview_key(state);
+    let view = paused_view(state, || key);
+    // Redraw when the pause shows something else, or when the location list
+    // for the flags has come in (it arrives after the reading).
+    let flags_changed =
+        view.is_some() && flag_scores(state).is_some() != FLAGS_DRAWN.with(|f| f.get());
+    if PAUSED_DRAWN.with(|p| p.get()) != view || flags_changed {
+        draw_view(state, view);
     }
     if USERS.with(|u| u.get()) & LIVE_VIEW == 0 {
         return;
     }
-    let Some(key) = preview_key(state) else {
+    let Some(key) = key else {
         PREVIEW_WANT.with(|p| p.set(None));
         return;
     };
-    let have = PREVIEW.with(|p| p.borrow().as_ref().is_some_and(|p| p.key == key));
-    let asked = PREVIEW_REQ.with(|p| p.get()).is_some_and(|(_, k)| k == key);
+    let have = matches!(view, Some(Some(_)));
+    let asked = PREVIEW_REQ
+        .with(|p| p.get())
+        .is_some_and(|(_, k, sent)| k == key && now - sent < PREVIEW_RETRY_MS);
     if have || asked {
         return;
     }
@@ -742,7 +765,7 @@ async fn preview_tick(state: AppState, gen: u32, now: f64) {
         return;
     }
     if let Some(req) = send(&samples, rate, now) {
-        PREVIEW_REQ.with(|p| p.set(Some((req, key))));
+        PREVIEW_REQ.with(|p| p.set(Some((req, key, now))));
     }
 }
 
@@ -791,7 +814,7 @@ async fn run_loop(state: AppState, gen: u32) {
             preview_tick(state, gen, now).await;
             continue;
         }
-        if PREVIEW_DRAWN.with(|p| p.get()).is_some() {
+        if PAUSED_DRAWN.with(|p| p.get()).is_some() {
             // Playback started: take the paused reading off the chart now,
             // before the first live reading.
             draw(state);
@@ -1063,6 +1086,11 @@ fn update_rows(history: &VecDeque<Reading>) -> Vec<u16> {
 }
 
 fn draw(state: AppState) {
+    draw_view(state, paused_view(state, || preview_key(state)));
+}
+
+/// Draw, with `view` the pause's part of the chart (see [`PausedView`]).
+fn draw_view(state: AppState, view: PausedView) {
     let Some(el) = CHART.with(|c| c.borrow().clone()) else {
         return;
     };
@@ -1083,8 +1111,12 @@ fn draw(state: AppState) {
             .and_then(|(s, l)| location::unlikely_in(s, l))
             .unwrap_or(false)
     };
-    let shown = preview_shown(state);
-    let was_shown = PREVIEW_DRAWN.with(|p| p.replace(shown));
+    FLAGS_DRAWN.with(|f| f.set(flags.is_some()));
+    let shown = view.flatten();
+    // Paused, with the paused reading not in yet: the live reading from
+    // before the pause is hidden, so it is not taken for the play start.
+    let pending = matches!(view, Some(None));
+    let was_shown = PAUSED_DRAWN.with(|p| p.replace(view)).flatten();
     // The paused reading: its top classes and its place on both layouts.
     let preview = shown.and_then(|key| {
         PREVIEW.with(|p| {
@@ -1102,7 +1134,11 @@ fn draw(state: AppState) {
                         "s": round3(s),
                     })
                 }),
-                (key.1 as f64 / 1000.0, key.2 as f64 / 1000.0),
+                format!(
+                    "{} to {}",
+                    format_time_display(key.1 as f64 / 1000.0, 1),
+                    format_time_display(key.2 as f64 / 1000.0, 1)
+                ),
             ))
         })
     });
@@ -1110,16 +1146,16 @@ fn draw(state: AppState) {
         let h = h.borrow();
         // Nothing heard and no paused reading: nothing to draw, unless a
         // paused reading is on the chart and has to go.
-        if h.is_empty() && preview.is_none() && was_shown.is_none() {
+        if h.is_empty() && preview.is_none() && was_shown.is_none() && !pending {
             return None;
         }
         let now = h.back().map_or(0.0, |r| r.t);
         let rows = update_rows(&h);
-        let top_scores = preview
-            .as_ref()
-            .map(|p| p.0.as_slice())
-            .or_else(|| h.back().map(|r| r.scores.as_slice()))
-            .unwrap_or(&[]);
+        let top_scores = match &preview {
+            Some(p) => p.0.as_slice(),
+            None if pending => &[],
+            None => h.back().map_or(&[][..], |r| r.scores.as_slice()),
+        };
         let top: Vec<_> = top_classes(top_scores, 3)
             .into_iter()
             .enumerate()
@@ -1191,9 +1227,9 @@ fn draw(state: AppState) {
             "heard": !h.is_empty(),
             "preview": preview.as_ref().map(|p| serde_json::json!({
                 "at": p.1,
-                "from": p.2 .0,
-                "to": p.2 .1,
+                "range": p.2,
             })),
+            "pending": pending,
             "strip": strip,
             "change": change,
             "history": HISTORY_S,

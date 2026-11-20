@@ -50,9 +50,8 @@ thread_local! {
     static GEO: RefCell<Option<Arc<GeoNames>>> = const { RefCell::new(None) };
     static CACHE: RefCell<HashMap<(i32, i32, u32), Arc<Vec<f32>>>> = RefCell::new(HashMap::new());
     static NEXT_REQ: Cell<u32> = const { Cell::new(1) };
-    /// Places [`scores_at`] has started working out.
-    static TRIED: RefCell<std::collections::HashSet<(i32, i32, u32)>> =
-        RefCell::new(std::collections::HashSet::new());
+    /// Places [`scores_at`] has started working out, and when (ms since 1970).
+    static TRIED: RefCell<HashMap<(i32, i32, u32), f64>> = RefCell::new(HashMap::new());
 }
 
 /// Parse the Geomodel's labels file: code, scientific name, English name.
@@ -173,13 +172,23 @@ pub fn update(state: AppState, file_id: u64) {
 /// while the microphone listens) or one that polls. Not reactive. The first
 /// call for a place starts working it out, downloading the Geomodel (16 MB)
 /// the first time, and returns `None`; later calls return the scores once
-/// they are in. A place whose list failed is not tried again this session.
+/// they are in. A place whose list failed is tried again after
+/// [`RETRY_MS`].
 pub fn scores_at(state: AppState, place: Place) -> Option<Arc<Vec<f32>>> {
     let key = place.key();
     if let Some(s) = CACHE.with(|c| c.borrow().get(&key).cloned()) {
         return Some(s);
     }
-    if !TRIED.with(|t| t.borrow_mut().insert(key)) {
+    let now = js_sys::Date::now();
+    let start = TRIED.with(|t| {
+        let mut t = t.borrow_mut();
+        let due = t.get(&key).is_none_or(|&at| now - at >= RETRY_MS);
+        if due {
+            t.insert(key, now);
+        }
+        due
+    });
+    if !start {
         return None;
     }
     spawn_local(async move {
@@ -192,6 +201,10 @@ pub fn scores_at(state: AppState, place: Place) -> Option<Arc<Vec<f32>>> {
     });
     None
 }
+
+/// Wait before [`scores_at`] tries a place again whose list did not arrive
+/// (no network for the Geomodel's download, or the worker stopped).
+const RETRY_MS: f64 = 60_000.0;
 
 async fn scores(state: AppState, place: Place) -> Result<Arc<Vec<f32>>, ClassifierError> {
     for f in catalog::GEOMODEL_FILES {

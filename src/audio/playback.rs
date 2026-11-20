@@ -200,23 +200,93 @@ pub fn play_start_time(state: &AppState) -> Option<f64> {
             viewport::play_from_here_time(scroll, visible)
         }
     };
-    let on_screen =
-        |s: &Selection| visible <= 0.0 || (s.time_start < scroll + visible && s.time_end > scroll);
-    let t = match state.playback.start_mode().get_untracked() {
-        PlayStartMode::All => 0.0,
-        PlayStartMode::FromHere => here(),
-        PlayStartMode::Selected => match effective_selection(state) {
-            Some(s) if on_screen(&s) => s.time_start,
-            Some(_) => here(),
-            None => 0.0,
-        },
-        PlayStartMode::Auto => match effective_selection(state) {
-            Some(s) if on_screen(&s) => s.time_start,
-            _ if scroll <= 0.0 => 0.0,
-            _ => here(),
-        },
+    let mode = state.playback.start_mode().get_untracked();
+    let selection = match mode {
+        PlayStartMode::Selected | PlayStartMode::Auto => effective_selection(state).map(|s| {
+            let on_screen =
+                visible <= 0.0 || (s.time_start < scroll + visible && s.time_end > scroll);
+            (s.time_start, on_screen)
+        }),
+        _ => None,
     };
+    let t = resolve_play_start(mode, selection, scroll, here);
     Some(t.clamp(0.0, duration.max(0.0)))
+}
+
+/// The rule behind [`play_start_time`]. `selection` is the selection's start
+/// and whether any of it is on screen; `here` is the "here" line's time.
+pub fn resolve_play_start(
+    mode: crate::state::PlayStartMode,
+    selection: Option<(f64, bool)>,
+    scroll: f64,
+    here: impl FnOnce() -> f64,
+) -> f64 {
+    use crate::state::PlayStartMode;
+    match (mode, selection) {
+        (PlayStartMode::All, _) => 0.0,
+        (PlayStartMode::FromHere, _) => here(),
+        (PlayStartMode::Selected | PlayStartMode::Auto, Some((start, true))) => start,
+        // `play` plays from "here" when the selection is off screen.
+        (PlayStartMode::Selected, Some((_, false))) => here(),
+        (PlayStartMode::Selected, None) => 0.0,
+        (PlayStartMode::Auto, _) if scroll <= 0.0 => 0.0,
+        (PlayStartMode::Auto, _) => here(),
+    }
+}
+
+#[cfg(test)]
+mod play_start_tests {
+    use super::resolve_play_start;
+    use crate::state::PlayStartMode::*;
+
+    const HERE: f64 = 42.0;
+
+    #[test]
+    fn all_starts_at_zero() {
+        assert_eq!(
+            resolve_play_start(All, Some((5.0, true)), 30.0, || HERE),
+            0.0
+        );
+    }
+
+    #[test]
+    fn here_ignores_the_selection() {
+        assert_eq!(
+            resolve_play_start(FromHere, Some((5.0, true)), 30.0, || HERE),
+            HERE
+        );
+    }
+
+    #[test]
+    fn selected_uses_the_selection_on_screen() {
+        assert_eq!(
+            resolve_play_start(Selected, Some((5.0, true)), 30.0, || HERE),
+            5.0
+        );
+        assert_eq!(
+            resolve_play_start(Selected, Some((5.0, false)), 30.0, || HERE),
+            HERE
+        );
+        assert_eq!(resolve_play_start(Selected, None, 30.0, || HERE), 0.0);
+    }
+
+    #[test]
+    fn auto_prefers_selection_then_start_then_here() {
+        assert_eq!(
+            resolve_play_start(Auto, Some((5.0, true)), 30.0, || HERE),
+            5.0
+        );
+        assert_eq!(
+            resolve_play_start(Auto, Some((5.0, false)), 0.0, || HERE),
+            0.0
+        );
+        assert_eq!(
+            resolve_play_start(Auto, Some((5.0, false)), 30.0, || HERE),
+            HERE
+        );
+        assert_eq!(resolve_play_start(Auto, None, 0.0, || HERE), 0.0);
+        assert_eq!(resolve_play_start(Auto, None, 30.0, || HERE), HERE);
+    }
 }
 
 fn cancel_replay_timer() {
