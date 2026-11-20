@@ -127,6 +127,16 @@ impl HeardAxis {
         }
     }
 
+    /// Where a frequency of the recording is drawn in the picture, in Hz.
+    /// The recording's own under TE. Under PS the picture is of the shifted
+    /// audio, so a 50 kHz call is at 5 kHz at ÷10.
+    pub fn picture_hz(self, recording_hz: f64) -> f64 {
+        match self.picture {
+            Picture::Recording => recording_hz,
+            Picture::Heard => recording_hz * self.freq_scale - self.shift_hz,
+        }
+    }
+
     /// True when the time labels differ from the recording's.
     pub fn scales_time(self) -> bool {
         (self.time_scale - 1.0).abs() > 1e-9
@@ -271,11 +281,7 @@ fn mode_axis(state: &AppState, track: Track) -> Option<HeardAxis> {
     // The shift playback applies, which is the stored one limited by the
     // band's lower edge.
     let shift = |factor: PitchFactor| {
-        crate::components::fine_output::effective_ps_shift(
-            stored_shift,
-            band_lo,
-            factor.signed(),
-        )
+        crate::components::fine_output::effective_ps_shift(stored_shift, band_lo, factor.signed())
     };
     match mode {
         PlaybackMode::TimeExpansion => match sample_rate {

@@ -27,6 +27,7 @@ use crate::bat_book::call_sketch::{
 use crate::bat_book::data::get_manifest;
 use crate::bat_book::types::BatBookEntry;
 use crate::canvas::spectrogram_renderer::{freq_to_y, Colormap};
+use crate::heard_axis::HeardAxis;
 use crate::state::store_fields::*;
 use crate::state::{AppState, SpectSize};
 
@@ -44,8 +45,9 @@ const WINDOW_MARGIN: f64 = 12.0;
 const COLUMN_MIN_VIEW_W: f64 = 2.0 * COLUMN_WIDTH;
 const COLUMN_MIN_VIEW_H: f64 = 230.0;
 /// Without the column (phones), the drawing is at least this wide, CSS px:
-/// half the column-less width it had before 0.5.156, which was mostly empty.
-const NARROW_MIN_WIDTH: f64 = 75.0;
+/// one short call and the padding either side of it. Wider (75 px) was
+/// mostly an empty black strip over the recording.
+const NARROW_MIN_WIDTH: f64 = 36.0;
 /// Without the column, more calls of the train are drawn only while they fit
 /// in this fraction of the spectrogram's width (or `NARROW_MIN_WIDTH`).
 const NARROW_FIT_FRACTION: f64 = 0.2;
@@ -71,6 +73,23 @@ struct ViewScale {
     /// Spectrogram size, CSS px.
     css_w: f64,
     css_h: f64,
+    /// Set when the axis gives heard values (XForm with TE or PS). Under PS
+    /// the picture is of the shifted audio, and the calls are drawn shifted
+    /// with it.
+    heard: Option<HeardAxis>,
+}
+
+impl ViewScale {
+    /// Where a frequency of the recording is in the picture, Hz.
+    fn picture_hz(&self, khz: f64) -> f64 {
+        let hz = khz * 1000.0;
+        self.heard.map_or(hz, |h| h.picture_hz(hz))
+    }
+
+    /// The y position of a frequency of the recording, CSS px.
+    fn y_of(&self, khz: f64) -> f64 {
+        freq_to_y(self.picture_hz(khz), self.min_hz, self.max_hz, self.css_h)
+    }
 }
 
 /// Where the drawn calls are when none of them is in the visible frequency
@@ -779,6 +798,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
             file_max_hz: file_max,
             css_w,
             css_h,
+            heard: crate::heard_axis::heard_axis(&state),
         })
     });
 
@@ -831,9 +851,9 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
                 hi_khz: hi,
                 top_khz: sc.file_max_hz / 1000.0,
             })
-        } else if drawn_lo * 1000.0 > sc.max_hz {
+        } else if sc.picture_hz(drawn_lo) > sc.max_hz {
             Some(OutOfView::Above)
-        } else if drawn_hi * 1000.0 < sc.min_hz {
+        } else if sc.picture_hz(drawn_hi) < sc.min_hz {
             Some(OutOfView::Below)
         } else {
             None
@@ -916,7 +936,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
         let f = form.get()?;
         layout.get()?;
         let (lo, hi) = drawn_khz_extent(f)?;
-        let y = |khz: f64| freq_to_y(khz * 1000.0, sc.min_hz, sc.max_hz, sc.css_h);
+        let y = |khz: f64| sc.y_of(khz);
         let top = (y(hi) - WINDOW_MARGIN).clamp(0.0, sc.css_h);
         let bottom = (y(lo) + WINDOW_MARGIN).clamp(0.0, sc.css_h);
         Some((top, (bottom - top).max(0.0)))
@@ -936,7 +956,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
             return;
         };
         let lay = layout.get();
-        let (min_f, max_f, css_h) = (sc.min_hz, sc.max_hz, sc.css_h);
+        let css_h = sc.css_h;
         let cmap = sketch_colormap(state);
         let Some(canvas) = draw_ref.get() else {
             return;
@@ -948,12 +968,7 @@ pub fn SpeciesCalls(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView 
         ctx.set_fill_style_str(&rgba(cmap.apply(16), 1.0));
         ctx.fill_rect(0.0, 0.0, w, css_h);
         let Some(lay) = lay else { return };
-        draw_calls(
-            &ctx,
-            &lay,
-            |khz| freq_to_y(khz * 1000.0, min_f, max_f, css_h),
-            cmap.apply(240),
-        );
+        draw_calls(&ctx, &lay, |khz| sc.y_of(khz), cmap.apply(240));
     });
 
     // The name block's height, measured: it grows with a long name that
