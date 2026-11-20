@@ -8,10 +8,13 @@
 //!
 //! - each frame's level is its RMS in dB;
 //! - the recording's floor is the 10th percentile of all its frames' levels;
-//! - a window has sound when its 3rd loudest frame is at least
-//!   [`SHORT_CALL_DB`] over the floor (a short call), or its frame at the 95th
-//!   percentile is at least [`LONG_CALL_DB`] over the floor (a faint call that
-//!   lasts); otherwise it is quiet;
+//! - a window has sound when its loudest frame is at least [`CLICK_DB`]
+//!   over the floor (a call of one or two frames, such as a bat call), its
+//!   3rd loudest frame is at least [`SHORT_CALL_DB`] over the floor (a short
+//!   call), or its frame at the 95th percentile is at least [`LONG_CALL_DB`]
+//!   over the floor (a faint call that lasts); otherwise it is quiet. So a
+//!   call that is both short (under 5% of the window) and faint (under
+//!   12 dB) counts as quiet;
 //! - when no window's 3rd loudest frame is [`CONTRAST_DB`] over the floor
 //!   (steady rain, insects, a shopping mall), no window is quiet: the
 //!   windows differ too little to say which are background;
@@ -26,6 +29,9 @@ use oversample_core::dsp::filters::Butterworth;
 
 /// Frames per model window.
 pub const FRAMES_PER_WINDOW: usize = 150;
+/// The loudest frame at least this far over the floor: a call shorter than
+/// 3 frames.
+pub const CLICK_DB: f32 = 15.0;
 /// The 3rd loudest frame at least this far over the floor: a short call.
 pub const SHORT_CALL_DB: f32 = 12.0;
 /// The 95th percentile frame at least this far over the floor: a faint call
@@ -57,6 +63,9 @@ pub struct LevelMeter {
     frame_len: usize,
     frame_secs: f64,
     sum: f64,
+    /// Sum of squares of the unfiltered samples, for digital silence (the
+    /// filters ring on for a moment after the sound stops).
+    raw_sum: f64,
     count: usize,
     db: Vec<f32>,
 }
@@ -74,6 +83,7 @@ impl LevelMeter {
             frame_len,
             frame_secs: frame_len as f64 / f64::from(rate),
             sum: 0.0,
+            raw_sum: 0.0,
             count: 0,
             db: Vec::new(),
         }
@@ -87,6 +97,7 @@ impl LevelMeter {
                 y = lp.process(y);
             }
             self.sum += f64::from(y) * f64::from(y);
+            self.raw_sum += f64::from(x) * f64::from(x);
             self.count += 1;
             if self.count == self.frame_len {
                 self.close_frame();
@@ -96,12 +107,14 @@ impl LevelMeter {
 
     fn close_frame(&mut self) {
         let ms = self.sum / self.count as f64;
-        self.db.push(if ms < SILENT {
+        let silent = self.raw_sum / (self.count as f64) < SILENT;
+        self.db.push(if silent || ms < SILENT {
             f32::NEG_INFINITY
         } else {
             (10.0 * ms.log10()) as f32
         });
         self.sum = 0.0;
+        self.raw_sum = 0.0;
         self.count = 0;
     }
 
@@ -123,9 +136,17 @@ fn percentile(sorted: &[f32], p: f64) -> f32 {
     sorted[i.min(sorted.len() - 1)]
 }
 
-/// A window's 3rd loudest and 95th percentile frame levels, or `None` when
-/// it has no frames. A frame is in the window when it starts in it.
-fn window_marks(levels: &FrameLevels, (s, e): (f64, f64)) -> Option<(f32, f32)> {
+/// A window's loudest, 3rd loudest and 95th percentile frame levels.
+#[derive(Clone, Copy, Debug)]
+struct Marks {
+    loudest: f32,
+    third: f32,
+    p95: f32,
+}
+
+/// The window's [`Marks`], or `None` when it has no frames. A frame is in
+/// the window when it starts in it.
+fn window_marks(levels: &FrameLevels, (s, e): (f64, f64)) -> Option<Marks> {
     // Frame starts are multiples of `frame_secs`; the small offset keeps a
     // start that is a whole number of frames from rounding up past itself.
     let index =
@@ -135,9 +156,11 @@ fn window_marks(levels: &FrameLevels, (s, e): (f64, f64)) -> Option<(f32, f32)> 
         return None;
     }
     f.sort_by(|a, b| b.total_cmp(a));
-    let third = f[2.min(f.len() - 1)];
-    let p95 = f[((f.len() as f64 * 0.05).ceil() as usize).clamp(1, f.len()) - 1];
-    Some((third, p95))
+    Some(Marks {
+        loudest: f[0],
+        third: f[2.min(f.len() - 1)],
+        p95: f[((f.len() as f64 * 0.05).ceil() as usize).clamp(1, f.len()) - 1],
+    })
 }
 
 /// Which of `windows` (start and end, in seconds) are quiet, by the rule in
@@ -157,20 +180,23 @@ pub fn quiet_windows(levels: &FrameLevels, windows: &[(f64, f64)]) -> Vec<bool> 
     } else {
         percentile(&heard, FLOOR_PERCENTILE)
     };
-    let marks: Vec<Option<(f32, f32)>> = windows.iter().map(|&w| window_marks(levels, w)).collect();
+    let marks: Vec<Option<Marks>> = windows.iter().map(|&w| window_marks(levels, w)).collect();
     let loudest = marks
         .iter()
         .flatten()
-        .map(|&(third, _)| third)
+        .map(|m| m.third)
         .fold(f32::NEG_INFINITY, f32::max);
     let contrast = loudest - floor >= CONTRAST_DB;
     marks
         .iter()
         .map(|m| match *m {
             None => false,
-            Some((third, _)) if third == f32::NEG_INFINITY => true,
-            Some((third, p95)) => {
-                contrast && third - floor < SHORT_CALL_DB && p95 - floor < LONG_CALL_DB
+            Some(m) if m.loudest == f32::NEG_INFINITY => true,
+            Some(m) => {
+                contrast
+                    && m.loudest - floor < CLICK_DB
+                    && m.third - floor < SHORT_CALL_DB
+                    && m.p95 - floor < LONG_CALL_DB
             }
         })
         .collect()
@@ -246,11 +272,14 @@ mod tests {
     #[test]
     fn faint_long_call_is_not_quiet() {
         let noise_rms = db_to_amp(-60.0);
+        // The share of the white noise's power inside the 250 Hz to 15 kHz
+        // band, so `over` is against the noise the check measures.
+        let in_band = ((BAND.1 - BAND.0) / (RATE as f32 / 2.0)).sqrt();
         for over in [6.0, 8.0, 10.0] {
             let mut rng = SplitMix64::new(2);
             let mut x = base(&mut rng);
-            // Tone power `over` dB above the noise's, for 0.5 s.
-            add_tone(&mut x, 9.8, 0.5, noise_rms * db_to_amp(over));
+            // Tone power `over` dB above the noise's in the band, for 0.5 s.
+            add_tone(&mut x, 9.8, 0.5, noise_rms * in_band * db_to_amp(over));
             let q = run(&x);
             assert!(!q[3], "a 0.5 s call {over} dB over the noise is quiet");
             assert!(q[2] && q[4]);
@@ -266,11 +295,55 @@ mod tests {
         add_tone(&mut x, 22.0, 0.1, noise_rms * db_to_amp(15.0));
         let q = run(&x);
         assert!(!q[7]);
+        // One 20 ms call (a single frame), 25 dB over the noise.
+        let mut rng = SplitMix64::new(3);
+        let mut x = base(&mut rng);
+        add_tone(&mut x, 22.0, 0.02, noise_rms * db_to_amp(25.0));
+        assert!(!run(&x)[7]);
         // A 40 ms tick 8 dB over the noise is too short and too faint.
         let mut rng = SplitMix64::new(3);
         let mut x = base(&mut rng);
         add_tone(&mut x, 22.0, 0.04, noise_rms * db_to_amp(8.0));
         assert!(run(&x)[7]);
+    }
+
+    #[test]
+    fn one_bat_call_is_not_quiet() {
+        // BattyBirdNET: 0.5625 s windows at 256 kHz, its band 1.3 to 80 kHz.
+        let rate = 256_000u32;
+        let win = 0.5625;
+        let band = (1_333.0, 80_000.0);
+        let mut rng = SplitMix64::new(9);
+        let noise_rms = db_to_amp(-70.0) * 3f32.sqrt();
+        let n = (10.0 * win * f64::from(rate)) as usize;
+        let mut x: Vec<f32> = (0..n)
+            .map(|_| (rng.next_f64() as f32 * 2.0 - 1.0) * noise_rms)
+            .collect();
+        // A 40 kHz call of `secs` at `db` (dBFS) from `at`.
+        let mut call = |at: f64, secs: f64, db: f32| {
+            let a = db_to_amp(db) * 2f32.sqrt();
+            let start = (at * f64::from(rate)) as usize;
+            for i in 0..(secs * f64::from(rate)) as usize {
+                let t = i as f32 / rate as f32;
+                x[start + i] += a * (std::f32::consts::TAU * 40_000.0 * t).sin();
+            }
+        };
+        // Loud passes in windows 0 and 5; one 5 ms call 25 dB over the
+        // noise in window 3.
+        call(0.1, 0.2, -30.0);
+        call(5.0 * win + 0.1, 0.2, -30.0);
+        call(3.0 * win + 0.2, 0.005, -45.0);
+        let mut m = LevelMeter::new(rate, win / FRAMES_PER_WINDOW as f64, band);
+        m.push(&x);
+        let windows: Vec<(f64, f64)> = (0..10)
+            .map(|i| (i as f64 * win, (i + 1) as f64 * win))
+            .collect();
+        let q = quiet_windows(&m.finish(), &windows);
+        let mut want = vec![true; 10];
+        for i in [0, 3, 5] {
+            want[i] = false;
+        }
+        assert_eq!(q, want);
     }
 
     #[test]
@@ -368,12 +441,13 @@ mod tests {
             q.iter().filter(|&&b| b).count()
         );
         for (i, &w) in windows.iter().enumerate() {
-            let (third, p95) = window_marks(&levels, w).unwrap();
+            let m = window_marks(&levels, w).unwrap();
             println!(
-                "{i:3} {:6.1}s  3rd {:5.1}  p95 {:5.1}  {}",
+                "{i:3} {:6.1}s  max {:5.1}  3rd {:5.1}  p95 {:5.1}  {}",
                 w.0,
-                third - floor,
-                p95 - floor,
+                m.loudest - floor,
+                m.third - floor,
+                m.p95 - floor,
                 if q[i] { "QUIET" } else { "" }
             );
         }
