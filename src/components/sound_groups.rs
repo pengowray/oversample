@@ -54,8 +54,8 @@ thread_local! {
     static UPDATED: ArcTrigger = ArcTrigger::new();
     /// A reduction or grouping is being worked out.
     static BUSY: Cell<bool> = const { Cell::new(false) };
-    /// A delayed reduction is waiting (during a run).
-    static WAITING: Cell<bool> = const { Cell::new(false) };
+    /// The file and method a delayed reduction is waiting for (during a run).
+    static WAITING: Cell<Option<Key>> = const { Cell::new(None) };
 }
 
 /// Shortest gap between reductions while a run is going, in ms.
@@ -99,14 +99,24 @@ pub fn grouping(state: AppState, file: u64, method: Method) -> Option<Rc<Groupin
     let k = state.call_detection.sound_group_count().get();
     let (windows, first) = embedded(state, (file, method));
     CACHE.with(|c| {
-        let c = c.borrow();
-        let e = c.get(&(file, method))?;
+        let mut c = c.borrow_mut();
+        let e = c.get_mut(&(file, method))?;
         // Made from other embeddings (a new run that is shorter so far).
         if e.first != first || e.windows > windows {
             return None;
         }
-        e.groupings.get(&k).cloned().flatten()
+        group_now(e, k)
     })
+}
+
+/// `e`'s grouping into `k` groups, worked out now if it is not cached
+/// (k-means on the reduced windows: a few ms), so a new number of groups
+/// shows at once.
+fn group_now(e: &mut Entry, k: usize) -> Option<Rc<Grouping>> {
+    e.groupings
+        .entry(k)
+        .or_insert_with(|| sg::group(&e.reduced, k).map(Rc::new))
+        .clone()
 }
 
 /// A class's name as shown, from the run's labels.
@@ -149,58 +159,43 @@ pub fn row(
     ))
 }
 
-/// Work out the reduction and grouping for `key` with `k` groups, after
-/// letting the page draw. `reduce` false reuses the cached reduction.
-fn compute(state: AppState, key: Key, k: usize, reduce: bool, done: ArcTrigger) {
+/// Work out the reduction for `key` and its grouping into `k` groups, one
+/// round at a time with the page drawing in between. The cache entry is
+/// replaced only once both are ready, so the row keeps showing the last
+/// grouping until then.
+fn compute(state: AppState, key: Key, k: usize, done: ArcTrigger) {
     BUSY.with(|b| b.set(true));
     spawn_local(async move {
         crate::web_util::yield_now().await;
-        if reduce {
-            let len = key.1.embedding_len();
-            let started = state.classifier.embeddings().with_untracked(|m| {
-                m.get(&key).map(|e| {
-                    let w = e.len() / len;
-                    (w, fingerprint(e, len), sg::Reducer::new(&e[..w * len], len))
-                })
-            });
-            if let Some((windows, first, mut reducer)) = started {
-                // One round at a time (about 20 ms each for an hour of
-                // BirdNET, natively), letting the page draw in between.
-                let mut took_ms = 0.0;
-                loop {
-                    let t0 = now_ms();
-                    let done = reducer.step();
-                    took_ms += now_ms() - t0;
-                    if done {
-                        break;
-                    }
-                    crate::web_util::yield_now().await;
+        let len = key.1.embedding_len();
+        let started = state.classifier.embeddings().with_untracked(|m| {
+            m.get(&key).map(|e| {
+                let w = e.len() / len;
+                (w, fingerprint(e, len), sg::Reducer::new(&e[..w * len], len))
+            })
+        });
+        if let Some((windows, first, mut reducer)) = started {
+            // About 20 ms a round for an hour of BirdNET, natively.
+            let mut took_ms = 0.0;
+            loop {
+                let t0 = now_ms();
+                let finished = reducer.step();
+                took_ms += now_ms() - t0;
+                if finished {
+                    break;
                 }
-                let reduced = reducer.finish();
-                CACHE.with(|c| {
-                    c.borrow_mut().insert(
-                        key,
-                        Entry {
-                            windows,
-                            first,
-                            reduced: Rc::new(reduced),
-                            groupings: HashMap::new(),
-                            took_ms,
-                            done_at: now_ms(),
-                        },
-                    )
-                });
                 crate::web_util::yield_now().await;
             }
-        }
-        let reduced = CACHE.with(|c| c.borrow().get(&key).map(|e| e.reduced.clone()));
-        if let Some(reduced) = reduced {
-            let g = sg::group(&reduced, k).map(Rc::new);
-            CACHE.with(|c| {
-                if let Some(e) = c.borrow_mut().get_mut(&key) {
-                    e.groupings.insert(k, g);
-                }
-            });
+            let mut entry = Entry {
+                windows,
+                first,
+                reduced: Rc::new(reducer.finish()),
+                groupings: HashMap::new(),
+                took_ms,
+                done_at: now_ms(),
+            };
+            group_now(&mut entry, k);
+            CACHE.with(|c| c.borrow_mut().insert(key, entry));
         }
         BUSY.with(|b| b.set(false));
         UPDATED.with(|t| t.notify());
@@ -226,7 +221,7 @@ pub fn drive(state: AppState) {
         };
         let key = (file, method);
         let (windows, first) = embedded(state, key);
-        if windows == 0 || BUSY.with(Cell::get) || WAITING.with(Cell::get) {
+        if windows == 0 || BUSY.with(Cell::get) || WAITING.with(|w| w.get() == Some(key)) {
             return;
         }
         let running = state.classifier.run().with(|r| match r {
@@ -240,25 +235,29 @@ pub fn drive(state: AppState) {
             c.borrow().get(&key).map(|e| {
                 (
                     e.windows == windows && e.first == first,
-                    e.groupings.contains_key(&k),
                     e.done_at + RUN_GAP_MS.max(10.0 * e.took_ms),
                 )
             })
         });
         match cached {
-            Some((true, true, _)) => {}
-            Some((true, false, _)) => compute(state, key, k, false, tick.clone()),
-            Some((false, _, due)) if running && due > now_ms() => {
-                WAITING.with(|w| w.set(true));
+            // Up to date. A missing number of groups is worked out by
+            // `grouping` when the row asks for it.
+            Some((true, _)) => {}
+            Some((false, due)) if running && due > now_ms() => {
+                WAITING.with(|w| w.set(Some(key)));
                 let tick = tick.clone();
                 let wait = (due - now_ms()).ceil() as i32;
                 spawn_local(async move {
                     crate::web_util::sleep_ms(wait).await;
-                    WAITING.with(|w| w.set(false));
+                    WAITING.with(|w| {
+                        if w.get() == Some(key) {
+                            w.set(None);
+                        }
+                    });
                     tick.notify();
                 });
             }
-            _ => compute(state, key, k, true, tick.clone()),
+            _ => compute(state, key, k, tick.clone()),
         }
     });
 }
@@ -288,7 +287,7 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                     <div class="detection-status-note sound-groups-note">{format!(
                         "{k} groups need at least {} windows. This file has {}.",
                         k + 1,
-                        windows
+                        windows_text(windows)
                     )}</div>
                 }
                 .into_any()

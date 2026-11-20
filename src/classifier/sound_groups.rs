@@ -38,21 +38,23 @@ const SEED: u64 = 0x50_0d_67_00_95;
 /// groups stand out against it. The others are kept apart from the rows they
 /// sit beside: the species rows' green (80, 220, 150) and the component rows'
 /// blue, grey and orange (`PC_FIFTH_COLOURS` in `canvas::overlays`).
-/// Magenta (Group 2, the colour seen most since 2 groups is the default) and
-/// yellow are the dataviz reference palette's dark steps; lilac is a lighter
-/// violet, since the palette's violet cannot be told from the component blue
-/// under protanopia.
+/// Magenta (Group 2, the colour seen most since 2 groups is the default) is
+/// the dataviz reference palette's dark step. Lilac and pale yellow are
+/// lighter than the palette's violet and yellow, which cannot be told from
+/// the component blue and orange.
 ///
 /// Checked with the dataviz `validate_palette.js --mode dark --surface
 /// "#0a0a0a" --pairs all`: every pair of the four passes the colour-blind
 /// check (worst 12.7, magenta and grey, protan) and the normal-vision check
-/// (worst 19.3, magenta and yellow). Gates traded on purpose: the grey has
-/// no chroma, is darker than the band and is 2.3:1 against the row
-/// background (it is meant to be quiet), and the lilac is lighter than the
-/// band. Yellow is close to the component rows' top-fifth orange for
-/// colour-blind readers; those rows draw lines, not filled cells, and every
-/// row is named.
-pub const GROUP_COLOURS: [&str; 4] = ["#4a4c56", "#d55181", "#c4b0ff", "#c98500"];
+/// (worst 24.2, magenta and lilac). Against the other rows' colours, normal
+/// vision: at least 15 (magenta and the component orange-brown). Colour-
+/// blind: magenta is 4.8 from the component middle grey, and pale yellow
+/// 6.4 from the species green; those rows are named and the component rows
+/// draw lines, not filled cells. Gates traded on purpose: the grey has no
+/// chroma, is darker than the band and is 2.3:1 against the row background
+/// (it is meant to be quiet); the lilac and pale yellow are lighter than the
+/// band.
+pub const GROUP_COLOURS: [&str; 4] = ["#4a4c56", "#d55181", "#c4b0ff", "#ffe08a"];
 
 /// The windows' embeddings made ready for grouping: scaled to length 1,
 /// centred and reduced to the top principal components.
