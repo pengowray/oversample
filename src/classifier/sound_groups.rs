@@ -415,13 +415,13 @@ pub fn shared_class(tops: &[GroupTop]) -> Option<u16> {
     (tops.len() >= 2 && tops.iter().all(|t| named_class(t) == Some(first))).then_some(first)
 }
 
-/// The legend's note for [`shared_class`]: "Both groups are mostly Gentoo
+/// The legend's note for [`shared_class`]: "Both clusters are mostly Gentoo
 /// Penguin. They differ in how loud or clear the sound is."
 pub fn shared_note(groups: usize, name: &str) -> String {
     let which = if groups == 2 {
-        "Both groups".to_string()
+        "Both clusters".to_string()
     } else {
-        format!("All {groups} groups")
+        format!("All {groups} clusters")
     };
     format!("{which} are mostly {name}. They differ in how loud or clear the sound is.")
 }
@@ -656,9 +656,9 @@ mod tests {
         assert_eq!(shared_class(&[top(1, 3, 4)]), None);
         assert_eq!(
             shared_note(2, "Bravo"),
-            "Both groups are mostly Bravo. They differ in how loud or clear the sound is."
+            "Both clusters are mostly Bravo. They differ in how loud or clear the sound is."
         );
-        assert!(shared_note(3, "Bravo").starts_with("All 3 groups are mostly Bravo."));
+        assert!(shared_note(3, "Bravo").starts_with("All 3 clusters are mostly Bravo."));
     }
 
     #[test]

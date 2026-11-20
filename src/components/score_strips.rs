@@ -193,9 +193,9 @@ fn hover_text(strips: &ScoreStrips, r: usize, i: usize) -> Option<(String, Strin
         (ScoreRowKind::Component, None) => format!("{}: not analysed yet", row.label),
         (ScoreRowKind::Groups, Some(g)) => strips.group_names.get(g as usize)?.clone(),
         (ScoreRowKind::Groups, None) if strips.quiet.get(i) == Some(&true) => {
-            "Quiet: not grouped".to_string()
+            "Quiet: not clustered".to_string()
         }
-        (ScoreRowKind::Groups, None) => format!("{}: not grouped yet", row.label),
+        (ScoreRowKind::Groups, None) => format!("{}: not clustered yet", row.label),
     };
     Some((line, window))
 }

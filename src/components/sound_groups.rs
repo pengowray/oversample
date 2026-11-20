@@ -199,7 +199,7 @@ pub fn row(
     let names = hints(run, &sg::group_tops(&g, run))
         .iter()
         .enumerate()
-        .map(|(i, hint)| format!("Group {}: {hint}", i + 1))
+        .map(|(i, hint)| format!("Cluster {}: {hint}", i + 1))
         .collect();
     // The grouping and the quiet flags are in the embeddings' order, the
     // order the windows arrived; the row is in time order.
@@ -222,7 +222,7 @@ pub fn row(
     Some((
         ScoreRow {
             kind: ScoreRowKind::Groups,
-            label: "Sound groups".to_string(),
+            label: "Sound clusters".to_string(),
             scientific: String::new(),
             unlikely: false,
             colour: None,
@@ -487,9 +487,9 @@ fn windows_text(n: usize) -> String {
 /// "9 quiet windows are not grouped".
 fn quiet_text(n: usize) -> String {
     if n == 1 {
-        "1 quiet window is not grouped".to_string()
+        "1 quiet window is not clustered".to_string()
     } else {
-        format!("{n} quiet windows are not grouped")
+        format!("{n} quiet windows are not clustered")
     }
 }
 
@@ -516,7 +516,7 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                     .filter(|(w, _)| flags.get(w.slot as usize) == Some(&true))
                     .map(|(_, (s, e))| e - s)
                     .sum();
-                format!("{} of quiet audio is not grouped", time_amount(secs))
+                format!("{} of quiet audio is not clustered", time_amount(secs))
             } else {
                 quiet_text(quiet)
             };
@@ -530,12 +530,12 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
             let short = run.complete && windows > 0 && kept < k + 1;
             let text = if quiet > 0 {
                 format!(
-                    "{k} groups need at least {} windows with sound. This file has {kept}.",
+                    "{k} clusters need at least {} windows with sound. This file has {kept}.",
                     k + 1
                 )
             } else {
                 format!(
-                    "{k} groups need at least {} windows. This file has {}.",
+                    "{k} clusters need at least {} windows. This file has {}.",
                     k + 1,
                     windows_text(windows)
                 )
@@ -581,7 +581,7 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                                 class="map-key sound-groups-swatch"
                                 style:background=GROUP_COLOURS[i.min(GROUP_COLOURS.len() - 1)]
                             ></span>
-                            {format!("Group {}", i + 1)}
+                            {format!("Cluster {}", i + 1)}
                             <div class="sound-groups-hint">{hint}</div>
                         </td>
                         <td class="detection-col-num">{size}</td>
