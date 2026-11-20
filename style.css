@@ -780,7 +780,13 @@ body.sidebar-resizing {
     vertical-align: -2px;
 }
 
+/* A 24 px square, so the × is easy to tap on a phone. */
 .strip-remove-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    min-height: 24px;
     font-size: 14px;
     line-height: 16px;
     padding: 0 4px;
@@ -7653,6 +7659,12 @@ button.toolbar-overflow-btn {
     font-style: italic;
 }
 
+/* "Clear filters": 24 px tall, like Load, so it is easy to tap. */
+.find-empty .xc-btn {
+    min-height: 24px;
+    font-style: normal;
+}
+
 .find-more {
     display: block;
     margin: 8px auto;
@@ -7936,8 +7948,13 @@ button.toolbar-overflow-btn {
         display: inline;
     }
 
+    /* Six columns: four for date, length, rate and quality, a 1fr column
+       for the source, and one for preview and Load. The species and place
+       lines span the 1fr column too, so a long place name wraps instead of
+       widening the four data columns (which spread one row's data line
+       apart from the others'). */
     .find-rec-row, .find-rec-row.with-species {
-        grid-template-columns: repeat(4, auto) 1fr;
+        grid-template-columns: repeat(4, auto) 1fr auto;
         justify-content: start;
     }
 
@@ -7948,6 +7965,12 @@ button.toolbar-overflow-btn {
 
     .find-rec-row .find-rec-place-cell {
         grid-column: 1 / -2;
+    }
+
+    /* The data line starts on a line of its own, under the place, also when
+       the species takes the first line. */
+    .find-rec-row .find-rec-date {
+        grid-column: 1;
     }
 
     .find-rec-row .find-rec-actions {

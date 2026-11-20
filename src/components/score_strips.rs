@@ -59,6 +59,15 @@ pub fn birdnet_components() -> Option<Arc<Components>> {
 /// Widest the hover tip gets, in CSS pixels.
 const TIP_W: f64 = 240.0;
 
+/// Where the hover tip goes, in CSS pixels from the spectrogram box's edges:
+/// its left side at `Left(x)`, or its right side at `Right(x)` from the box's
+/// right edge.
+#[derive(Clone, Copy, PartialEq)]
+enum TipAt {
+    Left(f64),
+    Right(f64),
+}
+
 /// The rows for the current file. Reactive.
 fn build(state: AppState) -> Option<ScoreStrips> {
     if state.timeline.active().with(|t| t.is_some()) {
@@ -171,8 +180,8 @@ pub fn ScoreStripsRow() -> impl IntoView {
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
     let strips = Memo::new(move |_| build(state));
     let row_count = move || strips.with(|s| s.as_ref().map_or(0, |s| s.rows.len()));
-    // Hover: x in the row's pixels, and the two lines of text.
-    let hover: RwSignal<Option<(f64, String, String)>> = RwSignal::new(None);
+    // Hover: where the tip goes, and the two lines of text.
+    let hover: RwSignal<Option<(TipAt, String, String)>> = RwSignal::new(None);
     let size_tick = RwSignal::new(0u32);
 
     // Seconds per CSS pixel of the spectrogram, and its left edge in seconds.
@@ -274,21 +283,43 @@ pub fn ScoreStripsRow() -> impl IntoView {
     };
     // The tip sits under the rows, at the pointer, inside the spectrogram's
     // box (whose `overflow: hidden` would cut it off at the right edge).
+    // Near the right edge its right side is at the pointer instead, so a
+    // short tip stays beside the pointer.
     let show_hover = move |ev: &web_sys::PointerEvent| {
-        let left = || -> Option<f64> {
+        let at = || -> Option<TipAt> {
             let canvas = canvas_ref.get_untracked()?;
             let canvas: &HtmlCanvasElement = canvas.as_ref();
             let host = canvas.closest(".spectrogram-container").ok()??;
             let r = host.get_bounding_client_rect();
-            let x = ev.client_x() as f64 - r.left();
-            Some(x.min(r.width() - TIP_W).max(0.0))
+            let x = (ev.client_x() as f64 - r.left()).max(0.0);
+            Some(if x + TIP_W <= r.width() {
+                TipAt::Left(x)
+            } else {
+                // Never so far right that a full-width tip passes the left edge.
+                TipAt::Right((r.width() - x).min(r.width() - TIP_W).max(0.0))
+            })
         };
         let text = cell_at(ev).and_then(|(_, r, i)| {
             let (a, b) = strips.with_untracked(|s| s.as_ref().and_then(|s| hover_text(s, r, i)))?;
-            Some((left()?, a, b))
+            Some((at()?, a, b))
         });
         hover.set(text);
     };
+    // A tap has no hover: the browser sends pointerleave as the finger
+    // lifts, which would hide the tip at once. After a tap the tip stays
+    // until the next tap or click somewhere else.
+    let outside_tap = window_event_listener(leptos::ev::pointerdown, move |ev| {
+        let on_rows = canvas_ref.get_untracked().is_some_and(|c| {
+            let c: &web_sys::Node = c.as_ref();
+            ev.target()
+                .and_then(|t| t.dyn_into::<web_sys::Node>().ok())
+                .is_some_and(|t| c.contains(Some(&t)))
+        });
+        if !on_rows {
+            hover.try_set(None);
+        }
+    });
+    on_cleanup(move || outside_tap.remove());
 
     view! {
         <div
@@ -301,7 +332,11 @@ pub fn ScoreStripsRow() -> impl IntoView {
                 <canvas
                     node_ref=canvas_ref
                     on:pointermove=move |ev| show_hover(&ev)
-                    on:pointerleave=move |_| hover.set(None)
+                    on:pointerleave=move |ev: web_sys::PointerEvent| {
+                        if ev.pointer_type() != "touch" {
+                            hover.set(None);
+                        }
+                    }
                     on:pointerdown=move |ev: web_sys::PointerEvent| {
                         // A click (or tap) picks the window, as in the lists.
                         if let Some((_, _, i)) = cell_at(&ev) {
@@ -312,11 +347,18 @@ pub fn ScoreStripsRow() -> impl IntoView {
                 />
             </div>
         </div>
-        {move || hover.get().filter(|_| row_count() > 0).map(|(x, a, b)| view! {
+        {move || hover.get().filter(|_| row_count() > 0).map(|(at, a, b)| view! {
             <div
                 class="score-strips-tip"
                 style:top=format!("{}px", row_count() as f64 * SCORE_ROW_H + 2.0)
-                style:left=format!("{x:.0}px")
+                style:left=match at {
+                    TipAt::Left(x) => format!("{x:.0}px"),
+                    TipAt::Right(_) => "auto".to_string(),
+                }
+                style:right=match at {
+                    TipAt::Left(_) => "auto".to_string(),
+                    TipAt::Right(x) => format!("{x:.0}px"),
+                }
                 style:max-width=format!("{TIP_W}px")
             >
                 <div>{a}</div>
