@@ -1938,25 +1938,26 @@ pub struct DriveState {
     /// Goes up by one each time a project arrives from Drive, so that an
     /// open project list loads again.
     pub projects_changed: u32,
-    /// Sign-in goes through the desktop app's own browser flow, not the
-    /// web pop-up (the wording of the sign-in lines differs).
-    pub desktop: bool,
+    /// Drive copies are off here (the desktop and Android apps for now):
+    /// once signed in, only the read-only check runs.
+    pub check_only: bool,
     /// The sign-in is kept after the app closes. False on a desktop with no
     /// credential store.
     pub persistent: bool,
     /// How the last desktop sign-in ended without signing in (cleared at
     /// the next attempt).
     pub sign_in_problem: Option<DriveSignInProblem>,
-    /// Desktop, while copies are switched off there: what the read-only
-    /// check of the account's Drive found.
-    pub desktop_check: Option<DesktopDriveCheck>,
+    /// While copies are off (`check_only`): what the read-only check of
+    /// the account's Drive found.
+    pub read_only_check: Option<DriveCheck>,
 }
 
-/// What the desktop app's read-only check of Google Drive found: whether
-/// this desktop client can see the "Oversample" folder and the files the
-/// web app made (all under `drive.file`).
+/// What the read-only check of Google Drive found (desktop and Android apps,
+/// while they make no copies): whether this app's client can see the
+/// "Oversample" folder and the files the web app made (all under
+/// `drive.file`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DesktopDriveCheck {
+pub enum DriveCheck {
     Checking,
     Found { annotations: usize, projects: usize },
     NotFound,

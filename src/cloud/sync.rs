@@ -237,7 +237,7 @@ fn app_state() -> Option<AppState> {
 
 /// Whether Drive copies are made here. Off in the desktop and Android apps
 /// until the account-home model lands: there, sign-in works and a read-only check of
-/// the account's Drive runs (`desktop_check`), but nothing is compared,
+/// the account's Drive runs (`read_only_check`), but nothing is compared,
 /// uploaded, downloaded or created.
 fn copies_enabled() -> bool {
     google_auth::provider() == google_auth::Provider::Web
@@ -734,7 +734,7 @@ pub fn init(state: AppState) {
         google_auth::Provider::Desktop
     };
     google_auth::set_provider(provider);
-    state.drive.desktop().set(provider.is_native());
+    state.drive.check_only().set(!copies_enabled());
     with(|s| {
         s.state = Some(state);
         s.version = Some(ArcRwSignal::new(0));
@@ -886,7 +886,7 @@ async fn start_session() {
     google_auth::remember_account(&email);
     if !copies_enabled() {
         state.drive.email().set(Some(email));
-        desktop_check(gen).await;
+        read_only_check(gen).await;
         return;
     }
     if !store::account_id_is_safe(&account_id) {
@@ -1074,26 +1074,26 @@ fn switch_open_files(state: AppState) {
     });
 }
 
-/// Desktop: look, read-only, for the "Oversample" folder and the app's
-/// files that this desktop client can see, and show the result. Creates and
-/// changes nothing.
-async fn desktop_check(gen: u64) {
-    use crate::state::DesktopDriveCheck;
+/// Desktop and Android, while they make no copies: look, read-only, for the
+/// "Oversample" folder and the app's files that this client can see, and
+/// show the result. Creates and changes nothing.
+async fn read_only_check(gen: u64) {
+    use crate::state::DriveCheck;
     let Some(state) = app_state() else {
         return;
     };
     state
         .drive
-        .desktop_check()
-        .set(Some(DesktopDriveCheck::Checking));
+        .read_only_check()
+        .set(Some(DriveCheck::Checking));
     let result = async {
         let folders = drive::find_folders("root").await?;
         if folders.is_empty() {
-            return Ok::<_, DriveError>(DesktopDriveCheck::NotFound);
+            return Ok::<_, DriveError>(DriveCheck::NotFound);
         }
         let annotations = drive::files_of_kind(BATM).await?.len();
         let projects = drive::files_of_kind(BATPROJ).await?.len();
-        Ok(DesktopDriveCheck::Found {
+        Ok(DriveCheck::Found {
             annotations,
             projects,
         })
@@ -1103,14 +1103,14 @@ async fn desktop_check(gen: u64) {
         return;
     }
     match result {
-        Ok(check) => state.drive.desktop_check().set(Some(check)),
+        Ok(check) => state.drive.read_only_check().set(Some(check)),
         Err(DriveError::SignedOut) => end_session(),
         Err(e) => {
             log::warn!("Google Drive check: {e:?}");
             state
                 .drive
-                .desktop_check()
-                .set(Some(DesktopDriveCheck::Failed));
+                .read_only_check()
+                .set(Some(DriveCheck::Failed));
         }
     }
 }
@@ -1188,7 +1188,7 @@ pub fn retry() {
     }
     if !copies_enabled() {
         let gen = generation();
-        wasm_bindgen_futures::spawn_local(desktop_check(gen));
+        wasm_bindgen_futures::spawn_local(read_only_check(gen));
         return;
     }
     set_problem(None);

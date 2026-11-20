@@ -6,7 +6,7 @@
 use crate::cloud::google_auth::{self, Provider};
 use crate::cloud::sync;
 use crate::state::store_fields::*;
-use crate::state::{AppState, DesktopDriveCheck, DriveProblem, DriveSignInProblem};
+use crate::state::{AppState, DriveCheck, DriveProblem, DriveSignInProblem};
 use leptos::prelude::*;
 
 const SIGNED_OUT_NOTE: &str = "Sign in to keep copies of your annotations and projects in an \"Oversample\" folder in your Google Drive.";
@@ -49,10 +49,10 @@ fn count(n: usize, one: &str, many: &str) -> String {
 }
 
 /// The result of the desktop or Android app's read-only check of Google Drive.
-fn check_text(c: DesktopDriveCheck) -> String {
+fn check_text(c: DriveCheck) -> String {
     match c {
-        DesktopDriveCheck::Checking => CHECK_RUNNING.to_string(),
-        DesktopDriveCheck::Found {
+        DriveCheck::Checking => CHECK_RUNNING.to_string(),
+        DriveCheck::Found {
             annotations,
             projects,
         } => format!(
@@ -60,8 +60,8 @@ fn check_text(c: DesktopDriveCheck) -> String {
             count(annotations, "annotation file", "annotation files"),
             count(projects, "project", "projects")
         ),
-        DesktopDriveCheck::NotFound => check_not_found_text().to_string(),
-        DesktopDriveCheck::Failed => CHECK_FAILED.to_string(),
+        DriveCheck::NotFound => check_not_found_text().to_string(),
+        DriveCheck::Failed => CHECK_FAILED.to_string(),
     }
 }
 
@@ -121,10 +121,10 @@ pub(super) fn DriveSettings() -> impl IntoView {
     let signed_out = move || {
         let signing_in = state.drive.signing_in().get();
         // While the Google window is open, its line replaces the description.
-        let desktop = state.drive.desktop().get();
+        let native = google_auth::provider().is_native();
         let note = if signing_in {
             // Android: Google's screen opens over the app, like the web pop-up.
-            let text = if desktop && !android() {
+            let text = if google_auth::provider() == Provider::Desktop {
                 SIGNING_IN_NOTE_DESKTOP
             } else {
                 SIGNING_IN_NOTE
@@ -144,7 +144,7 @@ pub(super) fn DriveSettings() -> impl IntoView {
                     on:click=move |_| sync::sign_in(state)
                 >{if signing_in { "Signing in\u{2026}" } else { "Sign in with Google" }}</button>
                 // Desktop and Android: a sign-in that is still waiting can be stopped.
-                {(signing_in && desktop).then(|| view! {
+                {(signing_in && native).then(|| view! {
                     <button
                         class="setting-button drive-button"
                         on:click=move |_| sync::cancel_sign_in()
@@ -230,12 +230,12 @@ pub(super) fn DriveSettings() -> impl IntoView {
             {move || (!state.drive.persistent().get()).then(|| view! {
                 <div class="drive-note">{NOT_KEPT}</div>
             })}
-            {move || if state.drive.desktop().get() {
-                // Desktop: no copies yet; the read-only check's result.
-                let check = state.drive.desktop_check().get();
+            {move || if state.drive.check_only().get() {
+                // No copies here yet: the read-only check's result.
+                let check = state.drive.read_only_check().get();
                 view! {
                     {check.map(|c| {
-                        let class = if c == DesktopDriveCheck::Failed {
+                        let class = if c == DriveCheck::Failed {
                             "drive-note drive-warning"
                         } else {
                             "drive-note"
@@ -244,7 +244,7 @@ pub(super) fn DriveSettings() -> impl IntoView {
                     })}
                     <div class="drive-note">{not_saving_text()}</div>
                     <div class="setting-row">
-                        {(check == Some(DesktopDriveCheck::Failed)).then(|| view! {
+                        {(check == Some(DriveCheck::Failed)).then(|| view! {
                             <button
                                 class="setting-button drive-button"
                                 on:click=move |_| sync::retry()
