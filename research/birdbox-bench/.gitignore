@@ -1,0 +1,10 @@
+# Model files (AGPL-3.0 weights; fetched from the BirdBox release, never committed),
+# audio, raw tensors and build output stay outside the repository.
+*.onnx
+*.tflite
+*.pt
+*.wav
+*.flac
+*.f32
+/target/
+/pkg*/

@@ -1,6 +1,6 @@
 # BirdNET on the device: feasibility
 
-Status: research, 2026-11-11; [BirdNET+ V3.0](#birdnet-v30) section 2026-11-21.
+Status: research, 2026-11-11; [BirdNET+ V3.0](#birdnet-v30) and [BirdBox Just-Bird](#birdbox-just-bird-bird-sound-boxes) sections 2026-11-21.
 
 ## Recommendation
 
@@ -362,6 +362,37 @@ V2.4 is the fast option.
   v3.0.4 file the app already uses (scores within 6e-7). V3.0's classes join to it by
   `birdnet_id` (10,926 of 11,709 animal classes) or to the app's v3.0.4 labels by
   scientific name (10,874).
+
+## BirdBox Just-Bird (bird sound boxes)
+
+Tested 2026-11-21; details, commands, pictures and the integration plan are in
+[birdbox-bench/README.md](birdbox-bench/README.md). Just-Bird (BirdBox v2.1.0, BirdNET
+Team) is a YOLO11s detector that draws a box in time and frequency around each bird
+sound, with no species. The app would pair each box with BirdNET+ V3.0 for a species.
+
+- **The release file is the bare network:** `Just-Bird_fp16.onnx`, 18.9 MB, a 3 x 256 x 256
+  spectrogram image in, 1,344 decoded boxes with a `bird` score out. The spectrogram,
+  NMS and window fusion are outside it. BirdBox's all-in-one graph (audio in, merged
+  boxes out) is a different file, the demo's `docs/models/Just-Bird_fp16.onnx` (21.2 MB),
+  with the same network weights.
+- **tract:** runs the release file after the in-memory float16-to-float32 change used for
+  V3.0, and matches onnxruntime to 0.00004 in score. The int8 file gives wrong output in
+  tract 0.23.10; use the float16 one.
+- **Same boxes:** the spectrogram image, NMS and window fusion, ported to Rust from
+  BirdBox's MIT code, give the same boxes as BirdBox's CLI: 239 of 239 merged boxes on 8
+  recordings (11 minutes) matched at IoU 0.75, mean IoU 0.997, confidence within 0.0007.
+- **Speed:** 172 to 176 ms per 3 s window in tract WASM in node, a window every 1.5 s, so
+  about 8 times faster than real time (measured on a quiet machine); 23 times natively.
+  122 MB of WASM memory. Per second of audio about the same cost as V3.0.
+- **Fetching:** the GitHub release URL sends no CORS headers. The demo graph at the tag on
+  `raw.githubusercontent.com` does, and the worker can cut the network out of it in
+  memory (tested: the same boxes), so no mirror is needed. A Hugging Face mirror of the
+  release file is the other way.
+- **Licence:** weights AGPL-3.0, code MIT. Download the unmodified file at run time and
+  credit it; a mirror must carry the AGPL text and point to the source.
+- **What the boxes look like:** tight boxes on single calls in soundscapes; a steady song
+  becomes one long box (up to 16 s); some faint calls are missed; voices get false boxes
+  at low confidence (a minimum of 0.3 removes most). No boxes on a bat recording.
 
 ## 5. Licence
 
