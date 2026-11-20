@@ -424,7 +424,7 @@ const PERCH_CITATION: &str =
 
 const BIRDNET_V3_CREDITS: &[&str] = &[
     "BirdNET+ V3.0 was developed by the BirdNET team.",
-    "Oversample downloads the team's pruned float16 model file, version 3.0.1, from Zenodo (zenodo.org/records/24362980) and uses it unchanged.",
+    "Oversample downloads the team's pruned float16 model file, version 3.0.1, unchanged from Zenodo (zenodo.org/records/24362980), and converts it to float32 on this device.",
     "The model's acceptable use policy is published in the same Zenodo record.",
     GEOMODEL_CREDIT,
 ];

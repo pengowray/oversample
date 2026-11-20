@@ -3,7 +3,9 @@
 Spike for adding BirdNET+ V3.0 to Oversample as a fourth classifier, next to BirdNET
 V2.4 (which stays). The spike asked four questions: can tract run V3.0, how fast, how
 big is the download, and do the scores match the reference. Nothing here is part of the
-app build: this folder has its own `[workspace]`. Done 2026-11-20 and 21.
+app build: this folder has its own `[workspace]`. Done 2026-11-20 and 21. The one
+exception is `birdnet-v3-labels.tsv` (made by `labels.py`), which `index.html` ships
+with the app as BirdNET+ V3.0's labels.
 
 ## Answer
 
