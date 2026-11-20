@@ -85,11 +85,13 @@ thread_local! {
 const RUN_GAP_MS: f64 = 1000.0;
 
 /// A cheap check that the embeddings are the ones a cache entry was made
-/// from: a hash of the first window's values. A rerun on the same file with
-/// the same method gives the same embeddings, so this only changes when the
-/// audio or the model does.
-fn fingerprint(embeddings: &[f32], len: usize) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+/// from: a hash of the first window's values and the run's step between
+/// window starts. A rerun on the same file with the same method and step
+/// gives the same embeddings in the same order, so this only changes when
+/// the audio, the model or the step does. (Runs with different steps share
+/// their first windows, but not the order of the windows after them.)
+fn fingerprint(embeddings: &[f32], len: usize, step_secs: f64) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ step_secs.to_bits();
     for v in embeddings.iter().take(len) {
         h ^= u64::from(v.to_bits());
         h = h.wrapping_mul(0x0100_0000_01b3);
@@ -104,10 +106,19 @@ fn now_ms() -> f64 {
 /// Windows with embeddings for `key`, and their fingerprint. Reactive.
 fn embedded(state: AppState, key: Key) -> (usize, u64) {
     let len = key.1.embedding_len();
+    let step = step_of(state, key);
     state.classifier.embeddings().with(|m| {
         m.get(&key)
-            .map_or((0, 0), |e| (e.len() / len, fingerprint(e, len)))
+            .map_or((0, 0), |e| (e.len() / len, fingerprint(e, len, step)))
     })
+}
+
+/// The step between window starts the run for `key` asked for. Reactive.
+fn step_of(state: AppState, key: Key) -> f64 {
+    state
+        .classifier
+        .results()
+        .with(|m| m.get(&key).map_or(0.0, |r| r.step_secs))
 }
 
 /// The current state of the sound groups of one file and method.
@@ -346,6 +357,7 @@ fn compute(state: AppState, key: Key, k: usize, measure_levels: bool, done: ArcT
             })
         });
         let len = key.1.embedding_len();
+        let step = untrack(|| step_of(state, key));
         let started = state.classifier.embeddings().with_untracked(|m| {
             m.get(&key).map(|e| {
                 let w = e.len() / len;
@@ -355,7 +367,7 @@ fn compute(state: AppState, key: Key, k: usize, measure_levels: bool, done: ArcT
                 };
                 quiet.resize(w, false);
                 let reducer = sg::Reducer::new(&e[..w * len], len, &quiet);
-                (w, fingerprint(e, len), quiet, reducer)
+                (w, fingerprint(e, len, step), quiet, reducer)
             })
         });
         if let Some((windows, first, quiet, mut reducer)) = started {

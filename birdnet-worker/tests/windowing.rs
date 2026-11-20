@@ -212,3 +212,35 @@ fn filled_in_windows_hold_the_audio_at_their_start() {
         assert!((first as f64 - start).abs() < 1e-3, "{start}: {first}");
     }
 }
+
+/// The windows end to end, against the rule written out: `floor(d / w)`
+/// whole windows at `k * w`, then a last one ending at the end of the file
+/// when it holds at least a third of a window or is the only one.
+#[test]
+fn windows_end_to_end_follow_the_written_rule() {
+    for (method, rate) in [
+        (Method::BirdNet, 44_100),
+        (Method::BirdNet, 48_000),
+        (Method::BirdNet, 22_050),
+        (Method::Perch, 44_100),
+        (Method::BirdNetV3, 96_000),
+    ] {
+        let w = method.window_secs();
+        // Durations clear of the boundaries, where the resampler's last few
+        // samples could tip the rule either way.
+        for d in [0.4, 1.3, 2.9, 4.1, 5.8, 7.7, 10.5, 13.2, 26.6] {
+            let full = (d / w).floor() as usize;
+            let tail = d - full as f64 * w;
+            let n = full + usize::from(full == 0 || tail >= w / 3.0);
+            let p = passes(method, rate, d, w);
+            assert_eq!(p.len(), 1);
+            let got = &p[0];
+            assert_eq!(got.len(), n, "{method:?} {rate} Hz {d} s");
+            for (k, win) in got.iter().enumerate() {
+                assert_eq!(win.0, k as f64 * w);
+                let end = if k < full { (k + 1) as f64 * w } else { d };
+                assert!((win.1 - end).abs() < 1e-3, "{method:?} {d} s window {k}");
+            }
+        }
+    }
+}

@@ -683,16 +683,17 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     // The method and region are picked just above, so the title names the
     // region only while the results are for another one (a relabel is going
     // or failed).
-    // For the methods with a Step, the title gives the step between window
-    // starts that the shown results have, since the Step above can differ
-    // and a run stopped part way can have a longer one.
+    // For results of a run that asked for a step shorter than the window,
+    // the title gives the step the shown results have, since the Step above
+    // can differ and a run stopped part way can have a longer one. Results
+    // with the windows end to end keep the plain title.
     let results_title = Memo::new(move |_| {
         let picked = bat_scope.get();
         let info = results_info.get();
         match info.as_ref().and_then(|r| r.region) {
             Some(r) if r != picked => format!("Results for {}", r.label()),
             _ => match info {
-                Some(r) if !summary::step_choices(method).is_empty() => {
+                Some(r) if r.step_secs < r.window_secs => {
                     format!("Results ({} step)", summary::step_text(r.spacing_secs))
                 }
                 _ => "Results".to_string(),

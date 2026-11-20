@@ -375,18 +375,6 @@ pub fn embedding(embeddings: &[f32], method: Method, slot: usize) -> Option<&[f3
     embeddings.get(slot * len..(slot + 1) * len)
 }
 
-/// For each slot of a run's embeddings (the order the windows arrived), the
-/// window's place in [`ClassifierRun::windows`].
-pub fn place_of_slot(run: &ClassifierRun) -> Vec<Option<usize>> {
-    let mut out = vec![None; run.windows.len()];
-    for (i, w) in run.windows.iter().enumerate() {
-        if let Some(p) = out.get_mut(w.slot as usize) {
-            *p = Some(i);
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -525,10 +513,10 @@ mod tests {
             .unwrap()
             .iter()
             .all(|&v| v == 0.0));
-        let places = place_of_slot(&r);
-        for (i, w) in r.windows.iter().enumerate() {
-            assert_eq!(places[w.slot as usize], Some(i));
-        }
+        // Every slot belongs to exactly one window.
+        let mut slots: Vec<u32> = r.windows.iter().map(|w| w.slot).collect();
+        slots.sort_unstable();
+        assert_eq!(slots, (0..r.windows.len() as u32).collect::<Vec<_>>());
         assert_tiled(&r.cells());
     }
 
