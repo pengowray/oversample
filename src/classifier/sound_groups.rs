@@ -690,6 +690,42 @@ mod tests {
         );
     }
 
+    /// Prints the groups for embeddings dumped as raw f32 little-endian:
+    /// `SG_EMB=path SG_DIM=1024 SG_QUIET=3,12`. Writes the reduced points
+    /// beside it as `path.reduced.f32`.
+    #[test]
+    #[ignore = "measurement; needs SG_EMB"]
+    fn group_raw_file() {
+        let path = std::env::var("SG_EMB").unwrap();
+        let dim: usize = std::env::var("SG_DIM").map_or(1024, |v| v.parse().unwrap());
+        let bytes = std::fs::read(&path).unwrap();
+        let e: Vec<f32> = bytes
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+        let n = e.len() / dim;
+        let mut quiet = vec![false; n];
+        for i in std::env::var("SG_QUIET")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|v| v.parse::<usize>().ok())
+        {
+            quiet[i] = true;
+        }
+        let r = reduce(&e, dim, &quiet);
+        let out: Vec<u8> = r.points.iter().flat_map(|v| v.to_le_bytes()).collect();
+        std::fs::write(format!("{path}.reduced.f32"), out).unwrap();
+        for k in GROUP_CHOICES {
+            let g = group(&r, k).unwrap();
+            let s: String = g
+                .of_window
+                .iter()
+                .map(|x| x.map_or('.', |v| char::from(b'1' + v)))
+                .collect();
+            println!("k={k} {s} {:?}", g.sizes);
+        }
+    }
+
     #[test]
     #[ignore = "timing; run with --release -- --ignored --nocapture"]
     fn time_an_hour_of_birdnet() {
