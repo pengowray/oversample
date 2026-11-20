@@ -10,15 +10,16 @@ app build: this folder has its own `[workspace]`. Done 2026-11-20 and 21.
 - **tract runs all three V3.0 files.** It needs three small changes to the ONNX graph,
   which [`patch_proto`](src/lib.rs) makes in memory before tract builds the model. With
   them, the official float16 files from Zenodo load unchanged, compute in float32, and
-  match onnxruntime to 0.0001 in score.
+  match onnxruntime to 0.0002 in score.
 - **Recommended:** the pruned file, `BirdNET+_V3.0_Global_12K_FP16_pruned.onnx` (72.3 MB,
   11,725 classes), downloaded as published and patched in the worker. It gives the same
   1,280-value embedding as the full model, needs 373 MB of WASM memory against 970 MB, and
   is about 15 percent faster in WASM.
 - **Cost:** about 355 to 380 ms per 3 s window in tract WASM in node on a quiet machine
   (estimated from a measured 382 to 408 ms under load), about 8 times faster than real
-  time. That is about 5 times BirdNET V2.4 per window and 1.8 times Perch's embedding
-  model.
+  time. Measured in the same sessions, that is 2.1 to 2.3 times the app's BirdNET V2.4
+  file per window (which also ran slow there), about 5 times the 64 to 74 ms recorded
+  earlier for V2.4's `foldconv` file, and about 1.8 times Perch's embedding model.
 - **Quality:** on 18 test windows the pruned file's scores were up to 0.16 lower than the
   full model's. Its top class matched on 17 of 18 windows, and the set of classes at 0.25
   or more matched on 17 of 18. On digital silence (all zeros) it scores 0.25 for Green-billed
@@ -80,7 +81,8 @@ From [inventory.py](inventory.py):
   the float16 files. The full model adds MaxPool, Relu, Softmax and ReduceSum for its two
   attention heads.
 - There is no STFT or DFT operator. The spectrogram is MatMuls with stored DFT matrices
-  (a two-stage 32 x 64 factorisation of the 2,048-point FFT), a 1,025 x 128 mel MatMul,
+  (32 x 32 and 64 x 64 matrices, probably a two-stage factorisation of the 2,048-point
+  FFT), a 1,025 x 128 mel MatMul,
   a log, and a linear Resize (`pytorch_half_pixel`) to 224 bands.
 - Dynamic dimensions: only batch and sample count. Fixing the input at `[1, 96000]` is
   enough for tract; onnx-simplifier is not needed.
@@ -120,9 +122,9 @@ input fact `[1, 96000]`).
 
 | # | What happened | Cause | Fix |
 |---|---|---|---|
-| 1 | Every file, the float32 one included, loads, then fails on the first window: `Evaluating "node_sigmoid_30" Sigmoid: Sigmoid does not support F64` | The head starts from `ConstantOfShape` with no `value` attribute (`new_zeros` in PyTorch). ONNX says that means float32 zeros; tract 0.23 makes float64 zeros, and the Adds after it turn the scores into float64. | Give the node an explicit float32 zero. onnx-simplifier with a fixed input also fixes it, by folding the node away. |
-| 2 | With fix 1 only, the float16 files run, but at 22.8 s per window natively (tract computes the float16 convolutions without SIMD on x86), with scores up to 0.023 away from onnxruntime | The Cast(to=float16) nodes | Change them to Cast(to=float32) |
-| 3 | Keeping the weights float16 in the file behind a Cast(to=float32) node (`convert.py --weights fp16`) gives correct scores, but runs at 368 to 407 ms per window natively against 173 to 184 ms | tract keeps the Cast in the plan and converts the weights on every run | Convert the weights to float32 before tract builds the model |
+| 1 | The official float16 files, and a float32 copy of the pruned file made without this fix, load, then fail on the first window (the official FP32 file has the same node and was only run with the fix): `Evaluating "node_sigmoid_30" Sigmoid: Sigmoid does not support F64` | The head starts from `ConstantOfShape` with no `value` attribute (`new_zeros` in PyTorch). ONNX says that means float32 zeros; tract 0.23 makes float64 zeros, and the Adds after it turn the scores into float64. | Give the node an explicit float32 zero. onnx-simplifier with a fixed input also fixes it, by folding the node away. |
+| 2 | With fix 1 only, the float16 files run, but at 22.8 s per window natively (probably because tract has no fast float16 convolution on x86), with scores up to 0.023 away from onnxruntime | The Cast(to=float16) nodes | Change them to Cast(to=float32) |
+| 3 | Keeping the weights float16 in the file behind a Cast(to=float32) node (`convert.py --weights fp16`) gives correct scores, but runs at 368 to 407 ms per window natively against 173 to 184 ms | Probably tract keeps the Cast in the plan and converts the weights on every run (peak memory was lower, 388 against 433 MB) | Convert the weights to float32 before tract builds the model |
 
 [`patch_proto`](src/lib.rs) does all three in memory: it reads the file with
 `tract_onnx::onnx().proto_model_for_read`, turns float16 initializers into float32,
@@ -154,8 +156,8 @@ file gives the same difference from FP32.
 
 Times are per 3 s window, one thread, on the Ryzen 5 3600 used for the earlier BirdNET and
 Perch notes. **The machine was busy** (load average 8 to 14 on 12 threads, from other
-sessions' builds), so every run was repeated over three sessions, taking turns with
-reference models: [results/bench-session1.txt](results/bench-session1.txt),
+sessions' builds), so the runs were repeated, taking turns with reference models: the
+pruned file in three sessions, the full file and the backbone cut in two: [results/bench-session1.txt](results/bench-session1.txt),
 [2](results/bench-session2.txt), [3](results/bench-session3.txt).
 
 | Option | Download (as the app would fetch it) | Classes | tract native, measured | tract WASM in node, measured | WASM memory | Scores against the full model |
@@ -183,9 +185,12 @@ estimate. Scaling by Perch's slowdown (estimates, not measurements):
 | (a) Pruned | about 110 to 120 ms | about 355 to 380 ms | about 320 to 345 ms | about 8 times |
 | (c) Full | about 145 to 150 ms | about 420 to 445 ms | about 380 to 400 ms | about 7 times |
 
-For comparison: BirdNET V2.4 in the browser takes 64 to 74 ms per 3 s window, and Perch
-0.39 to 0.42 s per 5 s window (both files). Per second of audio, V3.0 (a) costs about
-110 to 125 ms, Perch about 80 ms and V2.4 about 23 ms.
+For comparison, from the earlier browser tests: BirdNET V2.4 (the `foldconv` file)
+takes 64 to 74 ms per 3 s window, and Perch 0.39 to 0.42 s per 5 s window (both files).
+Per second of audio, V3.0 (a) costs about 110 to 125 ms, Perch about 80 ms and V2.4
+about 23 ms. The app's own V2.4 file (`birdnet-v2.4-embeddings-fp32.onnx`) has not
+been timed on a quiet machine; here it ran at 167 to 188 ms in WASM in sessions 2 and
+3, so V3.0 (a) took 2.1 to 2.3 times as long as it in the same sessions.
 
 Other measurements:
 
@@ -252,8 +257,11 @@ Silence and noise, highest class:
 
 - The -90 and -60 dBFS windows give nearly the same scores, so the model normalises the
   input level. Only exact zeros give the high pruned scores, which is what the BirdNET
-  README warns about. Skipping all-zero windows (or windows whose samples are all within
-  one LSB of zero) is enough.
+  README warns about. Partly zero windows were checked too (onnxruntime, pruned and
+  full): a Pauraque window with its last 2 s zeroed, 0.3 s of Pauraque or Gentoo
+  Penguin then zeros, and 0.3 s of -60 dBFS noise then zeros. None scored above 0.1.
+  So skipping windows that are entirely zero (or within one LSB of zero) should be
+  enough, including the zero-padded last window of a file.
 - No variant returned NaN on silence; release 3.0.1 fixed that.
 
 ## Labels
@@ -314,7 +322,9 @@ memory by the worker.
 
 **Hosting.** Zenodo's API file URLs
 (`https://zenodo.org/api/records/24362980/files/<name>/content`) send
-`Access-Control-Allow-Origin: *`, and a Zenodo record version never changes, so the app
+`Access-Control-Allow-Origin: *` (checked with a HEAD on the labels CSV and a ranged GET
+on the pruned ONNX file, which also answered 206 with the header), and a Zenodo record
+version never changes, so the app
 could fetch the pruned file directly. Downloads from Zenodo in this session ran at 30 KB/s
 to about 3 MB/s, and the API reports rate limits, so a Hugging Face mirror of the
 unchanged file (plus the trimmed label file) would be faster and match how the other

@@ -351,8 +351,9 @@ V2.4 is the fast option.
   model's on 18 test windows (top class the same on 17).
 - **Speed (estimated for a quiet machine from runs on a busy one):** about 355 to 380 ms
   per 3 s window in tract WASM in node, about 320 to 345 ms in a browser, so about 8
-  times faster than real time. That is about 5 times V2.4's 64 to 74 ms. Measured under
-  load: 382 to 408 ms in WASM, 128 to 157 ms natively.
+  times faster than real time. That is about 5 times the 64 to 74 ms measured for V2.4's
+  `foldconv` file. Measured under load: 382 to 408 ms in WASM, 128 to 157 ms natively,
+  2.1 to 2.3 times the app's own V2.4 file in the same sessions.
 - **Silence:** the pruned file scores up to 0.25 on digital silence (all zeros), so the
   app must skip all-zero windows. Low noise is fine.
 - **The BirdNET Live model** in the same record is the pruned network with 1,661 fewer
