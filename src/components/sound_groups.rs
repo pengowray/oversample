@@ -208,13 +208,7 @@ pub fn row(
 /// 15 kHz of its 48 kHz input; BattyBirdNET is BirdNET on audio slowed from
 /// 256 kHz, so its band is 256 / 48 times higher.
 fn band(method: Method) -> (f32, f32) {
-    match method {
-        Method::BirdNet | Method::Perch => (250.0, 15_000.0),
-        Method::Bats => {
-            let scale = method.model_rate() as f32 / 48_000.0;
-            (250.0 * scale, 15_000.0 * scale)
-        }
-    }
+    crate::classifier::quiet::model_band(method)
 }
 
 /// Samples read per piece when measuring levels.
