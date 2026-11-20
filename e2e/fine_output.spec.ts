@@ -121,3 +121,21 @@ test("TE and ZC: the handle changes the factor", async ({ page }) => {
   await expect(division).not.toHaveText(zcBefore!);
   await expect(division).toHaveText(/^÷\d+$/);
 });
+
+test("under XForm, the old picture stays up until the redrawn one arrives", async ({ page }) => {
+  await openSweep(page);
+  await openSection(page, "PS");
+  const freeze = page.locator(".spectrogram-container .fine-out-freeze");
+  const knob = (await page.locator(".fine-out-handle .fine-out-knob").first().boundingBox())!;
+  const x = knob.x + knob.width / 2;
+  await page.mouse.move(x, knob.y + 4);
+  await page.mouse.down();
+  // The first rest writes the factor with XForm just turned on; the second
+  // changes it again, which redraws the XForm picture.
+  await page.mouse.move(x, knob.y + 20, { steps: 4 });
+  await page.waitForTimeout(400);
+  await page.mouse.move(x, knob.y + 40, { steps: 4 });
+  await expect(freeze).toHaveCount(1);
+  await page.mouse.up();
+  await expect(freeze).toHaveCount(0, { timeout: 6_000 });
+});

@@ -342,7 +342,7 @@ fn freeze_spectrogram(state: &AppState) {
     // picture, so it stays.
     if doc.query_selector(&format!(".{CLASS}")).ok().flatten().is_none() {
         let Some(src) = doc
-            .query_selector(".spectrogram-container > canvas")
+            .query_selector(".spectrogram-container .chart-stage > canvas")
             .ok()
             .flatten()
             .and_then(|el| el.dyn_into::<web_sys::HtmlCanvasElement>().ok())
