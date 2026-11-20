@@ -79,6 +79,13 @@ test.describe("HFR card and tutorial", () => {
     await expect(card).toContainText("HFR is on");
     await expect(card.getByRole("button", { name: "HFR tutorial" })).toBeVisible();
     await expect(card.getByRole("button", { name: "Turn on HFR" })).toHaveCount(0);
+    // It has moved to just under the HFR button.
+    await expect(card).toHaveClass(/hfr-nudge-under-btn/);
+    const btn = (await page.locator(".hearing-bar .band-cell-hfr").boundingBox())!;
+    await expect
+      .poll(async () => (await card.boundingBox())!.y - (btn.y + btn.height))
+      .toBeGreaterThanOrEqual(0);
+    expect((await card.boundingBox())!.y - (btn.y + btn.height)).toBeLessThan(12);
 
     // Turning HFR off closes it. Once per session: play again shows nothing.
     await page.locator(".hearing-bar .band-cell-hfr").click();

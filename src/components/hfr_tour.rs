@@ -12,7 +12,8 @@
 //     1:1 with HFR off, at most once per session. It offers HFR or the
 //     tutorial; "Don't show again" clears a setting in Settings > Bats.
 //     "Turn on HFR" leaves the card up for NUDGE_ON_MS as "HFR is on", with
-//     the tutorial button, and pulses the HFR button (body.hfr-nudge-on).
+//     the tutorial button. That card moves to just under the HFR button,
+//     filled blue, and the button gets a blue ring (body.hfr-nudge-on).
 //     The card pulses twice as it opens (style.css, .hfr-nudge): it appears
 //     while sound plays and was easy to miss.
 //
@@ -63,6 +64,8 @@ const NUDGE_TEXT: &str = "Playing 1:1. Sound above 20\u{a0}kHz is too high to he
 /// recording may have none, and the band HFR picks may miss them.
 const NUDGE_ON_TEXT: &str =
     "HFR is on. To turn it off, press the HFR button above the spectrogram.";
+/// The same card when it sits just under the HFR button.
+const NUDGE_ON_TEXT_UNDER_BTN: &str = "HFR is on. To turn it off, press the HFR button again.";
 /// How long the "HFR is on" card stays while the pointer is not on it.
 const NUDGE_ON_MS: i32 = 10_000;
 const NUDGE_HFR: &str = "Turn on HFR";
@@ -498,6 +501,33 @@ pub fn HfrNudge() -> impl IntoView {
             .and_then(|d| d.active_element())
             .is_some_and(|a| el.contains(Some(a.as_ref())))
     };
+    // Where the HFR button is on screen (left, top, width, height), while
+    // the "HFR is on" card shows: that card opens under the button. `None`
+    // when the button is not fully on screen (the Hear bar scrolls sideways
+    // on phones); the card then stays above Play.
+    let btn_rect = RwSignal::new(None::<(f64, f64, f64, f64)>);
+    let measure_btn = move || {
+        let rect = (|| {
+            let win = web_sys::window()?;
+            let el = win
+                .document()?
+                .query_selector(".hearing-bar .band-cell-hfr")
+                .ok()??;
+            let r = el.get_bounding_client_rect();
+            let v_w = win.inner_width().ok()?.as_f64()?;
+            (r.width() > 0.0 && r.left() >= 0.0 && r.right() <= v_w)
+                .then(|| (r.left(), r.top(), r.width(), r.height()))
+        })();
+        btn_rect.try_set(rect);
+    };
+    // The popup re-places itself a frame after a window resize, so the
+    // button's new place is known by then.
+    let resize_handle = window_event_listener(leptos::ev::resize, move |_| {
+        if hfr_on_state.try_get_untracked() == Some(true) {
+            measure_btn();
+        }
+    });
+    on_cleanup(move || resize_handle.remove());
     // Bumped on every "Turn on HFR", so an older close timer does nothing.
     let timer_gen = StoredValue::new(0u32);
 
@@ -539,6 +569,10 @@ pub fn HfrNudge() -> impl IntoView {
         // While listening there is no tutorial to offer, so the card closes.
         let offer_tour = tour_available(state);
         if offer_tour {
+            // The card moves from under the pointer, so no pointerleave
+            // comes: without this the close timer would never count down.
+            held.set(false);
+            measure_btn();
             hfr_on_state.set(true);
         } else {
             hide_nudge(state);
@@ -582,20 +616,19 @@ pub fn HfrNudge() -> impl IntoView {
     // .hfr-nudge-anchor). The card sits above it and is portalled, so a
     // resized (scrolling) toolbar cannot clip it.
     let anchor = NodeRef::<leptos::html::Div>::new();
+    // An empty box over the HFR button, for the "HFR is on" card.
+    let btn_anchor = NodeRef::<leptos::html::Div>::new();
     // Hidden while the phone Hear sheet is open: it would show through it.
-    let is_open = Signal::derive(move || {
+    let showing = Signal::derive(move || {
         state.dialogs.hfr_nudge().get() && !state.panels.hear_sheet_open().get()
     });
+    let under_btn = Signal::derive(move || hfr_on_state.get() && btn_rect.get().is_some());
+    let open_above_play = Signal::derive(move || showing.get() && !under_btn.get());
+    let open_under_btn = Signal::derive(move || showing.get() && under_btn.get());
 
-    view! {
-        <div class="hfr-nudge-anchor" node_ref=anchor></div>
-        <PopupPanel
-            is_open=is_open
-            anchor=anchor
-            preferred_side=Side::Above
-            preferred_align=Align::Start
-            class="layer-panel hfr-nudge"
-        >
+    // The card's contents: the same in both places.
+    let card = move || {
+        view! {
             <div class="hfr-nudge-body" role="status" node_ref=body_ref
                 on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
                 on:pointerenter=move |ev: web_sys::PointerEvent| {
@@ -609,7 +642,9 @@ pub fn HfrNudge() -> impl IntoView {
                     on:click=move |_| hide_nudge(state)
                 >"\u{00D7}"</button>
                 <p class="hfr-nudge-text">
-                    {move || if hfr_on_state.get() {
+                    {move || if under_btn.get() {
+                        NUDGE_ON_TEXT_UNDER_BTN
+                    } else if hfr_on_state.get() {
                         NUDGE_ON_TEXT
                     } else if state.mic.listening().get() {
                         NUDGE_TEXT_LIVE
@@ -631,6 +666,34 @@ pub fn HfrNudge() -> impl IntoView {
                     </Show>
                 </div>
             </div>
+        }
+    };
+
+    view! {
+        <div class="hfr-nudge-anchor" node_ref=anchor></div>
+        <div class="hfr-nudge-btn-anchor" node_ref=btn_anchor
+            style=move || {
+                let (l, t, w, h) = btn_rect.get().unwrap_or_default();
+                format!("left: {l}px; top: {t}px; width: {w}px; height: {h}px;")
+            }
+        ></div>
+        <PopupPanel
+            is_open=open_above_play
+            anchor=anchor
+            preferred_side=Side::Above
+            preferred_align=Align::Start
+            class="layer-panel hfr-nudge"
+        >
+            {card()}
+        </PopupPanel>
+        <PopupPanel
+            is_open=open_under_btn
+            anchor=btn_anchor
+            preferred_side=Side::Below
+            preferred_align=Align::Start
+            class="layer-panel hfr-nudge hfr-nudge-under-btn"
+        >
+            {card()}
         </PopupPanel>
     }
 }
