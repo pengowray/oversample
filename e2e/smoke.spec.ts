@@ -212,7 +212,7 @@ test.describe("Oversample web smoke", () => {
     }
 
     // Back on the spectrogram the main canvas must be mounted and painting.
-    await expect(page.locator(".spectrogram-container canvas").first()).toBeVisible();
+    await expect(page.locator(".spectrogram-container .chart-stage canvas").first()).toBeVisible();
     failOnFatal(errors);
   });
 
