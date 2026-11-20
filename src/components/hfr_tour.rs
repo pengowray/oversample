@@ -12,7 +12,7 @@
 //     1:1 with HFR off, at most once per session. It offers HFR or the
 //     tutorial; "Don't show again" clears a setting in Settings > Bats.
 //     "Turn on HFR" leaves the card up for NUDGE_ON_MS as "HFR is on", with
-//     the tutorial button. That card moves to just under the HFR button,
+//     the tutorial button. That card moves to just under the HFR switch,
 //     filled blue, and the button gets a blue ring (body.hfr-nudge-on).
 //     The card pulses twice as it opens (style.css, .hfr-nudge): it appears
 //     while sound plays and was easy to miss.
@@ -54,7 +54,7 @@ const L_CLOSE: &str = "Close tutorial";
 const L_PROGRESS: &str = "{{current}} of {{total}}";
 
 // The card spells out "HFR (High Frequency Range)" once, so the name on the
-// HFR button means something to a new user. The second sentence is D_HFR's.
+// HFR switch means something to a new user. The second sentence is D_HFR's.
 const NUDGE_TEXT_LIVE: &str = "Listening 1:1. Sound above 20\u{a0}kHz is too high to hear. \
     HFR (High Frequency Range) lowers the pitch of bat calls into the range you can hear.";
 const NUDGE_TEXT: &str = "Playing 1:1. Sound above 20\u{a0}kHz is too high to hear. \
@@ -63,9 +63,9 @@ const NUDGE_TEXT: &str = "Playing 1:1. Sound above 20\u{a0}kHz is too high to he
 /// still one press away. It does not say the calls can now be heard: the
 /// recording may have none, and the band HFR picks may miss them.
 const NUDGE_ON_TEXT: &str =
-    "HFR is on. To turn it off, press the HFR button above the spectrogram.";
-/// The same card when it sits just under the HFR button.
-const NUDGE_ON_TEXT_UNDER_BTN: &str = "HFR is on. To turn it off, press the HFR button again.";
+    "HFR is on. To turn it off, press the HFR switch above the spectrogram.";
+/// The same card when it sits just under the HFR switch.
+const NUDGE_ON_TEXT_UNDER_BTN: &str = "HFR is on. To turn it off, press the HFR switch.";
 /// How long the "HFR is on" card stays while the pointer is not on it.
 const NUDGE_ON_MS: i32 = 10_000;
 const NUDGE_HFR: &str = "Turn on HFR";
@@ -80,7 +80,7 @@ pub const NUDGE_SETTING: &str = "Suggest HFR when playing or listening\u{a0}1:1"
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TourStep {
-    /// The HFR button in the Hear bar.
+    /// The HFR switch in the Hear bar.
     Hfr,
     /// The frequency gutter beside the spectrogram.
     BandGutter,
@@ -501,7 +501,7 @@ pub fn HfrNudge() -> impl IntoView {
             .and_then(|d| d.active_element())
             .is_some_and(|a| el.contains(Some(a.as_ref())))
     };
-    // Where the HFR button is on screen (left, top, width, height), while
+    // Where the HFR switch is on screen (left, top, width, height), while
     // the "HFR is on" card shows: that card opens under the button. `None`
     // when the button is not fully on screen (the Hear bar scrolls sideways
     // on phones); the card then stays above Play.
@@ -554,7 +554,7 @@ pub fn HfrNudge() -> impl IntoView {
         idx
     });
 
-    // Pulse the HFR button while the card says "press the HFR button".
+    // Pulse the HFR switch while the card says "press the HFR switch".
     Effect::new(move || {
         let on = hfr_on_state.get();
         if let Some(body) = web_sys::window()
@@ -616,11 +616,15 @@ pub fn HfrNudge() -> impl IntoView {
     // .hfr-nudge-anchor). The card sits above it and is portalled, so a
     // resized (scrolling) toolbar cannot clip it.
     let anchor = NodeRef::<leptos::html::Div>::new();
-    // An empty box over the HFR button, for the "HFR is on" card.
+    // An empty box over the HFR switch, for the "HFR is on" card.
     let btn_anchor = NodeRef::<leptos::html::Div>::new();
     // Hidden while the phone Hear sheet is open: it would show through it.
+    // Hidden while the Band presets menu is open: the menu opens from the
+    // same control and covered half the card.
     let showing = Signal::derive(move || {
-        state.dialogs.hfr_nudge().get() && !state.panels.hear_sheet_open().get()
+        state.dialogs.hfr_nudge().get()
+            && !state.panels.hear_sheet_open().get()
+            && state.panels.layer_panel_open().get() != Some(crate::state::LayerPanel::BandPresets)
     });
     let under_btn = Signal::derive(move || hfr_on_state.get() && btn_rect.get().is_some());
     let open_above_play = Signal::derive(move || showing.get() && !under_btn.get());

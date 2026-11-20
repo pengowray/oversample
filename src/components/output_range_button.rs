@@ -501,7 +501,7 @@ fn LinearShiftControls() -> impl IntoView {
         use wasm_bindgen::JsCast;
         let el: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Ok(khz) = el.value().parse::<f64>() {
-            let nyquist = crate::components::hfr_button::nyquist_for_current(state);
+            let nyquist = crate::components::hfr_switch::nyquist_for_current(state);
             state.transform.het_freq_auto().set(false);
             state
                 .transform

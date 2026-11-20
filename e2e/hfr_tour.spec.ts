@@ -79,7 +79,7 @@ test.describe("HFR card and tutorial", () => {
     await expect(card).toContainText("HFR is on");
     await expect(card.getByRole("button", { name: "HFR tutorial" })).toBeVisible();
     await expect(card.getByRole("button", { name: "Turn on HFR" })).toHaveCount(0);
-    // It has moved to just under the HFR button.
+    // It has moved to just under the HFR switch.
     await expect(card).toHaveClass(/hfr-nudge-under-btn/);
     const btn = (await page.locator(".hearing-bar .hfr-switch").boundingBox())!;
     await expect
@@ -120,7 +120,7 @@ test.describe("HFR card and tutorial", () => {
     const card = page.locator(".hfr-nudge");
     await card.getByRole("button", { name: "Turn on HFR" }).click();
     await expect(card).toContainText("HFR is on");
-    // The HFR button pulses while the card points to it.
+    // The HFR switch pulses while the card points to it.
     await expect(page.locator("body")).toHaveClass(/hfr-nudge-on/);
     await page.mouse.move(0, 0);
     // Closes after about 10 s with the pointer elsewhere.

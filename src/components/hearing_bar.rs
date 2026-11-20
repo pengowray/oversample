@@ -7,7 +7,7 @@
 //   │ [HFR ⬭ / band ▼]  [1:1 HET TE PS ZC]  [PASS ▼]             │ │ [Gain] [Noise] [Denoised]
 //   └────────────────────────────────────────────────────────────┘ │
 //
-// • HFR (HfrSwitch in hfr_button.rs): the top row turns HFR on or off, the
+// • HFR (HfrSwitch in hfr_switch.rs): the top row turns HFR on or off, the
 //   bottom row shows the band and opens the Band presets menu.
 // • Mode radio group selects playback algorithm. Clicking the already-
 //   selected mode opens its settings panel (corner indicator).
@@ -21,7 +21,7 @@ use crate::components::layer_panel::{layer_opt_class, toggle_panel};
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 
-use crate::components::hfr_button::HfrSwitch;
+use crate::components::hfr_switch::HfrSwitch;
 use crate::components::mode_button::ModeRadioGroup;
 use crate::components::noise_button::NoiseButton;
 use crate::components::switch_button::SwitchButton;
@@ -31,7 +31,7 @@ use crate::state::{
     PlaybackMode,
 };
 
-// Band presets and their helpers moved into `hfr_button.rs` — they're
+// Band presets and their helpers moved into `hfr_switch.rs` — they're
 // the body of HfrButton's right-half dropdown now.
 
 /// "Peak from": where every Auto gain takes its peak (playback Peak mode,

@@ -3759,7 +3759,8 @@ a.open-link-btn {
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 1.2px;
-    color: #666;
+    /* #8c8c8c: 5.2:1 on the bars (#666 was 3.1:1, under 4.5:1). */
+    color: #8c8c8c;
     text-transform: uppercase;
     flex-shrink: 0;
     padding: 0 4px 0 0;
@@ -3842,7 +3843,7 @@ a.open-link-btn {
 /* ── Band-affected row ────────────────────────────────────────────────
    Wraps the HFR cell + Range dropdown + Mode radio group + PASS combo.
    A single horizontal overline above them communicates "all of these
-   are slaved to the active band". The overline turns amber when HFR is
+   are slaved to the active band". The overline turns green when HFR is
    on, grey when off; the slice above PASS additionally goes grey when
    PASS is locked (range not following the band). */
 .band-affected-row {
@@ -3866,8 +3867,9 @@ a.open-link-btn {
     border-top: 2px solid rgba(120, 120, 120, 0.28);
     transition: border-top-color 0.2s;
 }
+/* The green of a switch that is on (.switch-mark), so HFR on has one colour. */
 .band-affected-row.band-on {
-    border-top-color: rgba(240, 192, 80, 0.62);
+    border-top-color: rgba(51, 170, 136, 0.75);
 }
 /* When the bandpass range is locked (not following the active band),
    paint a grey patch over the section of border-top above PASS to

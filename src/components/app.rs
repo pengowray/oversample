@@ -511,7 +511,7 @@ pub fn App() -> impl IntoView {
     // The output signals are clamped to the active Nyquist (mic SR/2 when
     // listening/recording, current file's max_freq otherwise) so the band
     // can never exceed what the source can resolve. This keeps downstream
-    // Effects (B, C, D in hfr_button) working unchanged.
+    // Effects (B, C, D in hfr_switch) working unchanged.
     //
     // We re-run when any input to the clamp changes: focus_stack itself,
     // current_file_index (file's Nyquist), mic_sample_rate (mic's Nyquist),
