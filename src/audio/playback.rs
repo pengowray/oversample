@@ -170,6 +170,125 @@ pub fn effective_selection(state: &AppState) -> Option<Selection> {
     })
 }
 
+/// Where the Play button would start in the current file, in seconds, by the
+/// same rules as the button and its start setting (Auto, All, Here, Sel):
+/// see `do_start_playback` in `bottom_toolbar.rs` and [`play`], which plays
+/// from "here" when the selection is off screen. `None` with no file, or
+/// while a timeline is open. Not reactive, and reads no whole file list, so
+/// it can be polled.
+pub fn play_start_time(state: &AppState) -> Option<f64> {
+    use crate::state::PlayStartMode;
+    if state.timeline.active().get_untracked().is_some() {
+        return None;
+    }
+    let idx = state.library.current_index().get_untracked()?;
+    let (duration, time_res) = state.library.files().with_untracked(|f| {
+        f.get(idx)
+            .map(|f| (f.audio.duration_secs, f.spectrogram.time_resolution))
+    })?;
+    let scroll = state.view.scroll_offset().get_untracked();
+    let visible = viewport::visible_time(
+        state.viewmode.spectrogram_canvas_width().get_untracked(),
+        state.view.zoom_level().get_untracked(),
+        time_res,
+    );
+    // As `current_play_from_here_time` and `is_selection_in_viewport`.
+    let here = || {
+        if visible <= 0.0 {
+            state.playback.from_here_time().get_untracked()
+        } else {
+            viewport::play_from_here_time(scroll, visible)
+        }
+    };
+    let mode = state.playback.start_mode().get_untracked();
+    let selection = match mode {
+        PlayStartMode::Selected | PlayStartMode::Auto => effective_selection(state).map(|s| {
+            let on_screen =
+                visible <= 0.0 || (s.time_start < scroll + visible && s.time_end > scroll);
+            (s.time_start, on_screen)
+        }),
+        _ => None,
+    };
+    let t = resolve_play_start(mode, selection, scroll, here);
+    Some(t.clamp(0.0, duration.max(0.0)))
+}
+
+/// The rule behind [`play_start_time`]. `selection` is the selection's start
+/// and whether any of it is on screen; `here` is the "here" line's time.
+pub fn resolve_play_start(
+    mode: crate::state::PlayStartMode,
+    selection: Option<(f64, bool)>,
+    scroll: f64,
+    here: impl FnOnce() -> f64,
+) -> f64 {
+    use crate::state::PlayStartMode;
+    match (mode, selection) {
+        (PlayStartMode::All, _) => 0.0,
+        (PlayStartMode::FromHere, _) => here(),
+        (PlayStartMode::Selected | PlayStartMode::Auto, Some((start, true))) => start,
+        // `play` plays from "here" when the selection is off screen.
+        (PlayStartMode::Selected, Some((_, false))) => here(),
+        (PlayStartMode::Selected, None) => 0.0,
+        (PlayStartMode::Auto, _) if scroll <= 0.0 => 0.0,
+        (PlayStartMode::Auto, _) => here(),
+    }
+}
+
+#[cfg(test)]
+mod play_start_tests {
+    use super::resolve_play_start;
+    use crate::state::PlayStartMode::*;
+
+    const HERE: f64 = 42.0;
+
+    #[test]
+    fn all_starts_at_zero() {
+        assert_eq!(
+            resolve_play_start(All, Some((5.0, true)), 30.0, || HERE),
+            0.0
+        );
+    }
+
+    #[test]
+    fn here_ignores_the_selection() {
+        assert_eq!(
+            resolve_play_start(FromHere, Some((5.0, true)), 30.0, || HERE),
+            HERE
+        );
+    }
+
+    #[test]
+    fn selected_uses_the_selection_on_screen() {
+        assert_eq!(
+            resolve_play_start(Selected, Some((5.0, true)), 30.0, || HERE),
+            5.0
+        );
+        assert_eq!(
+            resolve_play_start(Selected, Some((5.0, false)), 30.0, || HERE),
+            HERE
+        );
+        assert_eq!(resolve_play_start(Selected, None, 30.0, || HERE), 0.0);
+    }
+
+    #[test]
+    fn auto_prefers_selection_then_start_then_here() {
+        assert_eq!(
+            resolve_play_start(Auto, Some((5.0, true)), 30.0, || HERE),
+            5.0
+        );
+        assert_eq!(
+            resolve_play_start(Auto, Some((5.0, false)), 0.0, || HERE),
+            0.0
+        );
+        assert_eq!(
+            resolve_play_start(Auto, Some((5.0, false)), 30.0, || HERE),
+            HERE
+        );
+        assert_eq!(resolve_play_start(Auto, None, 0.0, || HERE), 0.0);
+        assert_eq!(resolve_play_start(Auto, None, 30.0, || HERE), HERE);
+    }
+}
+
 fn cancel_replay_timer() {
     REPLAY_TIMER.with(|t| {
         if let Some(handle) = t.borrow_mut().take() {

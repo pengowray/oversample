@@ -10104,6 +10104,12 @@ body.hfr-nudge-on .hfr-switch {
 .live-emb-none {
     color: #aaa;
 }
+/* The part of the file a paused reading is of ("12.4s to 15.4s"), in
+   front of the species name. */
+.live-emb-range {
+    font-size: 11px;
+    color: #64a0ff;
+}
 .live-emb-next {
     font-size: 11px;
     color: #999;
@@ -10275,7 +10281,8 @@ body.hfr-nudge-on .hfr-switch {
     height: 9px;
 }
 
-/* Component maps under the species map: four to a row. Each is a button
+/* Component maps under the species map: four or more to a row (the
+   column count is set by live-embedding.js, pcColumns). Each is a button
    that colours the large map; the selected one has a light border. */
 .live-emb-pcs {
     position: relative;

@@ -1,4 +1,4 @@
-wrote birdnet-pc.bin, 85660 bytes, from 49680 reference readings
+wrote birdnet-pc-rows.bin, 128484 bytes, from 49680 reference readings
 PC1 (1.8%)
   low:  Plain-winged Antshrike, Mouse-coloured Antshrike, Dusky-throated Antshrike, Amazonian Barred-Woodcreeper, Lawrence's Thrush, Grey Antbird
   high: Singing Bushlark, Sabota Lark, Bluethroat, Melodious Lark, Turkestan Shrike, Crested Lark
@@ -9,26 +9,42 @@ PC3 (1.1%)
   low:  Brown Skua, Coscoroba Swan, Puna Miner, Adelie Penguin, Spectacled Tyrant, Black-eared Fairy
   high: Blue-throated Flycatcher, Bronzed Drongo, Lesser Racket-tailed Drongo, Javan Leafbird, Orange-headed Thrush, Ashy Drongo
 PC4 (0.9%)
-  low:  Sabota Lark, Kalahari Scrub Robin, Somali Short-toed Lark, Karoo Scrub Robin, Pearly-bellied Seedeater, Moustached Grass-Warbler
+  low:  Sabota Lark, Kalahari Scrub Robin, Somali Short-toed Lark, Karoo Scrub Robin, Pearly-bellied Seedeater, Golden-backed Weaver
   high: Pileated Woodpecker, Yellow-bellied Sapsucker, Blackburnian Warbler, Black-throated Green Warbler, Brown Creeper, Nashville Warbler
 PC5 (0.9%)
   low:  Common Yellowthroat, Pine Warbler, Indigo Bunting, Northern Parula, Swamp Sparrow, American Goldfinch
   high: Ethiopian Black-headed Oriole, Pale-winged Starling, Scarlet-faced Liocichla, African Hill Babbler, Bush Blackcap, Chorister Robin-Chat
 PC6 (0.8%)
   low:  Baltimore Oriole, Bullock's Oriole, Brown Thrasher, Long-billed Thrasher, Grey Catbird, Rose-breasted Grosbeak
-  high: Streak-throated Canastero, Yellow-rumped Flowerpecker, Amethyst Brown-Dove, Brown Accentor, Oriental Bay-Owl, White-crowned Hornbill
+  high: Streak-throated Canastero, Yellow-rumped Flowerpecker, Amethyst Brown-Dove, Brown Accentor, Oriental Bay-Owl, Rosy Pipit
 PC7 (0.7%)
-  low:  LeConte's Thrasher, Sage Thrasher, Common Rock Thrush, Western Meadowlark, Crissal Thrasher, Capped Wheatear
+  low:  LeConte's Thrasher, Sage Thrasher, Common Rock Thrush, Crissal Thrasher, Western Meadowlark, Capped Wheatear
   high: Purple-rumped Sunbird, Purple Sunbird, Greater Coucal, Spotted Dove, Pale-billed Flowerpecker, House Crow
 PC8 (0.6%)
-  low:  Black-naped Tern, Maroon-faced Parakeet, Mountain Fulvetta, Long-tailed Broadbill, White-winged Black Tern, Great Crested Tern
-  high: Tambourine Dove, Blue-headed Coucal, Yellow-billed Turaco, Emerald-spotted Wood-Dove, Great Blue Turaco, Narina Trogon
+  low:  Black-naped Tern, Maroon-faced Parakeet, Mountain Fulvetta, Long-tailed Broadbill, Great Crested Tern, White-winged Black Tern
+  high: Tambourine Dove, Yellow-billed Turaco, Blue-headed Coucal, Brown Illadopsis, Little Greenbul, Emerald-spotted Wood-Dove
+PC9 (0.6%)
+  low:  Acre Tody-Tyrant, Palani Laughingthrush, Brown-capped Pygmy Woodpecker, Striped Laughingthrush, White-browed Bulbul, Streak-breasted Scimitar-Babbler
+  high: Sulphur-crested Cockatoo, Spangled Drongo, Crescent Honeyeater, Moluccan Eclectus, Tooth-billed Bowerbird, White-throated Treecreeper
+PC10 (0.6%)
+  low:  Long-winged Harrier, Rufous-sided Crake, Greater Thornbird, Horsfield's Babbler, Rufous Hornero, Wilson's Plover
+  high: Carrion Crow, Eurasian Jay, Hooded Crow, Eurasian Blue Tit, Great Tit, Spotted Flycatcher
+PC11 (0.6%)
+  low:  Picazuro Pigeon, Magnificent Riflebird, Tataupa Tinamou, Pale-vented Pigeon, Rufous-capped Motmot, Black-bodied Woodpecker
+  high: Tooth-billed Hummingbird, Masked Booby, Rusty-winged Barbtail, American Avocet, Tawny-crested Tanager, Clark's Grebe
+PC12 (0.5%)
+  low:  Blyth's Leaf Warbler, Hodgson's Treecreeper, Broad-billed Warbler, Rufous-winged Fulvetta, Darjeeling Woodpecker, Black-browed Tit
+  high: Plain-backed Antpitta, Marbled Frogmouth, Common Myna, Black Drongo, Lined Quail-Dove, Italian Sparrow
 check on 23821 readings with a class at 0.5 or more:
   PC1: mean gap 0.513, shuffled 0.520, correlation 0.43
   PC2: mean gap 0.326, shuffled 0.352, correlation 0.21
   PC3: mean gap 0.254, shuffled 0.259, correlation 0.06
   PC4: mean gap 0.378, shuffled 0.437, correlation 0.58
   PC5: mean gap 0.378, shuffled 0.388, correlation 0.32
-  PC6: mean gap 0.227, shuffled 0.322, correlation 0.61
-  PC7: mean gap 0.451, shuffled 0.456, correlation 0.06
-  PC8: mean gap 0.447, shuffled 0.456, correlation 0.15
+  PC6: mean gap 0.228, shuffled 0.322, correlation 0.60
+  PC7: mean gap 0.451, shuffled 0.455, correlation 0.05
+  PC8: mean gap 0.437, shuffled 0.446, correlation 0.18
+  PC9: mean gap 0.314, shuffled 0.301, correlation -0.14
+  PC10: mean gap 0.282, shuffled 0.310, correlation 0.20
+  PC11: mean gap 0.357, shuffled 0.318, correlation -0.26
+  PC12: mean gap 0.283, shuffled 0.308, correlation 0.22

@@ -14,7 +14,9 @@
 //! registered element; only the status line (loading, the update interval, an
 //! error) goes through the store, so nothing reactive changes per reading.
 
-use crate::classifier::{self, catalog, ClassifierError, Method, SpeciesLabel};
+use crate::classifier::{self, catalog, location, ClassifierError, Method, SpeciesLabel};
+use crate::format_time::format_time_display;
+use crate::recording_place::{file_place, file_week, Place};
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use futures_channel::oneshot;
@@ -134,6 +136,53 @@ thread_local! {
     /// Power spectrum of the last 3 s, for the explorer.
     static SPECTRUM: RefCell<Option<Spectrum>> = const { RefCell::new(None) };
     static LAST_SPECTRUM: Cell<f64> = const { Cell::new(f64::NEG_INFINITY) };
+    /// The paused reading: the 3 s Play would start with, while nothing plays.
+    static PREVIEW: RefCell<Option<Preview>> = const { RefCell::new(None) };
+    /// The paused reading's request: its number, what it reads, and when it
+    /// went out. Kept after the answer, so a reading that failed is sent again
+    /// only after [`PREVIEW_RETRY_MS`].
+    static PREVIEW_REQ: Cell<Option<(u32, PreviewKey, f64)>> = const { Cell::new(None) };
+    /// The play-start window last seen, and since when (for the debounce).
+    static PREVIEW_WANT: Cell<Option<(PreviewKey, f64)>> = const { Cell::new(None) };
+    /// What the chart shows for the pause now.
+    static PAUSED_DRAWN: Cell<PausedView> = const { Cell::new(None) };
+    /// Whether the chart's flags were drawn with a location list.
+    static FLAGS_DRAWN: Cell<bool> = const { Cell::new(false) };
+}
+
+/// What the chart shows while paused: `None` when something plays (or no
+/// file is open, or the live view is off), `Some(None)` while the paused
+/// reading for the current play start is not in yet, `Some(Some(key))` the
+/// paused reading for `key`.
+type PausedView = Option<Option<PreviewKey>>;
+
+/// Wait before a paused reading that did not arrive is asked for again.
+const PREVIEW_RETRY_MS: f64 = 10_000.0;
+
+/// Which audio a paused reading is of: the file's id, and the start and end
+/// of the window in ms.
+type PreviewKey = (u64, i64, i64);
+
+/// A reading of the 3 s that Play would start with (see [`preview_window`]).
+struct Preview {
+    key: PreviewKey,
+    scores: Vec<f32>,
+    at: Option<(f32, f32)>,
+    at_umap: Option<(f32, f32)>,
+}
+
+/// Wait after the play-start position stops changing before reading it.
+const PREVIEW_DEBOUNCE_MS: f64 = 300.0;
+/// Length of a reading, in seconds (BirdNET's window).
+const WINDOW_S: f64 = 3.0;
+
+/// The window a paused reading covers: the 3 s starting at `start`, moved
+/// back to end at the end of the file when fewer than 3 s are left, and
+/// shorter only when the file is. Seconds.
+fn preview_window(start: f64, duration: f64) -> (f64, f64) {
+    let duration = duration.max(0.0);
+    let from = start.min(duration - WINDOW_S).max(0.0);
+    (from, (from + WINDOW_S).min(duration))
 }
 
 /// The live view in the Call detection tab.
@@ -156,11 +205,12 @@ pub struct SessionPoint {
     pub scores: Option<Vec<f32>>,
 }
 
-/// The component maps' data: PCA of recordings' embeddings, made by
+/// The component maps' data with `?pc=rec` in the address: PCA of
+/// recordings' embeddings (8 components), made by
 /// `research/live-embedding/pc_rec.py`.
 const PC_FILE: &str = "birdnet-pc.bin";
-/// The first version, PCA of the class rows (`pc_bands.py`), shown with
-/// `?pc=rows` in the address.
+/// The default: PCA of BirdNET's class rows (12 components), made by
+/// `pc_bands.py`. The count comes from the file's header.
 pub const PC_FILE_ROWS: &str = "birdnet-pc-rows.bin";
 /// Readings averaged for the component graphs: 4 at 0.25 s apart, so a line
 /// settles within about a second.
@@ -304,6 +354,10 @@ pub fn restart(state: AppState) {
     SESSION.with(|h| h.borrow_mut().clear());
     SPECTRUM.with(|h| *h.borrow_mut() = None);
     crate::live_explorer::reset();
+    PREVIEW.with(|p| *p.borrow_mut() = None);
+    PREVIEW_REQ.with(|p| p.set(None));
+    PREVIEW_WANT.with(|p| p.set(None));
+    PAUSED_DRAWN.with(|p| p.set(None));
     ROWS.with(|r| r.borrow_mut().clear());
     INTERVAL.with(|i| i.set(0.0));
     if USERS.with(|u| u.get()) == 0 {
@@ -364,6 +418,8 @@ pub fn class_name(c: usize) -> String {
 /// Register the element the readings are drawn into (`None` when it goes).
 pub fn set_chart(el: Option<web_sys::HtmlElement>) {
     CHART.with(|c| *c.borrow_mut() = el);
+    // A new element shows nothing yet, so the paused reading is drawn again.
+    PAUSED_DRAWN.with(|p| p.set(None));
 }
 
 async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
@@ -523,7 +579,19 @@ fn on_message(state: AppState, gen: u32, ev: MessageEvent) {
             if IN_FLIGHT.with(|f| f.get().map(|(r, _)| r)) == Some(req) {
                 IN_FLIGHT.with(|f| f.set(None));
             }
-            if payload.len() > EMBEDDING_LEN {
+            let preview = PREVIEW_REQ
+                .with(|p| p.get())
+                .filter(|&(r, ..)| r == req)
+                .map(|(_, key, _)| key);
+            if let Some(key) = preview {
+                if sound_on(state) {
+                    // Playback or the microphone started meanwhile: the live
+                    // readings take over, and the next pause asks again.
+                    PREVIEW_REQ.with(|p| p.set(None));
+                } else if payload.len() > EMBEDDING_LEN {
+                    add_preview(state, key, &payload);
+                }
+            } else if payload.len() > EMBEDDING_LEN {
                 add_reading(state, payload, ms);
             }
         }
@@ -586,6 +654,154 @@ async fn current_audio(state: AppState) -> Option<(Vec<f32>, u32)> {
     Some((s, rate))
 }
 
+/// True while a file plays or the microphone listens or records.
+fn sound_on(state: AppState) -> bool {
+    state.playback.is_playing().get_untracked()
+        || state.mic.listening().get_untracked()
+        || state.mic.recording().get_untracked()
+}
+
+/// The window a paused reading would cover now: the current file and the 3 s
+/// Play would start with. `None` with no file or a timeline open.
+fn preview_key(state: AppState) -> Option<PreviewKey> {
+    let start = crate::audio::playback::play_start_time(&state)?;
+    let idx = state.library.current_index().get_untracked()?;
+    let (id, duration) = state
+        .library
+        .files()
+        .with_untracked(|f| f.get(idx).map(|f| (f.id, f.audio.duration_secs)))?;
+    let (from, to) = preview_window(start, duration);
+    let ms = |s: f64| (s * 1000.0).round() as i64;
+    (to > from).then(|| (id, ms(from), ms(to)))
+}
+
+/// What the chart should show for the pause now (see [`PausedView`]).
+/// `key` is [`preview_key`], asked for only while paused.
+fn paused_view(state: AppState, key: impl FnOnce() -> Option<PreviewKey>) -> PausedView {
+    if sound_on(state) || USERS.with(|u| u.get()) & LIVE_VIEW == 0 {
+        return None;
+    }
+    let key = key()?;
+    Some(
+        PREVIEW
+            .with(|p| p.borrow().as_ref().is_some_and(|p| p.key == key))
+            .then_some(key),
+    )
+}
+
+/// While nothing plays: redraw when the paused reading to show changes, and
+/// read the play-start window once it has stayed put for
+/// [`PREVIEW_DEBOUNCE_MS`].
+async fn preview_tick(state: AppState, gen: u32, now: f64) {
+    let key = preview_key(state);
+    let view = paused_view(state, || key);
+    // Redraw when the pause shows something else, or when the location list
+    // for the flags has come in (it arrives after the reading).
+    let flags_changed =
+        view.is_some() && flag_scores(state).is_some() != FLAGS_DRAWN.with(|f| f.get());
+    if PAUSED_DRAWN.with(|p| p.get()) != view || flags_changed {
+        draw_view(state, view);
+    }
+    if USERS.with(|u| u.get()) & LIVE_VIEW == 0 {
+        return;
+    }
+    let Some(key) = key else {
+        PREVIEW_WANT.with(|p| p.set(None));
+        return;
+    };
+    let have = matches!(view, Some(Some(_)));
+    let asked = PREVIEW_REQ
+        .with(|p| p.get())
+        .is_some_and(|(_, k, sent)| k == key && now - sent < PREVIEW_RETRY_MS);
+    if have || asked {
+        return;
+    }
+    match PREVIEW_WANT.with(|p| p.get()) {
+        Some((k, since)) if k == key => {
+            if now - since < PREVIEW_DEBOUNCE_MS {
+                return;
+            }
+        }
+        _ => {
+            PREVIEW_WANT.with(|p| p.set(Some((key, now))));
+            return;
+        }
+    }
+    let busy = IN_FLIGHT.with(|f| f.get().is_some_and(|(_, t)| now - t < 5_000.0));
+    if !worker_ready() || busy || now - LAST_SENT.with(|l| l.get()) < MIN_GAP_MS {
+        return;
+    }
+    let Some(idx) = state.library.current_index().get_untracked() else {
+        return;
+    };
+    let Some((source, rate)) = state.library.files().with_untracked(|f| {
+        f.get(idx)
+            .filter(|f| f.id == key.0)
+            .map(|f| (f.audio.source.clone(), f.audio.sample_rate))
+    }) else {
+        return;
+    };
+    if rate == 0 {
+        return;
+    }
+    let total = source.total_samples();
+    let at = |ms: i64| ((ms as f64 / 1000.0 * rate as f64) as u64).min(total);
+    let (start, end) = (at(key.1), at(key.2));
+    if end <= start {
+        return;
+    }
+    // Not decoded yet (a long file still streaming in): tried again next tick.
+    let Some(samples) = crate::audio::streaming_source::read_region_ready(
+        &*source,
+        ChannelView::MonoMix,
+        start,
+        (end - start) as usize,
+    )
+    .await
+    else {
+        return;
+    };
+    if generation() != gen || sound_on(state) || preview_key(state) != Some(key) {
+        return;
+    }
+    if let Some(req) = send(&samples, rate, now) {
+        PREVIEW_REQ.with(|p| p.set(Some((req, key, now))));
+    }
+}
+
+/// Send `samples` for a reading. Returns the request's number, or `None`
+/// when the worker is gone.
+fn send(samples: &[f32], rate: u32, now: f64) -> Option<u32> {
+    let req = NEXT_REQ.with(|n| {
+        let r = n.get();
+        n.set(r.wrapping_add(1));
+        r
+    });
+    let sent = LINK.with(|l| {
+        let l = l.borrow();
+        let Some(link) = l.as_ref() else {
+            return false;
+        };
+        let arr = js_sys::Float32Array::from(samples);
+        post(
+            link,
+            &ToWorker::Live {
+                req,
+                source_rate: rate,
+            },
+            Some((attach::SAMPLES, &arr)),
+        );
+        true
+    });
+    if !sent {
+        return None;
+    }
+    IN_FLIGHT.with(|f| f.set(Some((req, now))));
+    RATE.with(|r| r.set(rate));
+    LAST_SENT.with(|l| l.set(now));
+    Some(req)
+}
+
 async fn run_loop(state: AppState, gen: u32) {
     loop {
         crate::web_util::sleep_ms(TICK_MS as i32).await;
@@ -593,6 +809,16 @@ async fn run_loop(state: AppState, gen: u32) {
             return;
         }
         let now = now_ms();
+        if !sound_on(state) {
+            // Nothing to read live: the paused reading instead.
+            preview_tick(state, gen, now).await;
+            continue;
+        }
+        if PAUSED_DRAWN.with(|p| p.get()).is_some() {
+            // Playback started: take the paused reading off the chart now,
+            // before the first live reading.
+            draw(state);
+        }
         // A request lost (the worker answered with something else) is given up
         // after 5 s, so the view never stalls for good.
         let busy = IN_FLIGHT.with(|f| f.get().is_some_and(|(_, t)| now - t < 5_000.0));
@@ -623,34 +849,68 @@ async fn run_loop(state: AppState, gen: u32) {
                 continue;
             }
         }
-        let req = NEXT_REQ.with(|n| {
-            let r = n.get();
-            n.set(r.wrapping_add(1));
-            r
-        });
-        let sent = LINK.with(|l| {
-            let l = l.borrow();
-            let Some(link) = l.as_ref() else {
-                return false;
-            };
-            let arr = js_sys::Float32Array::from(samples.as_slice());
-            post(
-                link,
-                &ToWorker::Live {
-                    req,
-                    source_rate: rate,
-                },
-                Some((attach::SAMPLES, &arr)),
-            );
-            true
-        });
-        if !sent {
+        if send(&samples, rate, now).is_none() {
             return;
         }
-        IN_FLIGHT.with(|f| f.set(Some((req, now))));
-        RATE.with(|r| r.set(rate));
-        LAST_SENT.with(|l| l.set(now));
     }
+}
+
+/// Keep the paused reading and draw it.
+fn add_preview(state: AppState, key: PreviewKey, payload: &[f32]) {
+    let scores = payload[EMBEDDING_LEN..].to_vec();
+    let at = MAP.with(|m| {
+        m.borrow()
+            .as_ref()
+            .and_then(|m| place(&scores, m, PLACE_RADIUS))
+    });
+    let at_umap = PC_UMAP.with(|m| {
+        m.borrow()
+            .as_ref()
+            .and_then(|m| place(&scores, m, PLACE_RADIUS_UMAP))
+    });
+    PREVIEW.with(|p| {
+        *p.borrow_mut() = Some(Preview {
+            key,
+            scores,
+            at,
+            at_umap,
+        })
+    });
+    draw(state);
+}
+
+/// Where the "unlikely here" flags are judged: the microphone's place is this
+/// device's position (if the user gave it this session) in this week; a
+/// file's is its own place, or else the device's in the file's week. The
+/// same order as [`current_audio`].
+fn flag_place(state: AppState) -> Option<Place> {
+    let device = state.classifier.device_position().get_untracked();
+    if state.mic.listening().get_untracked() || state.mic.recording().get_untracked() {
+        let (lat, lon) = device?;
+        let today = js_sys::Date::new_0();
+        let week = oversample_ipc::classifier::week_of(today.get_month() + 1, today.get_date());
+        return Some(Place { lat, lon, week });
+    }
+    let idx = state.library.current_index().get_untracked()?;
+    state.library.files().with_untracked(|f| {
+        let file = f.get(idx)?;
+        file_place(file).or_else(|| {
+            device.map(|(lat, lon)| Place {
+                lat,
+                lon,
+                week: file_week(file),
+            })
+        })
+    })
+}
+
+/// The location list for the flags, when "Mark birds unlikely here" is on
+/// and there is a place. The first call for a place starts working it out.
+fn flag_scores(state: AppState) -> Option<Arc<Vec<f32>>> {
+    if !state.call_detection.mark_unexpected().get_untracked() {
+        return None;
+    }
+    location::scores_at(state, flag_place(state)?)
 }
 
 fn add_reading(state: AppState, payload: Vec<f32>, model_ms: f64) {
@@ -826,6 +1086,11 @@ fn update_rows(history: &VecDeque<Reading>) -> Vec<u16> {
 }
 
 fn draw(state: AppState) {
+    draw_view(state, paused_view(state, || preview_key(state)));
+}
+
+/// Draw, with `view` the pause's part of the chart (see [`PausedView`]).
+fn draw_view(state: AppState, view: PausedView) {
     let Some(el) = CHART.with(|c| c.borrow().clone()) else {
         return;
     };
@@ -837,17 +1102,66 @@ fn draw(state: AppState) {
             .and_then(|l| l.get(c))
             .map_or_else(|| format!("Class {c}"), |l| l.common.clone())
     };
+    // "Unlikely here" flags, by class.
+    let flags = flag_scores(state);
+    let unlikely = |c: usize| -> bool {
+        flags
+            .as_ref()
+            .zip(labels.as_ref().and_then(|l| l.get(c)))
+            .and_then(|(s, l)| location::unlikely_in(s, l))
+            .unwrap_or(false)
+    };
+    FLAGS_DRAWN.with(|f| f.set(flags.is_some()));
+    let shown = view.flatten();
+    // Paused, with the paused reading not in yet: the live reading from
+    // before the pause is hidden, so it is not taken for the play start.
+    let pending = matches!(view, Some(None));
+    let was_shown = PAUSED_DRAWN.with(|p| p.replace(view)).flatten();
+    // The paused reading: its top classes and its place on both layouts.
+    let preview = shown.and_then(|key| {
+        PREVIEW.with(|p| {
+            let p = p.borrow();
+            let p = p.as_ref()?;
+            let (x, y) = p.at.unwrap_or((0.0, 0.0));
+            let (ux, uy) = p.at_umap.or(p.at).unwrap_or((0.0, 0.0));
+            let s = top_classes(&p.scores, 1).first().map_or(0.0, |t| t.1);
+            Some((
+                p.scores.clone(),
+                // No place on the map (the map file did not load): text only.
+                p.at.map(|_| {
+                    serde_json::json!({
+                        "x": round3(x), "y": round3(y), "ux": round3(ux), "uy": round3(uy),
+                        "s": round3(s),
+                    })
+                }),
+                format!(
+                    "{} to {}",
+                    format_time_display(key.1 as f64 / 1000.0, 1),
+                    format_time_display(key.2 as f64 / 1000.0, 1)
+                ),
+            ))
+        })
+    });
     let json = HISTORY.with(|h| {
         let h = h.borrow();
-        let now = h.back()?.t;
+        // Nothing heard and no paused reading: nothing to draw, unless a
+        // paused reading is on the chart and has to go.
+        if h.is_empty() && preview.is_none() && was_shown.is_none() && !pending {
+            return None;
+        }
+        let now = h.back().map_or(0.0, |r| r.t);
         let rows = update_rows(&h);
-        let latest = h.back()?;
-        let top: Vec<_> = top_classes(&latest.scores, 3)
+        let top_scores = match &preview {
+            Some(p) => p.0.as_slice(),
+            None if pending => &[],
+            None => h.back().map_or(&[][..], |r| r.scores.as_slice()),
+        };
+        let top: Vec<_> = top_classes(top_scores, 3)
             .into_iter()
             .enumerate()
             .filter(|&(i, (_, s))| i == 0 || s >= 0.05)
             .map(|(_, t)| t)
-            .map(|(c, s)| (name(c), round3(s)))
+            .map(|(c, s)| (name(c), round3(s), unlikely(c)))
             .collect();
         let ago = |r: &Reading| round3(((r.t - now) / 1000.0) as f32);
         let trail: Vec<_> = h
@@ -879,6 +1193,7 @@ fn draw(state: AppState) {
             .filter_map(|r| Some((ago(r), round3(r.change?))))
             .collect();
         let row_names: Vec<_> = rows.iter().map(|&c| name(c as usize)).collect();
+        let rows_unlikely: Vec<bool> = rows.iter().map(|&c| unlikely(c as usize)).collect();
         // Each reading's percentile on each component, as the mean of the
         // last few readings so a line does not jump from one reading to the
         // next: [secondsAgo, p1, p2, ...].
@@ -908,6 +1223,13 @@ fn draw(state: AppState) {
             "top": top,
             "trail": trail,
             "rows": row_names,
+            "rowsUnlikely": rows_unlikely,
+            "heard": !h.is_empty(),
+            "preview": preview.as_ref().map(|p| serde_json::json!({
+                "at": p.1,
+                "range": p.2,
+            })),
+            "pending": pending,
             "strip": strip,
             "change": change,
             "history": HISTORY_S,
@@ -1022,6 +1344,38 @@ mod tests {
         assert_eq!(interp_quantile(&q, 3.0), 1.0);
         assert!((interp_quantile(&q, 0.5) - 0.25).abs() < 1e-6);
         assert!((interp_quantile(&q, 1.5) - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn preview_window_starts_at_play_start() {
+        assert_eq!(preview_window(12.4, 60.0), (12.4, 15.4));
+        assert_eq!(preview_window(0.0, 60.0), (0.0, 3.0));
+    }
+
+    #[test]
+    fn preview_window_near_the_end_is_the_last_3_s() {
+        assert_eq!(preview_window(59.0, 60.0), (57.0, 60.0));
+        assert_eq!(preview_window(60.0, 60.0), (57.0, 60.0));
+    }
+
+    #[test]
+    fn preview_window_of_a_short_file_is_the_whole_file() {
+        assert_eq!(preview_window(1.0, 2.0), (0.0, 2.0));
+        assert_eq!(preview_window(0.0, 0.0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn component_files_parse() {
+        let rows = Components::parse(include_bytes!(
+            "../research/live-embedding/birdnet-pc-rows.bin"
+        ))
+        .expect("class-row components");
+        assert_eq!(rows.variance.len(), 12);
+        assert_eq!(rows.ranks.len(), 12);
+        assert!(rows.ranks.iter().all(|r| r.len() == 6522));
+        let rec = Components::parse(include_bytes!("../research/live-embedding/birdnet-pc.bin"))
+            .expect("recording components");
+        assert_eq!(rec.variance.len(), 8);
     }
 
     #[test]
