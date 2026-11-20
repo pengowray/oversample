@@ -60,6 +60,16 @@ pub fn LiveExplorerPanel() -> impl IntoView {
         })
     };
     let status = move || match state.classifier.live().get() {
+        // The live view in the Call detection tab runs Perch: the explorer's
+        // views are BirdNET's, so only the spectrum is drawn.
+        s if s != LiveStatus::Off
+            && live_embedding::active().method != classifier::Method::BirdNet =>
+        {
+            Some(format!(
+                "Only the spectrum updates while the live view in the Call detection tab uses {}.",
+                live_embedding::active().name
+            ))
+        }
         LiveStatus::NeedsDownload if downloading() => {
             Some("Downloading BirdNET\u{2026} The spectrum works without it.".to_string())
         }
@@ -73,8 +83,11 @@ pub fn LiveExplorerPanel() -> impl IntoView {
         )),
         _ => None,
     };
-    let needs_download =
-        move || state.classifier.live().get() == LiveStatus::NeedsDownload && !downloading();
+    let needs_download = move || {
+        state.classifier.live().get() == LiveStatus::NeedsDownload
+            && !downloading()
+            && live_embedding::active().method == classifier::Method::BirdNet
+    };
 
     view! {
         <div class="sidebar-panel live-exp">

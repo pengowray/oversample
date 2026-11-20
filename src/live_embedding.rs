@@ -1,14 +1,17 @@
-//! Experimental live BirdNET view: BirdNET V2.4 run on the last 3 s of audio a
-//! few times a second, while a file plays or the microphone is listening.
+//! Experimental live view: a model run on the last window of audio (3 s for
+//! BirdNET V2.4, 5 s for Perch 2.0) a few times a second, while a file plays or
+//! the microphone is listening. [`LiveModel`] holds what differs between the
+//! two; the Call detection tab's method picks one ([`set_picked`]).
 //!
 //! It has a worker of its own (the same `birdnet-worker` WASM as the
-//! classifier, started a second time), so a classifier run, a Perch run or the
-//! denoiser never wait for it and it never waits for them. The worker holds
-//! the BirdNET backbone (about 300 MB); turning the view off stops it.
+//! classifier, started a second time), so a classifier run or the denoiser
+//! never wait for it and it never waits for them. The worker holds one model
+//! (BirdNET's backbone, about 300 MB, or Perch's two files); turning the view
+//! off stops it, and picking the other model restarts it.
 //!
 //! One request is in flight at a time: the next goes out after the answer and
-//! at least [`MIN_GAP_MS`] after the last one, so a slow device updates less
-//! often instead of falling behind.
+//! at least the model's `min_gap_ms` after the last one, so a slow device
+//! updates less often instead of falling behind.
 //!
 //! Each answer goes straight to the chart (`live-embedding.js`) through a
 //! registered element; only the status line (loading, the update interval, an
@@ -19,11 +22,15 @@ use crate::format_time::format_time_display;
 use crate::recording_place::{file_place, file_week, Place};
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
+use classifier::catalog::ModelFile;
+use classifier::species_map::{MapSpec, BIRDNET_MAP, PERCH_MAP};
 use futures_channel::oneshot;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_core::audio::source::ChannelView;
-use oversample_ipc::classifier::{attach, FromWorker, ModelPart, ToWorker, EMBEDDING_LEN};
+use oversample_ipc::classifier::{
+    attach, FromWorker, ToWorker, EMBEDDING_LEN, PERCH_EMBEDDING_LEN,
+};
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -32,29 +39,207 @@ use wasm_bindgen::JsCast;
 use web_sys::{MessageEvent, Worker};
 
 const WORKER_URL: &str = "birdnet-worker_loader.js";
-/// Shortest gap between two requests. Measured on a desktop (Ryzen, Chrome),
-/// one reading takes about 120 to 200 ms, so 4 a second fits with room left
-/// for the classifier and the spectrogram. Slower devices are held back by
-/// the one-request-in-flight rule instead.
-const MIN_GAP_MS: f64 = 250.0;
 /// How often the loop checks whether a request can go out.
 const TICK_MS: u32 = 50;
 /// Seconds of readings kept for the trail and the strip.
 pub const HISTORY_S: f64 = 20.0;
 /// Seconds of trail on the map.
 const TRAIL_S: f64 = 15.0;
-/// Score a class needs somewhere in the history to get a row in the strip.
-const ROW_MIN: f32 = 0.1;
 /// Most rows in the strip; the ones with the lowest peak drop out first.
 const MAX_ROWS: usize = 8;
 /// Placement rule of the species map (`classifier::species_map`): the top 3
 /// classes pull the marker, but only those within the map's radius of the
 /// top class, so the marker never sits between unrelated groups.
 const PLACE_TOP: usize = 3;
-const PLACE_RADIUS: f32 = classifier::species_map::BIRDNET_MAP.radius;
 /// Recordings at or above this rate are usually bats or other ultrasound,
-/// which BirdNET (0 to 15 kHz) does not hear.
+/// which neither model hears (BirdNET 0 to 15 kHz, Perch 60 Hz to 16 kHz).
 pub const ULTRASONIC_RATE: u32 = 96_000;
+
+/// What differs between the models the live view can run.
+pub struct LiveModel {
+    pub method: Method,
+    /// The model's name in the view's text.
+    pub name: &'static str,
+    /// The files the worker loads, in this order. All must be downloaded.
+    pub parts: &'static [&'static ModelFile],
+    pub labels: &'static ModelFile,
+    /// Length of a reading, in seconds (the model's window).
+    pub window_s: f64,
+    pub embedding_len: usize,
+    /// The t-SNE species map; its radius is the placement radius there.
+    pub map: &'static MapSpec,
+    /// UMAP layout of the classes (same format as the species map file).
+    pub umap_file: &'static str,
+    /// Placement radius on the UMAP layout.
+    pub umap_radius: f32,
+    /// Principal components of the class rows (the default), and of
+    /// recordings' embeddings (`?pc=rec`), if made.
+    pub pc_file: &'static str,
+    pub pc_rec_file: Option<&'static str>,
+    /// What lies at the low and high end of each class-row component, for
+    /// the small maps' tooltips. Empty when not worked out.
+    pub pc_ends: &'static [[&'static str; 2]],
+    /// Shortest gap between two requests, in ms.
+    pub min_gap_ms: f64,
+    /// Readings averaged for the component graphs (about 1 s of them).
+    pub pc_smooth: usize,
+    /// Score a class needs somewhere in the history to get a row in the strip.
+    pub row_min: f32,
+    /// Said under the readout for bat recordings.
+    pub hearing: &'static str,
+}
+
+/// Classes sit closer together on BirdNET's UMAP layout (the 10th nearest
+/// neighbour is at 0.023 map units, against 0.031 on t-SNE), so the radius
+/// within which the top classes pull the marker is smaller by the same share.
+const BIRDNET_UMAP_RADIUS: f32 = BIRDNET_MAP.radius * 0.73;
+
+pub const BIRDNET: LiveModel = LiveModel {
+    method: Method::BirdNet,
+    name: "BirdNET",
+    parts: &[&catalog::BACKBONE],
+    labels: &catalog::BIRDNET_LABELS,
+    window_s: 3.0,
+    embedding_len: EMBEDDING_LEN,
+    map: &BIRDNET_MAP,
+    umap_file: "birdnet-umap.bin",
+    umap_radius: BIRDNET_UMAP_RADIUS,
+    pc_file: PC_FILE_ROWS,
+    pc_rec_file: Some("birdnet-pc.bin"),
+    pc_ends: &[
+        ["Amazonian antshrikes and antbirds", "larks"],
+        [
+            "waterbirds: cormorants, gulls, herons",
+            "Andean tanagers and warblers",
+        ],
+        [
+            "southern seabirds and waterfowl",
+            "Asian flycatchers and drongos",
+        ],
+        [
+            "African larks and scrub robins",
+            "North American woodpeckers and warblers",
+        ],
+        [
+            "North American warblers and sparrows",
+            "African and Asian forest birds",
+        ],
+        [
+            "North American orioles and thrashers",
+            "a mix: canastero, flowerpecker, bay owl, hornbill",
+        ],
+        [
+            "dry-country thrashers, meadowlark, wheatear",
+            "South Asian sunbirds, coucal, crow",
+        ],
+        [
+            "terns and Asian forest birds",
+            "African doves, turacos, coucals",
+        ],
+        [
+            "South Asian laughingthrushes and babblers",
+            "Australian and New Guinea birds: cockatoos, honeyeaters, bowerbird",
+        ],
+        [
+            "a mix: harrier, crake, thornbird, hornero, plover",
+            "European crows, jays and tits",
+        ],
+        [
+            "South American pigeons, tinamou, motmot",
+            "a mix: hummingbird, booby, avocet, grebe",
+        ],
+        [
+            "Himalayan warblers, treecreepers and tits",
+            "a mix: antpitta, frogmouth, myna, drongo",
+        ],
+    ],
+    // Measured on a desktop (Ryzen, Chrome), one reading takes about 120 to
+    // 200 ms, so 4 a second fits with room left for the classifier and the
+    // spectrogram. Slower devices are held back by the one-request-in-flight
+    // rule instead.
+    min_gap_ms: 250.0,
+    pc_smooth: 4,
+    row_min: 0.1,
+    hearing: "BirdNET hears up to 15 kHz, so bat calls do not show here.",
+};
+
+pub const PERCH: LiveModel = LiveModel {
+    method: Method::Perch,
+    name: "Perch 2.0",
+    parts: &[&catalog::PERCH_EMBEDDING, &catalog::PERCH_CLASSIFIER],
+    labels: &catalog::PERCH_LABELS,
+    window_s: 5.0,
+    embedding_len: PERCH_EMBEDDING_LEN,
+    map: &PERCH_MAP,
+    umap_file: "perch-umap.bin",
+    umap_radius: PERCH_UMAP_RADIUS,
+    pc_file: "perch-pc-rows.bin",
+    pc_rec_file: None,
+    // From the classes at each end in perch_live_data.txt, and the share of
+    // classes with an eBird code (birds) in each outer tenth.
+    pc_ends: &[
+        ["mostly frogs, insects and mammals", "mostly birds"],
+        ["tropical birds and frogs", "European bush-crickets"],
+        [
+            "Amazonian frogs and forest birds",
+            "Andean hummingbirds and tanagers",
+        ],
+        [
+            "drongos, cats and deer",
+            "tropical American hummingbirds and forest birds",
+        ],
+        [
+            "cicadas and katydids",
+            "large mammals: horses, camels, deer, pigs",
+        ],
+        ["drongos and other Asian forest birds", "cicadas"],
+        ["wheatears, larks and shrikes", "cicadas and katydids"],
+        [
+            "tropical American forest birds",
+            "larks and other open-country birds",
+        ],
+        ["cicadas", "frogs"],
+        [
+            "a mix: seedeaters, antwren, manakin, flamingo",
+            "owls, frogmouths and other night birds",
+        ],
+        ["a mix: frogs, owl, potoo, seedeaters", "crickets"],
+        [
+            "cicadas and snakes",
+            "a mix: hornbills, oropendola, woodpeckers",
+        ],
+    ],
+    // One reading takes about 400 ms in the browser (research/perch.md: 391
+    // to 428 ms per window, embedding model and classifier), so the gap
+    // rarely holds a request back; the one-request-in-flight rule does.
+    min_gap_ms: 500.0,
+    pc_smooth: 2,
+    // A third of Perch's default minimum confidence (0.30): above the median
+    // share of the animals Perch heard in rain (0.02) and traffic (0.07),
+    // below that of correct detections (0.72 birds, 0.47 insects). See
+    // research/live-embedding/README.md.
+    row_min: 0.1,
+    hearing: "Perch 2.0 hears up to 16 kHz, so bat calls do not show here.",
+};
+
+/// Placement radius on Perch's UMAP layout: the t-SNE map's 0.09, scaled by
+/// how much closer classes sit on the UMAP layout (the 10th nearest class is
+/// at 0.0134 map units, against 0.0201 on t-SNE;
+/// `research/live-embedding/perch_live_data.txt`).
+const PERCH_UMAP_RADIUS: f32 = PERCH_MAP.radius * 0.67;
+
+/// The live view's model for `method`: Perch for Perch, else BirdNET.
+pub fn model_for(method: Method) -> &'static LiveModel {
+    match method {
+        Method::Perch => &PERCH,
+        Method::BirdNet | Method::Bats => &BIRDNET,
+    }
+}
+
+/// The model the worker runs now (or last ran).
+pub fn active() -> &'static LiveModel {
+    model_for(MODEL.with(|m| m.get()))
+}
 
 /// What the live view is doing, for its status line.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -102,6 +287,12 @@ impl Drop for Link {
 }
 
 thread_local! {
+    /// The method picked in the Call detection tab, for its live view.
+    static PICKED: Cell<Method> = const { Cell::new(Method::BirdNet) };
+    /// The model of the running worker: see [`wanted`].
+    static MODEL: Cell<Method> = const { Cell::new(Method::BirdNet) };
+    /// The model that `LABELS`, `MAP`, `PCS` and `PC_UMAP` are for.
+    static DATA_FOR: Cell<Option<Method>> = const { Cell::new(None) };
     static LINK: RefCell<Option<Link>> = const { RefCell::new(None) };
     /// Goes up with each start and stop; an older loop stops when it changes.
     static GENERATION: Cell<u32> = const { Cell::new(0) };
@@ -173,16 +364,14 @@ struct Preview {
 
 /// Wait after the play-start position stops changing before reading it.
 const PREVIEW_DEBOUNCE_MS: f64 = 300.0;
-/// Length of a reading, in seconds (BirdNET's window).
-const WINDOW_S: f64 = 3.0;
 
-/// The window a paused reading covers: the 3 s starting at `start`, moved
-/// back to end at the end of the file when fewer than 3 s are left, and
-/// shorter only when the file is. Seconds.
-fn preview_window(start: f64, duration: f64) -> (f64, f64) {
+/// The window a paused reading covers: the `window` seconds starting at
+/// `start`, moved back to end at the end of the file when fewer are left,
+/// and shorter only when the file is. Seconds.
+fn preview_window(start: f64, duration: f64, window: f64) -> (f64, f64) {
     let duration = duration.max(0.0);
-    let from = start.min(duration - WINDOW_S).max(0.0);
-    (from, (from + WINDOW_S).min(duration))
+    let from = start.min(duration - window).max(0.0);
+    (from, (from + window).min(duration))
 }
 
 /// The live view in the Call detection tab.
@@ -205,39 +394,28 @@ pub struct SessionPoint {
     pub scores: Option<Vec<f32>>,
 }
 
-/// The component maps' data with `?pc=rec` in the address: PCA of
-/// recordings' embeddings (8 components), made by
-/// `research/live-embedding/pc_rec.py`.
-const PC_FILE: &str = "birdnet-pc.bin";
-/// The default: PCA of BirdNET's class rows (12 components), made by
-/// `pc_bands.py`. The count comes from the file's header.
+/// BirdNET's default component maps: PCA of its class rows (12 components),
+/// made by `research/live-embedding/pc_bands.py`. The count comes from the
+/// file's header. With `?pc=rec` in the address, the PCA of recordings'
+/// embeddings (`pc_rec.py`) instead.
 pub const PC_FILE_ROWS: &str = "birdnet-pc-rows.bin";
-/// Readings averaged for the component graphs: 4 at 0.25 s apart, so a line
-/// settles within about a second.
-const PC_SMOOTH: usize = 4;
 
-/// UMAP layout of the classes (`species_umap.py`), same format as the
-/// species map file.
-const PC_UMAP_FILE: &str = "birdnet-umap.bin";
-
-/// Classes sit closer together on the UMAP layout (the 10th nearest
-/// neighbour is at 0.023 map units, against 0.031 on t-SNE), so the radius
-/// within which the top classes pull the marker is smaller by the same share.
-const PLACE_RADIUS_UMAP: f32 = PLACE_RADIUS * 0.73;
-
-/// True for the components of BirdNET's class rows, the default. False when
-/// the address asks for the components of recordings' embeddings
-/// (`?pc=rec`).
-fn pc_rows() -> bool {
-    !web_sys::window()
-        .and_then(|w| w.location().search().ok())
-        .is_some_and(|s| s.contains("pc=rec"))
+/// True for the components of the model's class rows, the default. False
+/// when the address asks for the components of recordings' embeddings
+/// (`?pc=rec`) and the model has them.
+fn pc_rows(model: &LiveModel) -> bool {
+    model.pc_rec_file.is_none()
+        || !web_sys::window()
+            .and_then(|w| w.location().search().ok())
+            .is_some_and(|s| s.contains("pc=rec"))
 }
 
-/// The first principal components of BirdNET's class rows (see
-/// `pc_bands.py`): each axis, where real recordings fall on it, and each
-/// class's percentile rank on it.
+/// The first principal components of a model's class rows (see
+/// `pc_bands.py`, `perch_live_data.py`): each axis, where real recordings
+/// fall on it, and each class's percentile rank on it.
 pub struct Components {
+    /// Values per axis: the embedding's length.
+    pub dim: usize,
     /// Share of the class rows' variance, per component.
     pub variance: Vec<f32>,
     axes: Vec<Vec<f32>>,
@@ -256,7 +434,7 @@ impl Components {
         }
         let u16_at = |i: usize| Some(u16::from_le_bytes([*b.get(i)?, *b.get(i + 1)?]) as usize);
         let (n, d, c, q) = (u16_at(4)?, u16_at(6)?, u16_at(8)?, u16_at(10)?);
-        if d != EMBEDDING_LEN || b.len() != 12 + 4 * (n + n * d + n * q) + n * c {
+        if d == 0 || b.len() != 12 + 4 * (n + n * d + n * q) + n * c {
             return None;
         }
         let mut at = 12;
@@ -273,6 +451,7 @@ impl Components {
         let quantiles = (0..n).map(|_| floats(q)).collect();
         let ranks = b[at..].chunks_exact(c).map(<[u8]>::to_vec).collect();
         Some(Components {
+            dim: d,
             variance,
             axes,
             quantiles,
@@ -283,7 +462,12 @@ impl Components {
     /// Where `embedding` falls on each component, as a percentile (0 to 1)
     /// among the reference recordings.
     pub fn percentiles(&self, embedding: &[f32]) -> Vec<f32> {
-        let norm = embedding.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-9);
+        let norm = embedding
+            .iter()
+            .map(|x| x * x)
+            .sum::<f32>()
+            .sqrt()
+            .max(1e-9);
         self.axes
             .iter()
             .zip(&self.quantiles)
@@ -334,13 +518,42 @@ pub fn set_enabled(state: AppState, on: bool) {
 
 /// Say whether view `who` ([`LIVE_VIEW`] or [`EXPLORER`]) wants readings. The
 /// worker starts with the first view and stops with the last; readings are
-/// cleared when it stops.
+/// cleared when it stops. It restarts when the model it should run changes
+/// (see [`wanted`]).
 pub fn set_user(state: AppState, who: u8, on: bool) {
     let before = USERS.with(|u| u.get());
     let after = if on { before | who } else { before & !who };
     USERS.with(|u| u.set(after));
-    if (before == 0) != (after == 0) {
+    let model_changed = after != 0 && wanted() != MODEL.with(|m| m.get());
+    if (before == 0) != (after == 0) || model_changed {
         restart(state);
+    }
+}
+
+/// Note the method picked in the Call detection tab, without restarting (the
+/// live view calls this before [`set_user`] when it is shown).
+pub fn set_picked(method: Method) {
+    PICKED.with(|p| p.set(method));
+}
+
+/// The method picked in the Call detection tab changed: run its model if the
+/// live view is shown.
+pub fn set_model(state: AppState, method: Method) {
+    set_picked(method);
+    let on = USERS.with(|u| u.get()) != 0;
+    if on && wanted() != MODEL.with(|m| m.get()) {
+        restart(state);
+    }
+}
+
+/// The model the worker should run: the one picked in the Call detection
+/// tab while its live view is shown, else BirdNET (the Live explorer on its
+/// own).
+fn wanted() -> Method {
+    if USERS.with(|u| u.get()) & LIVE_VIEW != 0 {
+        model_for(PICKED.with(|p| p.get())).method
+    } else {
+        Method::BirdNet
     }
 }
 
@@ -348,6 +561,28 @@ pub fn set_user(state: AppState, who: u8, on: bool) {
 /// model was downloaded).
 pub fn restart(state: AppState) {
     GENERATION.with(|g| g.set(g.get().wrapping_add(1)));
+    // Stopping keeps the model, so turning the view off and on again does
+    // not reload it.
+    let model = if USERS.with(|u| u.get()) == 0 {
+        MODEL.with(|m| m.get())
+    } else {
+        wanted()
+    };
+    if MODEL.with(|m| m.replace(model)) != model {
+        // Another model: the chart starts again with its species.
+        if let Some(el) = CHART.with(|c| c.borrow().clone()) {
+            call("dispose", &[&el]);
+        }
+        PAUSED_DRAWN.with(|p| p.set(None));
+    }
+    if DATA_FOR.with(|d| d.replace(Some(model))) != Some(model) {
+        // Another model's labels, maps and components: start() loads this
+        // one's.
+        LABELS.with(|l| *l.borrow_mut() = None);
+        MAP.with(|m| *m.borrow_mut() = None);
+        PCS.with(|p| *p.borrow_mut() = None);
+        PC_UMAP.with(|u| *u.borrow_mut() = None);
+    }
     LINK.with(|l| *l.borrow_mut() = None);
     IN_FLIGHT.with(|f| f.set(None));
     HISTORY.with(|h| h.borrow_mut().clear());
@@ -403,7 +638,7 @@ pub fn with_spectrum<R>(f: impl FnOnce(Option<&Spectrum>) -> R) -> R {
     SPECTRUM.with(|s| f(s.borrow().as_ref()))
 }
 
-/// The name of BirdNET class `c`.
+/// The name of class `c` of the active model.
 pub fn class_name(c: usize) -> String {
     LABELS
         .with(|l| {
@@ -423,43 +658,54 @@ pub fn set_chart(el: Option<web_sys::HtmlElement>) {
 }
 
 async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
-    if !classifier::store::is_downloaded(&catalog::BACKBONE).await
-        || !classifier::store::is_downloaded(&catalog::BIRDNET_LABELS).await
-    {
-        return Err(LiveStatus::NeedsDownload);
+    let model = active();
+    for f in model.parts.iter().copied().chain([model.labels]) {
+        if !classifier::store::is_downloaded(f).await {
+            return Err(LiveStatus::NeedsDownload);
+        }
     }
     state.classifier.live().set(LiveStatus::Loading);
     let fail = |e: String| LiveStatus::Failed(e);
-    let labels = classifier::birdnet_labels(state)
-        .await
-        .map_err(|e| fail(e.to_string()))?;
+    let labels = match model.method {
+        Method::Perch => classifier::perch_labels(state).await,
+        Method::BirdNet | Method::Bats => classifier::birdnet_labels(state).await,
+    }
+    .map_err(|e| fail(e.to_string()))?;
     LABELS.with(|l| *l.borrow_mut() = Some(labels));
+    let fetch = crate::components::file_sidebar::fetch_bytes;
     if MAP.with(|m| m.borrow().is_none()) {
         // The map is optional: without it the strip still works.
-        if let Ok(bytes) =
-            crate::components::file_sidebar::fetch_bytes(classifier::species_map::BIRDNET_MAP.file)
-                .await
-        {
+        if let Ok(bytes) = fetch(model.map.file).await {
             let m = classifier::species_map::parse_map(&bytes);
             MAP.with(|c| *c.borrow_mut() = Some(Arc::new(m)));
         }
     }
     if PCS.with(|m| m.borrow().is_none()) {
         // Optional too: without it the component maps are not shown.
-        let file = if pc_rows() { PC_FILE_ROWS } else { PC_FILE };
-        if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes(file).await {
-            if let Some(c) = Components::parse(&bytes) {
+        let file = match model.pc_rec_file {
+            Some(rec) if !pc_rows(model) => rec,
+            _ => model.pc_file,
+        };
+        if let Ok(bytes) = fetch(file).await {
+            if let Some(c) = Components::parse(&bytes).filter(|c| c.dim == model.embedding_len) {
                 PCS.with(|p| *p.borrow_mut() = Some(Arc::new(c)));
             }
         }
-        if let Ok(bytes) = crate::components::file_sidebar::fetch_bytes(PC_UMAP_FILE).await {
+    }
+    if PC_UMAP.with(|m| m.borrow().is_none()) {
+        // Optional: without it the maps use the t-SNE layout only.
+        if let Ok(bytes) = fetch(model.umap_file).await {
             let m = classifier::species_map::parse_map(&bytes);
             PC_UMAP.with(|u| *u.borrow_mut() = Some(Arc::new(m)));
         }
     }
-    let bytes = classifier::store::read_js(&catalog::BACKBONE)
-        .await
-        .map_err(|e: ClassifierError| fail(e.to_string()))?;
+    let mut files = Vec::new();
+    for f in model.parts {
+        let bytes = classifier::store::read_js(f)
+            .await
+            .map_err(|e: ClassifierError| fail(e.to_string()))?;
+        files.push((*f, bytes));
+    }
     if generation() != gen {
         return Err(LiveStatus::Off);
     }
@@ -472,25 +718,30 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
         Ok(Err(e)) => return Err(fail(e)),
         Err(_) => return Err(LiveStatus::Off),
     }
-    let (tx, rx) = oneshot::channel();
-    LINK.with(|l| {
-        if let Some(link) = l.borrow_mut().as_mut() {
-            link.loaded = Some(tx);
-            let buf = bytes.buffer();
-            post(
-                link,
-                &ToWorker::Load {
-                    key: catalog::BACKBONE.id.to_string(),
-                    part: ModelPart::Backbone,
-                },
-                Some((attach::BYTES, &buf)),
-            );
+    for (file, bytes) in files {
+        let Some(part) = file.part() else {
+            return Err(fail(format!("{} is not a model", file.id)));
+        };
+        let (tx, rx) = oneshot::channel();
+        LINK.with(|l| {
+            if let Some(link) = l.borrow_mut().as_mut() {
+                link.loaded = Some(tx);
+                let buf = bytes.buffer();
+                post(
+                    link,
+                    &ToWorker::Load {
+                        key: file.id.to_string(),
+                        part,
+                    },
+                    Some((attach::BYTES, &buf)),
+                );
+            }
+        });
+        match rx.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(fail(e)),
+            Err(_) => return Err(LiveStatus::Off),
         }
-    });
-    match rx.await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(fail(e)),
-        Err(_) => return Err(LiveStatus::Off),
     }
     state.classifier.live().set(LiveStatus::Ready {
         interval_ms: 0.0,
@@ -588,10 +839,10 @@ fn on_message(state: AppState, gen: u32, ev: MessageEvent) {
                     // Playback or the microphone started meanwhile: the live
                     // readings take over, and the next pause asks again.
                     PREVIEW_REQ.with(|p| p.set(None));
-                } else if payload.len() > EMBEDDING_LEN {
+                } else if payload.len() > active().embedding_len {
                     add_preview(state, key, &payload);
                 }
-            } else if payload.len() > EMBEDDING_LEN {
+            } else if payload.len() > active().embedding_len {
                 add_reading(state, payload, ms);
             }
         }
@@ -611,16 +862,17 @@ fn on_message(state: AppState, gen: u32, ev: MessageEvent) {
 }
 
 /// Where the audio comes from now: the microphone while it listens or
-/// records, else the playing file. Returns the samples (mono, the last 3 s and
-/// a little more) and their rate.
+/// records, else the playing file. Returns the samples (mono, the model's
+/// window, from the microphone a little more) and their rate.
 async fn current_audio(state: AppState) -> Option<(Vec<f32>, u32)> {
+    let window = active().window_s;
     let mic = state.mic.listening().get_untracked() || state.mic.recording().get_untracked();
     if mic {
         let rate = state.mic.sample_rate().get_untracked();
         if rate == 0 {
             return None;
         }
-        let want = (rate as f64 * 3.1) as usize;
+        let want = (rate as f64 * (window + 0.1)) as usize;
         let s = crate::audio::mic_backend::with_live_samples(state.is_tauri, |s| {
             s[s.len().saturating_sub(want)..].to_vec()
         });
@@ -639,7 +891,7 @@ async fn current_audio(state: AppState) -> Option<(Vec<f32>, u32)> {
     }
     let end = (state.playback.playhead_time().get_untracked().max(0.0) * rate as f64) as u64;
     let end = end.min(source.total_samples());
-    let start = end.saturating_sub((rate as f64 * 3.0) as u64);
+    let start = end.saturating_sub((rate as f64 * window) as u64);
     let len = (end - start) as usize;
     if len == 0 {
         return None;
@@ -661,8 +913,9 @@ fn sound_on(state: AppState) -> bool {
         || state.mic.recording().get_untracked()
 }
 
-/// The window a paused reading would cover now: the current file and the 3 s
-/// Play would start with. `None` with no file or a timeline open.
+/// The window a paused reading would cover now: the current file and the
+/// model's window that Play would start with. `None` with no file or a
+/// timeline open.
 fn preview_key(state: AppState) -> Option<PreviewKey> {
     let start = crate::audio::playback::play_start_time(&state)?;
     let idx = state.library.current_index().get_untracked()?;
@@ -670,7 +923,7 @@ fn preview_key(state: AppState) -> Option<PreviewKey> {
         .library
         .files()
         .with_untracked(|f| f.get(idx).map(|f| (f.id, f.audio.duration_secs)))?;
-    let (from, to) = preview_window(start, duration);
+    let (from, to) = preview_window(start, duration, active().window_s);
     let ms = |s: f64| (s * 1000.0).round() as i64;
     (to > from).then(|| (id, ms(from), ms(to)))
 }
@@ -728,7 +981,7 @@ async fn preview_tick(state: AppState, gen: u32, now: f64) {
         }
     }
     let busy = IN_FLIGHT.with(|f| f.get().is_some_and(|(_, t)| now - t < 5_000.0));
-    if !worker_ready() || busy || now - LAST_SENT.with(|l| l.get()) < MIN_GAP_MS {
+    if !worker_ready() || busy || now - LAST_SENT.with(|l| l.get()) < active().min_gap_ms {
         return;
     }
     let Some(idx) = state.library.current_index().get_untracked() else {
@@ -823,7 +1076,7 @@ async fn run_loop(state: AppState, gen: u32) {
         // after 5 s, so the view never stalls for good.
         let busy = IN_FLIGHT.with(|f| f.get().is_some_and(|(_, t)| now - t < 5_000.0));
         let want_reading =
-            worker_ready() && !busy && now - LAST_SENT.with(|l| l.get()) >= MIN_GAP_MS;
+            worker_ready() && !busy && now - LAST_SENT.with(|l| l.get()) >= active().min_gap_ms;
         let want_spectrum = USERS.with(|u| u.get()) & EXPLORER != 0
             && now - LAST_SPECTRUM.with(|l| l.get()) >= SPECTRUM_GAP_MS;
         if !want_reading && !want_spectrum {
@@ -837,6 +1090,7 @@ async fn run_loop(state: AppState, gen: u32) {
         }
         if want_spectrum {
             LAST_SPECTRUM.with(|l| l.set(now));
+            // The explorer's spectrum is of the last 3 s whichever model runs.
             let tail = &samples[samples.len().saturating_sub((rate as f64 * 3.0) as usize)..];
             // About 25 Hz per bin for birds, coarser for bats, within 512 to 8192.
             let nfft = ((rate as f64 / 25.0) as usize)
@@ -857,16 +1111,17 @@ async fn run_loop(state: AppState, gen: u32) {
 
 /// Keep the paused reading and draw it.
 fn add_preview(state: AppState, key: PreviewKey, payload: &[f32]) {
-    let scores = payload[EMBEDDING_LEN..].to_vec();
+    let model = active();
+    let scores = payload[model.embedding_len..].to_vec();
     let at = MAP.with(|m| {
         m.borrow()
             .as_ref()
-            .and_then(|m| place(&scores, m, PLACE_RADIUS))
+            .and_then(|m| place(&scores, m, model.map.radius))
     });
     let at_umap = PC_UMAP.with(|m| {
         m.borrow()
             .as_ref()
-            .and_then(|m| place(&scores, m, PLACE_RADIUS_UMAP))
+            .and_then(|m| place(&scores, m, model.umap_radius))
     });
     PREVIEW.with(|p| {
         *p.borrow_mut() = Some(Preview {
@@ -915,18 +1170,19 @@ fn flag_scores(state: AppState) -> Option<Arc<Vec<f32>>> {
 
 fn add_reading(state: AppState, payload: Vec<f32>, model_ms: f64) {
     let t = now_ms();
-    let (embedding, scores) = payload.split_at(EMBEDDING_LEN);
+    let model = active();
+    let (embedding, scores) = payload.split_at(model.embedding_len);
     let scores = scores.to_vec();
     let embedding = embedding.to_vec();
     let at = MAP.with(|m| {
         m.borrow()
             .as_ref()
-            .and_then(|m| place(&scores, m, PLACE_RADIUS))
+            .and_then(|m| place(&scores, m, model.map.radius))
     });
     let at_umap = PC_UMAP.with(|m| {
         m.borrow()
             .as_ref()
-            .and_then(|m| place(&scores, m, PLACE_RADIUS_UMAP))
+            .and_then(|m| place(&scores, m, model.umap_radius))
     });
     let pc = PCS.with(|p| {
         p.borrow()
@@ -949,7 +1205,9 @@ fn add_reading(state: AppState, payload: Vec<f32>, model_ms: f64) {
             })
         });
     }
-    if USERS.with(|u| u.get()) & EXPLORER != 0 {
+    // The explorer keeps BirdNET's readings only: its views and texts are
+    // BirdNET's. With Perch running it shows the spectrum alone.
+    if USERS.with(|u| u.get()) & EXPLORER != 0 && model.method == Method::BirdNet {
         SESSION.with(|ss| {
             let mut ss = ss.borrow_mut();
             if let Some(last) = ss.back_mut() {
@@ -1050,9 +1308,9 @@ pub fn top_classes(scores: &[f32], n: usize) -> Vec<(usize, f32)> {
 }
 
 /// Update the strip's rows from the history: a class gets a row once it
-/// scores [`ROW_MIN`] or more, keeps its place while it is in the history, and
+/// scores `row_min` or more, keeps its place while it is in the history, and
 /// the rows with the lowest peaks go first when there are too many.
-fn update_rows(history: &VecDeque<Reading>) -> Vec<u16> {
+fn update_rows(history: &VecDeque<Reading>, row_min: f32) -> Vec<u16> {
     let n = history.front().map_or(0, |r| r.scores.len());
     let mut peak = vec![0.0f32; n];
     for r in history {
@@ -1064,11 +1322,11 @@ fn update_rows(history: &VecDeque<Reading>) -> Vec<u16> {
     }
     ROWS.with(|rows| {
         let mut rows = rows.borrow_mut();
-        rows.retain(|&c| peak.get(c as usize).is_some_and(|&p| p >= ROW_MIN));
+        rows.retain(|&c| peak.get(c as usize).is_some_and(|&p| p >= row_min));
         // New rows, in the order they first reached the threshold.
         for r in history {
             for (c, &s) in r.scores.iter().enumerate() {
-                if s >= ROW_MIN && !rows.contains(&(c as u16)) {
+                if s >= row_min && !rows.contains(&(c as u16)) {
                     rows.push(c as u16);
                 }
             }
@@ -1094,7 +1352,8 @@ fn draw_view(state: AppState, view: PausedView) {
     let Some(el) = CHART.with(|c| c.borrow().clone()) else {
         return;
     };
-    let min = classifier::min_confidence_untracked(state, Method::BirdNet);
+    let model = active();
+    let min = classifier::min_confidence_untracked(state, model.method);
     let labels = LABELS.with(|l| l.borrow().clone());
     let name = |c: usize| -> String {
         labels
@@ -1150,7 +1409,7 @@ fn draw_view(state: AppState, view: PausedView) {
             return None;
         }
         let now = h.back().map_or(0.0, |r| r.t);
-        let rows = update_rows(&h);
+        let rows = update_rows(&h, model.row_min);
         let top_scores = match &preview {
             Some(p) => p.0.as_slice(),
             None if pending => &[],
@@ -1173,7 +1432,14 @@ fn draw_view(state: AppState, view: PausedView) {
                 // The UMAP place follows; the t-SNE place stands in for it
                 // when the UMAP file did not load.
                 let (ux, uy) = r.at_umap.unwrap_or((x, y));
-                Some((round3(x), round3(y), ago(r), round3(s), round3(ux), round3(uy)))
+                Some((
+                    round3(x),
+                    round3(y),
+                    ago(r),
+                    round3(s),
+                    round3(ux),
+                    round3(uy),
+                ))
             })
             .collect();
         let strip: Vec<_> = h
@@ -1201,7 +1467,7 @@ fn draw_view(state: AppState, view: PausedView) {
         let pc_hist: Vec<Vec<f32>> = (0..readings.len())
             .filter(|&i| !readings[i].pc.is_empty())
             .map(|i| {
-                let from = (i + 1).saturating_sub(PC_SMOOTH);
+                let from = (i + 1).saturating_sub(model.pc_smooth);
                 let group: Vec<&Reading> = readings[from..=i]
                     .iter()
                     .copied()
@@ -1234,6 +1500,13 @@ fn draw_view(state: AppState, view: PausedView) {
             "change": change,
             "history": HISTORY_S,
             "ultrasonic": RATE.with(|r| r.get()) >= ULTRASONIC_RATE,
+            "model": {
+                "name": model.name,
+                "hearing": model.hearing,
+                // Trail jumps longer than this are not joined: the placement
+                // radius on each layout.
+                "jump": [model.map.radius, model.umap_radius],
+            },
         }))
     });
     let Some(json) = json else { return };
@@ -1257,32 +1530,41 @@ fn draw_view(state: AppState, view: PausedView) {
                 (round3(x), round3(y), name(i), sci)
             })
             .collect();
-        // Each component's ranks, in the same order as the points.
-        pc_json = pcs.as_ref().map(|p| {
+        // The UMAP places and each component's ranks, in the same order as
+        // the points. Either can be missing (its file did not load).
+        let umap: Option<Vec<(f32, f32)>> = PC_UMAP.with(|u| {
+            u.borrow().as_ref().map(|u| {
+                kept.iter()
+                    .map(|&i| {
+                        let (x, y) = u.get(i).copied().flatten().unwrap_or((0.0, 0.0));
+                        (round3(x), round3(y))
+                    })
+                    .collect()
+            })
+        });
+        let (variance, ranks) = pcs.as_ref().map_or((Vec::new(), Vec::new()), |p| {
             let ranks: Vec<Vec<u8>> = p
                 .ranks
                 .iter()
-                .map(|r| kept.iter().map(|&i| r.get(i).copied().unwrap_or(0)).collect())
-                .collect();
-            let basis = if pc_rows() { "rows" } else { "recordings" };
-            let umap: Option<Vec<(f32, f32)>> = PC_UMAP.with(|u| {
-                u.borrow().as_ref().map(|u| {
+                .map(|r| {
                     kept.iter()
-                        .map(|&i| {
-                            let (x, y) = u.get(i).copied().flatten().unwrap_or((0.0, 0.0));
-                            (round3(x), round3(y))
-                        })
+                        .map(|&i| r.get(i).copied().unwrap_or(0))
                         .collect()
                 })
-            });
-            serde_json::json!({
-                "variance": p.variance,
-                "ranks": ranks,
-                "basis": basis,
-                "umap": umap,
-            })
-            .to_string()
+                .collect();
+            (p.variance.clone(), ranks)
         });
+        let rows = pc_rows(model);
+        pc_json = Some(
+            serde_json::json!({
+                "variance": variance,
+                "ranks": ranks,
+                "basis": if rows { "rows" } else { "recordings" },
+                "umap": umap,
+                "ends": if rows { model.pc_ends } else { &[] },
+            })
+            .to_string(),
+        );
         serde_json::json!(s).to_string()
     });
     let str_or_null = |s: Option<String>| s.map_or(JsValue::NULL, |s| JsValue::from_str(&s));
@@ -1333,7 +1615,7 @@ mod tests {
     #[test]
     fn place_ignores_far_classes() {
         let map = [Some((0.0, 0.0)), Some((0.1, 0.0)), Some((0.9, 0.9))];
-        let (x, y) = place(&[0.8, 0.8, 0.8], &map, PLACE_RADIUS).unwrap();
+        let (x, y) = place(&[0.8, 0.8, 0.8], &map, BIRDNET_MAP.radius).unwrap();
         assert!((x - 0.05).abs() < 1e-6 && y == 0.0, "{x} {y}");
     }
 
@@ -1348,20 +1630,34 @@ mod tests {
 
     #[test]
     fn preview_window_starts_at_play_start() {
-        assert_eq!(preview_window(12.4, 60.0), (12.4, 15.4));
-        assert_eq!(preview_window(0.0, 60.0), (0.0, 3.0));
+        assert_eq!(preview_window(12.4, 60.0, 3.0), (12.4, 15.4));
+        assert_eq!(preview_window(0.0, 60.0, 3.0), (0.0, 3.0));
+        assert_eq!(preview_window(12.5, 60.0, 5.0), (12.5, 17.5));
     }
 
     #[test]
-    fn preview_window_near_the_end_is_the_last_3_s() {
-        assert_eq!(preview_window(59.0, 60.0), (57.0, 60.0));
-        assert_eq!(preview_window(60.0, 60.0), (57.0, 60.0));
+    fn preview_window_near_the_end_is_the_last_window() {
+        assert_eq!(preview_window(59.0, 60.0, 3.0), (57.0, 60.0));
+        assert_eq!(preview_window(60.0, 60.0, 3.0), (57.0, 60.0));
+        assert_eq!(preview_window(59.0, 60.0, 5.0), (55.0, 60.0));
     }
 
     #[test]
     fn preview_window_of_a_short_file_is_the_whole_file() {
-        assert_eq!(preview_window(1.0, 2.0), (0.0, 2.0));
-        assert_eq!(preview_window(0.0, 0.0), (0.0, 0.0));
+        assert_eq!(preview_window(1.0, 2.0, 3.0), (0.0, 2.0));
+        assert_eq!(preview_window(0.0, 0.0, 3.0), (0.0, 0.0));
+        assert_eq!(preview_window(1.0, 4.0, 5.0), (0.0, 4.0));
+    }
+
+    #[test]
+    fn models_match_their_methods() {
+        for m in [&BIRDNET, &PERCH] {
+            assert_eq!(m.embedding_len, m.method.embedding_len());
+            assert_eq!(m.window_s, m.method.window_secs());
+            assert!(m.parts.iter().all(|f| f.part().is_some()));
+            assert!(m.pc_smooth >= 1);
+        }
+        assert_eq!(model_for(Method::Bats).method, Method::BirdNet);
     }
 
     #[test]
@@ -1373,9 +1669,21 @@ mod tests {
         assert_eq!(rows.variance.len(), 12);
         assert_eq!(rows.ranks.len(), 12);
         assert!(rows.ranks.iter().all(|r| r.len() == 6522));
+        assert_eq!(rows.dim, EMBEDDING_LEN);
+        assert_eq!(rows.variance.len(), BIRDNET.pc_ends.len());
         let rec = Components::parse(include_bytes!("../research/live-embedding/birdnet-pc.bin"))
             .expect("recording components");
         assert_eq!(rec.variance.len(), 8);
+        let perch = Components::parse(include_bytes!(
+            "../research/live-embedding/perch-pc-rows.bin"
+        ))
+        .expect("Perch's class-row components");
+        assert_eq!(perch.dim, PERCH_EMBEDDING_LEN);
+        assert_eq!(perch.variance.len(), PERCH.pc_ends.len());
+        assert!(perch
+            .ranks
+            .iter()
+            .all(|r| r.len() == oversample_ipc::classifier::PERCH_CLASSES));
     }
 
     #[test]

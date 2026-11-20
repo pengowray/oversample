@@ -1,12 +1,14 @@
-# Live BirdNET view (experimental)
+# Live view (experimental): BirdNET and Perch 2.0
 
-A view in the Call detection tab (BirdNET picked, "Live view" switched on)
-that shows what BirdNET V2.4 hears in the last 3 s of audio, a few times a
-second, while a file plays or the microphone listens. Code:
-`src/live_embedding.rs` (worker, requests, placement, strip rows),
-`live-embedding.js` (charts, Apache ECharts), and
-`src/components/file_sidebar/call_detection_panel/live_view.rs` (switch and
-status line). The worker message is `ToWorker::Live` in
+A view in the Call detection tab (BirdNET or Perch 2.0 picked, "Live view"
+switched on) that shows what the model hears in the last 3 s (BirdNET V2.4)
+or 5 s (Perch 2.0) of audio, a few times a second, while a file plays or the
+microphone listens. Most of this page describes BirdNET, the first model the
+view ran; [Perch 2.0](#perch-20) lists what differs with Perch. Code:
+`src/live_embedding.rs` (worker, requests, placement, strip rows, and the
+`BIRDNET` and `PERCH` model settings), `live-embedding.js` (charts, Apache
+ECharts), and `src/components/file_sidebar/call_detection_panel/live_view.rs`
+(switch and status line). The worker message is `ToWorker::Live` in
 `oversample-ipc/src/classifier.rs`.
 
 ## How it runs
@@ -45,6 +47,128 @@ In the app, the live view and the classifier agreed on the test recordings:
 | XC1099081 Common Swift (384 kHz) | Pallid Swift 0.92 | Pallid Swift 0.75 at the moment checked |
 | XC1160798 Lesser Whistling Duck (192 kHz) | Watercock 0.85 | Watercock 0.58, Lesser Whistling Duck in the strip |
 | XC1078076 Northern Screamer | | No species at 0.50 or above; Scrub Greenlet 0.25 highest |
+
+## Perch 2.0
+
+With Perch 2.0 picked as the method, the same view runs Perch (added
+2026-11-20). Everything in the sections below works the same way, with these
+values (`PERCH` and `BIRDNET` in `src/live_embedding.rs`):
+
+| | BirdNET V2.4 | Perch 2.0 |
+|---|---|---|
+| Reading | last 3 s, resampled to 48 kHz | last 5 s, resampled to 32 kHz |
+| Answer | 1,024-value embedding, 6,522 scores (sigmoid) | 1,536-value embedding, 14,795 softmax shares (the numbers a Perch run gives) |
+| Minimum confidence | BirdNET's setting | Perch's own setting (default 0.30) |
+| Shortest gap between requests | 250 ms | 500 ms |
+| Readings averaged in the component graphs | 4 (about 1 s) | 2 (about 1 s) |
+| t-SNE map and placement radius | `birdnet-map.bin`, 0.15 | `perch-map.bin`, 0.09 |
+| UMAP layout and placement radius | `birdnet-umap.bin`, 0.11 | `perch-umap.bin`, 0.06 |
+| Component maps | `birdnet-pc-rows.bin` (12), or `birdnet-pc.bin` with `?pc=rec` | `perch-pc-rows.bin` (12); no recordings file, so `?pc=rec` does nothing |
+| Score for a row in the strip | 0.1 | 0.1 |
+| Note for bat recordings | "BirdNET hears up to 15 kHz, so bat calls do not show here." | "Perch 2.0 hears up to 16 kHz, so bat calls do not show here." |
+
+- **One model at a time.** The worker holds the model picked in the tab while
+  the live view is shown. Picking the other method stops the worker, clears
+  the readings and the chart, and starts it again with the other model (the
+  chart then gets that model's species). The worker loads Perch's two files
+  (embedding model, then classifier), about 230 MB of WASM memory.
+- **Live explorer** stays on BirdNET: on its own it runs BirdNET as before.
+  While the live view in the Call detection tab runs Perch, the explorer keeps
+  no readings and shows the spectrum only, with the status line "Only the
+  spectrum updates while the live view in the Call detection tab uses Perch
+  2.0."
+- **Row threshold, 0.1.** Perch's scores are softmax shares, so classes in
+  one window compete and a second class rarely gets far when the first is
+  high. 0.1 is a third of Perch's default minimum (0.30). In
+  `research/perch.md`, animals Perch named in recordings of rain had a median
+  share of 0.02, traffic 0.07 and wind 0.20; correct top classes had medians
+  of 0.72 (birds) and 0.47 (grasshoppers and crickets), at least 0.03. So 0.1
+  leaves most rain and traffic guesses out of the strip and keeps most real
+  calls; wind guesses get rows, as BirdNET's weak guesses do at the same
+  value.
+- **Parity:** `perch_live_matches_the_run` in
+  `birdnet-worker/tests/real_models.rs` (`PERCH_MODELS_DIR`): on the Pauraque
+  recording, a Live reading of a run's 5 s window has the same top class, the
+  same share to within 0.001 (live 0.862, 0.805, 0.767 and 0.823; the run
+  0.862, 0.805, 0.768 and 0.823), and
+  embedding cosine 0.99999 or more. 267 to 319 ms per reading natively
+  (release build, run beside the BirdNET test).
+- **Time per reading in the browser** (release build, headless Chromium,
+  Pauraque recording at 192 kHz playing, 2026-11-20): 540 to 690 ms per
+  reading (resampling, embedding model and classifier), readings every 0.65
+  to 0.75 s. `research/perch.md` measured 391 to 428 ms per window for the
+  models alone in a quiet test page; here the app plays and draws at the same
+  time. BirdNET in the same run: 190 ms, every 0.25 s, as before. The
+  readings stay under a second, so the 500 ms gap rarely holds one back; the
+  status line reports the measured interval as for BirdNET. Checked in the
+  same run: download of both models, the paused reading ("The 5 s from where
+  Play starts"), Perch's readings with 12 component maps on the UMAP layout,
+  switching to BirdNET (its own species, layout and readings) and back, and
+  that `perch-umap.bin` and `perch-pc-rows.bin` are served.
+
+### Perch data files
+
+Made by `perch_live_data.py` (output in `perch_live_data.txt`), the Perch
+version of `species_umap.py` and `pc_bands.py`:
+
+```
+python -I perch_live_data.py perch_v2_head.npz labels.csv perch_v2_ebird_classes.csv \
+    birdnet_labels.txt ../species-map/perch-map.bin . \
+    HSN_hp/emb_raw.npz POW/emb_raw.npz --spatial HSN_hp/spatial_raw.npy
+```
+
+- **Class vectors:** the weighted mean of each class's 4 prototypes, scaled
+  to length 1, as `research/species-map/project_perch.py` uses for
+  `perch-map.bin`. The 53 classes whose prototype weights are all 0 are left
+  out (no position; middle rank on every component).
+- **UMAP layout** (`perch-umap.bin`, same format as `perch-map.bin`): umap-learn
+  is not installed on this machine, so the script runs the app's vendored
+  umap-js (`umap_js.cjs`, seeded, so the file is the same each run) on the
+  class vectors after PCA to 50 dimensions, scaled back to length 1 so
+  euclidean distance there follows cosine distance. 15 neighbours, minimum
+  distance 0.1: 20 s. 50 neighbours: 42 s, slightly less compact. Classes sit
+  closer on it than on the t-SNE map (10th nearest class at 0.0134 map units
+  against 0.0201), so the placement radius is 0.09 x 0.67 = 0.06.
+- **Components** (`perch-pc-rows.bin`, the OPC1 layout of `pc_bands.py` with
+  1,536 dimensions and 14,795 classes): PCA of the class vectors. Shares of
+  variance, PC1 to PC12: 2.32, 1.23, 1.05, 0.94, 0.93, 0.83, 0.77, 0.73,
+  0.66, 0.64, 0.62 and 0.62% (the same PCA with each column shuffled: 0.21%
+  for the first). Kept by the rule BirdNET's file used: while the share of a
+  class's 10 nearest neighbours on the UMAP layout in the same half stays at
+  0.65 or more. PC1 to PC12: 0.67, 0.70, 0.76, 0.72, 0.73, 0.73, 0.70, 0.70,
+  0.69, 0.68, 0.66, 0.67; PC13 0.64 (t-SNE 0.65 to 0.75 for PC1 to PC12).
+- **Percentiles of a reading:** BirdSet's HSN and POW test sets already had
+  Perch embeddings (`emb_raw.npz`, key `perch`, from
+  `batchi-noisier2noise/birdset_embed.py`), so the reference quantiles come
+  from 16,560 real recordings' windows, as for BirdNET. As with BirdNET, the
+  readings sit to one side of the class vectors on some axes: the share of
+  readings outside the classes' 5 to 95% range is 0.38 on PC2, 0.26 on PC8
+  and 0.17 on PC7 (0.1 if spread alike).
+- **Check** (1,500 HSN windows, full logits from the stored spatial
+  embeddings; the 208 with a class at 0.3 or more): reading percentile
+  against its top class's percentile, mean gap / shuffled gap / correlation.
+  PC1 0.458 / 0.451 / -0.03, PC2 0.245 / 0.253 / 0.14, PC3 0.178 / 0.204 /
+  0.18, PC4 0.287 / 0.290 / 0.13, PC5 0.212 / 0.269 / 0.32, PC6 0.248 /
+  0.273 / 0.53, PC7 0.253 / 0.291 / 0.30, PC8 0.195 / 0.261 / 0.45, PC9
+  0.284 / 0.285 / 0.01, PC10 0.344 / 0.360 / 0.18, PC11 0.230 / 0.286 /
+  0.49, PC12 0.162 / 0.184 / 0.26. Like BirdNET's class-row components, a
+  reading's percentile follows its top class's only loosely; on PC1 and PC9
+  not at all. HSN is one North American set, all birds.
+- **Component ends** (the tooltip's "Low end" and "High end"), from the 12
+  classes at each end and the share of classes with an eBird code (birds) in
+  each outer tenth: PC1 mostly frogs, insects and mammals / mostly birds;
+  PC2 tropical birds and frogs / European bush-crickets; PC3 Amazonian frogs
+  and forest birds / Andean hummingbirds and tanagers; PC4 drongos, cats and
+  deer / tropical American hummingbirds and forest birds; PC5 cicadas and
+  katydids / large mammals (horses, camels, deer, pigs); PC6 drongos and
+  other Asian forest birds / cicadas; PC7 wheatears, larks and shrikes /
+  cicadas and katydids; PC8 tropical American forest birds / larks and other
+  open-country birds; PC9 cicadas / frogs; PC10 a mix (seedeaters, antwren,
+  manakin, flamingo) / owls, frogmouths and other night birds; PC11 a mix
+  (frogs, owl, potoo, seedeaters) / crickets; PC12 cicadas and snakes / a mix
+  (hornbills, oropendola, woodpeckers). Where Perch's labels have no English
+  name the script prints the scientific name only, so the insect, frog and
+  mammal groups are named from their genera.
 
 ## What the view shows, and why
 
@@ -342,10 +466,11 @@ space (see the parity test).
 
 - The paused reading needs the region decoded: for a long file still
   streaming in, it waits until that part is loaded.
-- Bat and other ultrasonic recordings: BirdNET hears 0 to 15 kHz. For audio
-  at 96 kHz or more the view says "BirdNET hears up to 15 kHz, so bat calls
-  above that do not show here." It still runs, since such recordings often
-  have birds or insects in the audible band too.
+- Bat and other ultrasonic recordings: BirdNET hears 0 to 15 kHz, Perch 60 Hz
+  to 16 kHz. For audio at 96 kHz or more, when nothing reaches the minimum
+  confidence, the view says "BirdNET hears up to 15 kHz, so bat calls do not
+  show here." (or the same for Perch 2.0 at 16 kHz). It still runs, since
+  such recordings often have birds or insects in the audible band too.
 - During playback the view reads the file's original audio, not what the
   playback mode (heterodyne, time expansion) makes of it.
 - When the window is in the background the browser slows its animation

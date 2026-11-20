@@ -1,31 +1,43 @@
-//! The experimental live BirdNET view in the Call detection tab: a switch, a
-//! status line, and the chart that `crate::live_embedding` draws into.
+//! The experimental live view in the Call detection tab, for BirdNET or Perch
+//! (the method picked in the tab): a switch, a status line, and the chart that
+//! `crate::live_embedding` draws into.
 //!
 //! The worker runs only while the switch is on and this section is shown;
-//! leaving the tab stops it, coming back starts it again.
+//! leaving the tab stops it, coming back starts it again, and picking the
+//! other method restarts it with that model.
 
-use crate::classifier::{catalog, DownloadStatus};
+use crate::classifier::{DownloadStatus, Method};
 use crate::live_embedding::{self, LiveStatus};
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
 
 #[component]
-pub(super) fn LiveView() -> impl IntoView {
+pub(super) fn LiveView(
+    /// BirdNET or Perch: the method picked in the tab.
+    #[prop(into)]
+    method: Signal<Method>,
+) -> impl IntoView {
     let state = expect_context::<AppState>();
     let on = move || state.classifier.live_on().get();
+    let model = move || live_embedding::model_for(method.get());
+    live_embedding::set_picked(method.get_untracked());
     if state.classifier.live_on().get_untracked() {
         live_embedding::set_user(state, live_embedding::LIVE_VIEW, true);
     }
     // Leaving the tab stops this view's readings; the switch is remembered.
     on_cleanup(move || live_embedding::set_user(state, live_embedding::LIVE_VIEW, false));
+    // The other method picked: its model replaces the running one.
+    Effect::new(move |_| live_embedding::set_model(state, method.get()));
 
-    // Start once BirdNET has been downloaded, if the switch was turned on before.
+    // Start once the model has been downloaded, if the switch was turned on before.
     Effect::new(move |_| {
-        let ready = state.classifier.downloads().with(|m| {
-            [&catalog::BACKBONE, &catalog::BIRDNET_LABELS]
+        let m = model();
+        let ready = state.classifier.downloads().with(|d| {
+            m.parts
                 .iter()
-                .all(|f| matches!(m.get(f.id), Some(DownloadStatus::Downloaded)))
+                .chain([&m.labels])
+                .all(|f| matches!(d.get(f.id), Some(DownloadStatus::Downloaded)))
         });
         let waiting = state
             .classifier
@@ -71,12 +83,14 @@ pub(super) fn LiveView() -> impl IntoView {
     };
     let status = move || match state.classifier.live().get() {
         LiveStatus::Off => None,
-        LiveStatus::NeedsDownload => {
-            Some("Download BirdNET below to use the live view.".to_string())
-        }
-        LiveStatus::Loading => Some("Loading BirdNET\u{2026}".to_string()),
+        LiveStatus::NeedsDownload => Some(format!(
+            "Download {} below to use the live view.",
+            model().name
+        )),
+        LiveStatus::Loading => Some(format!("Loading {}\u{2026}", model().name)),
         LiveStatus::Ready { interval_ms, .. } if interval_ms > 0.0 && sound_on() => Some(format!(
-            "The last 3 s of audio, updated every {:.2} s",
+            "The last {} s of audio, updated every {:.2} s",
+            model().window_s,
             interval_ms / 1000.0
         )),
         LiveStatus::Ready { .. } if sound_on() => Some("Starting\u{2026}".to_string()),
@@ -87,14 +101,20 @@ pub(super) fn LiveView() -> impl IntoView {
             if state.library.current_index().get().is_some()
                 && state.timeline.active().with(Option::is_none) =>
         {
-            Some("The 3 s from where Play starts (blue triangle on the map)".to_string())
+            Some(format!(
+                "The {} s from where Play starts (blue triangle on the map)",
+                model().window_s
+            ))
         }
         LiveStatus::Ready { .. } => Some("Play a file or listen with the microphone.".to_string()),
         LiveStatus::Failed(e) => Some(format!("Live view stopped: {e}")),
     };
     let model_time = move || match state.classifier.live().get() {
         LiveStatus::Ready { model_ms, .. } if model_ms > 0.0 => {
-            format!("BirdNET takes {model_ms:.0} ms for each reading on this device.")
+            format!(
+                "{} takes {model_ms:.0} ms for each reading on this device.",
+                model().name
+            )
         }
         _ => String::new(),
     };

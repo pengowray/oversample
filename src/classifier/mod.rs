@@ -251,6 +251,12 @@ pub async fn birdnet_labels(state: AppState) -> Result<Arc<Vec<SpeciesLabel>>, C
     labels(state, &catalog::BIRDNET_LABELS).await
 }
 
+/// Perch's labels, read from the stored label file, with English names where
+/// they are known.
+pub async fn perch_labels(state: AppState) -> Result<Arc<Vec<SpeciesLabel>>, ClassifierError> {
+    labels(state, &catalog::PERCH_LABELS).await
+}
+
 async fn labels(
     state: AppState,
     file: &'static ModelFile,

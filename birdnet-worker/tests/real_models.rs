@@ -650,7 +650,10 @@ fn perch_live_matches_the_run() {
         assert_eq!(live.len(), PERCH_EMBEDDING_LEN + PERCH_CLASSES);
         let (embedding, scores) = live.split_at(PERCH_EMBEDDING_LEN);
         let total: f32 = scores.iter().sum();
-        assert!((total - 1.0).abs() < 1e-3, "softmax shares add up to {total}");
+        assert!(
+            (total - 1.0).abs() < 1e-3,
+            "softmax shares add up to {total}"
+        );
         let (best, score) = scores
             .iter()
             .enumerate()
