@@ -81,6 +81,10 @@ pub struct LiveModel {
     pub pc_ends: &'static [[&'static str; 2]],
     /// Shortest gap between two requests, in ms.
     pub min_gap_ms: f64,
+    /// A request with no answer after this long (ms) is given up, and a
+    /// longer gap between readings is not counted in the interval. About 25
+    /// times a desktop's time per reading, so a slow phone still counts.
+    pub lost_after_ms: f64,
     /// Readings averaged for the component graphs (about 1 s of them).
     pub pc_smooth: usize,
     /// Score a class needs somewhere in the history to get a row in the strip.
@@ -158,6 +162,7 @@ pub const BIRDNET: LiveModel = LiveModel {
     // spectrogram. Slower devices are held back by the one-request-in-flight
     // rule instead.
     min_gap_ms: 250.0,
+    lost_after_ms: 5_000.0,
     pc_smooth: 4,
     row_min: 0.1,
     hearing: "BirdNET hears up to 15 kHz, so bat calls do not show here.",
@@ -190,7 +195,7 @@ pub const PERCH: LiveModel = LiveModel {
         ],
         [
             "cicadas and katydids",
-            "large mammals: horses, camels, deer, pigs",
+            "large mammals (horses, camels, deer, pigs)",
         ],
         ["drongos and other Asian forest birds", "cicadas"],
         ["wheatears, larks and shrikes", "cicadas and katydids"],
@@ -200,19 +205,20 @@ pub const PERCH: LiveModel = LiveModel {
         ],
         ["cicadas", "frogs"],
         [
-            "a mix: seedeaters, antwren, manakin, flamingo",
+            "a mix (seedeaters, antwren, manakin, flamingo)",
             "owls, frogmouths and other night birds",
         ],
-        ["a mix: frogs, owl, potoo, seedeaters", "crickets"],
+        ["a mix (frogs, owl, potoo, seedeaters)", "crickets"],
         [
             "cicadas and snakes",
-            "a mix: hornbills, oropendola, woodpeckers",
+            "a mix (hornbills, oropendola, woodpeckers)",
         ],
     ],
-    // One reading takes about 400 ms in the browser (research/perch.md: 391
-    // to 428 ms per window, embedding model and classifier), so the gap
+    // One reading took 540 to 690 ms in the app in desktop Chrome (the
+    // models alone: 391 to 428 ms per window, research/perch.md), so the gap
     // rarely holds a request back; the one-request-in-flight rule does.
     min_gap_ms: 500.0,
+    lost_after_ms: 15_000.0,
     pc_smooth: 2,
     // A third of Perch's default minimum confidence (0.30): above the median
     // share of the animals Perch heard in rain (0.02) and traffic (0.07),
@@ -659,10 +665,16 @@ pub fn set_chart(el: Option<web_sys::HtmlElement>) {
 
 async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
     let model = active();
+    // A restart (another model picked) while this waits: stop here, so this
+    // model's labels and maps never land on the next model's readings.
+    let stale = || generation() != gen;
     for f in model.parts.iter().copied().chain([model.labels]) {
         if !classifier::store::is_downloaded(f).await {
             return Err(LiveStatus::NeedsDownload);
         }
+    }
+    if stale() {
+        return Err(LiveStatus::Off);
     }
     state.classifier.live().set(LiveStatus::Loading);
     let fail = |e: String| LiveStatus::Failed(e);
@@ -671,11 +683,18 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
         Method::BirdNet | Method::Bats => classifier::birdnet_labels(state).await,
     }
     .map_err(|e| fail(e.to_string()))?;
+    if stale() {
+        return Err(LiveStatus::Off);
+    }
     LABELS.with(|l| *l.borrow_mut() = Some(labels));
     let fetch = crate::components::file_sidebar::fetch_bytes;
     if MAP.with(|m| m.borrow().is_none()) {
         // The map is optional: without it the strip still works.
-        if let Ok(bytes) = fetch(model.map.file).await {
+        let bytes = fetch(model.map.file).await;
+        if stale() {
+            return Err(LiveStatus::Off);
+        }
+        if let Ok(bytes) = bytes {
             let m = classifier::species_map::parse_map(&bytes);
             MAP.with(|c| *c.borrow_mut() = Some(Arc::new(m)));
         }
@@ -686,15 +705,25 @@ async fn start(state: AppState, gen: u32) -> Result<(), LiveStatus> {
             Some(rec) if !pc_rows(model) => rec,
             _ => model.pc_file,
         };
-        if let Ok(bytes) = fetch(file).await {
-            if let Some(c) = Components::parse(&bytes).filter(|c| c.dim == model.embedding_len) {
-                PCS.with(|p| *p.borrow_mut() = Some(Arc::new(c)));
-            }
+        let bytes = fetch(file).await;
+        if stale() {
+            return Err(LiveStatus::Off);
+        }
+        if let Some(c) = bytes
+            .ok()
+            .and_then(|b| Components::parse(&b))
+            .filter(|c| c.dim == model.embedding_len)
+        {
+            PCS.with(|p| *p.borrow_mut() = Some(Arc::new(c)));
         }
     }
     if PC_UMAP.with(|m| m.borrow().is_none()) {
         // Optional: without it the maps use the t-SNE layout only.
-        if let Ok(bytes) = fetch(model.umap_file).await {
+        let bytes = fetch(model.umap_file).await;
+        if stale() {
+            return Err(LiveStatus::Off);
+        }
+        if let Ok(bytes) = bytes {
             let m = classifier::species_map::parse_map(&bytes);
             PC_UMAP.with(|u| *u.borrow_mut() = Some(Arc::new(m)));
         }
@@ -980,7 +1009,10 @@ async fn preview_tick(state: AppState, gen: u32, now: f64) {
             return;
         }
     }
-    let busy = IN_FLIGHT.with(|f| f.get().is_some_and(|(_, t)| now - t < 5_000.0));
+    let busy = IN_FLIGHT.with(|f| {
+        f.get()
+            .is_some_and(|(_, t)| now - t < active().lost_after_ms)
+    });
     if !worker_ready() || busy || now - LAST_SENT.with(|l| l.get()) < active().min_gap_ms {
         return;
     }
@@ -1073,8 +1105,11 @@ async fn run_loop(state: AppState, gen: u32) {
             draw(state);
         }
         // A request lost (the worker answered with something else) is given up
-        // after 5 s, so the view never stalls for good.
-        let busy = IN_FLIGHT.with(|f| f.get().is_some_and(|(_, t)| now - t < 5_000.0));
+        // after the model's `lost_after_ms`, so the view never stalls for good.
+        let busy = IN_FLIGHT.with(|f| {
+            f.get()
+                .is_some_and(|(_, t)| now - t < active().lost_after_ms)
+        });
         let want_reading =
             worker_ready() && !busy && now - LAST_SENT.with(|l| l.get()) >= active().min_gap_ms;
         let want_spectrum = USERS.with(|u| u.get()) & EXPLORER != 0
@@ -1195,7 +1230,7 @@ fn add_reading(state: AppState, payload: Vec<f32>, model_ms: f64) {
             .map(|prev| cosine_distance(&prev.embedding, &embedding))
     });
     let last = LAST_READING.with(|l| l.replace(t));
-    if last > 0.0 && t - last < 5_000.0 {
+    if last > 0.0 && t - last < model.lost_after_ms {
         INTERVAL.with(|i| {
             let prev = i.get();
             i.set(if prev == 0.0 {
@@ -1354,6 +1389,21 @@ fn draw_view(state: AppState, view: PausedView) {
     };
     let model = active();
     let min = classifier::min_confidence_untracked(state, model.method);
+    if let Some(fresh) = classifier::cached_labels(model.labels) {
+        let replaced = LABELS.with(|l| {
+            let mut l = l.borrow_mut();
+            let old = l.as_ref().is_some_and(|l| !Arc::ptr_eq(l, &fresh));
+            if old {
+                *l = Some(fresh);
+            }
+            old
+        });
+        if replaced {
+            // English names came in after the start (Perch's labels): send
+            // the map's species again, with the new names.
+            let _ = js_sys::Reflect::set(&el, &"__liveSpecies".into(), &JsValue::FALSE);
+        }
+    }
     let labels = LABELS.with(|l| l.borrow().clone());
     let name = |c: usize| -> String {
         labels

@@ -251,6 +251,12 @@ pub async fn birdnet_labels(state: AppState) -> Result<Arc<Vec<SpeciesLabel>>, C
     labels(state, &catalog::BIRDNET_LABELS).await
 }
 
+/// The labels of `file` if they have been read, as they are now (Perch's
+/// get English names after a background fetch, which replaces the list).
+pub fn cached_labels(file: &ModelFile) -> Option<Arc<Vec<SpeciesLabel>>> {
+    LABELS.with(|m| m.borrow().get(file.id).cloned())
+}
+
 /// Perch's labels, read from the stored label file, with English names where
 /// they are known.
 pub async fn perch_labels(state: AppState) -> Result<Arc<Vec<SpeciesLabel>>, ClassifierError> {

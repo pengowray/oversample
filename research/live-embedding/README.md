@@ -60,6 +60,7 @@ values (`PERCH` and `BIRDNET` in `src/live_embedding.rs`):
 | Answer | 1,024-value embedding, 6,522 scores (sigmoid) | 1,536-value embedding, 14,795 softmax shares (the numbers a Perch run gives) |
 | Minimum confidence | BirdNET's setting | Perch's own setting (default 0.30) |
 | Shortest gap between requests | 250 ms | 500 ms |
+| Request without an answer given up after (and longest gap counted in the interval) | 5 s | 15 s |
 | Readings averaged in the component graphs | 4 (about 1 s) | 2 (about 1 s) |
 | t-SNE map and placement radius | `birdnet-map.bin`, 0.15 | `perch-map.bin`, 0.09 |
 | UMAP layout and placement radius | `birdnet-umap.bin`, 0.11 | `perch-umap.bin`, 0.06 |
