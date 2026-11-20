@@ -7652,7 +7652,7 @@ button.toolbar-overflow-btn {
    scanned. */
 .find-rec-head, .find-rec-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 84px 52px 72px 64px 84px 58px;
+    grid-template-columns: minmax(0, 1fr) 84px 52px 72px 64px 84px 92px;
     gap: 2px 8px;
     padding: 5px 16px;
     font-size: 12px;
@@ -7660,7 +7660,7 @@ button.toolbar-overflow-btn {
 }
 
 .find-rec-head.with-species, .find-rec-row.with-species {
-    grid-template-columns: minmax(0, 0.6fr) minmax(0, 1.4fr) 84px 52px 72px 64px 84px 58px;
+    grid-template-columns: minmax(0, 0.6fr) minmax(0, 1.4fr) 84px 52px 72px 64px 84px 92px;
 }
 
 .find-rec-head {
@@ -7724,6 +7724,54 @@ button.toolbar-overflow-btn {
 .find-rec-load {
     justify-self: end;
     min-height: 24px;
+}
+
+/* Preview and Load share the last column (92px: a 30px preview button, a gap
+   and the 58px Load button). Rows with no preview (ultrasonic recordings,
+   which play silent at their own speed) keep Load at the right edge. */
+.find-rec-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 4px;
+}
+
+.find-rec-preview {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    min-height: 24px;
+    font-size: 12px;
+}
+
+/* Playing marks the row like a selection, in the species list's selected colour. */
+.find-rec-preview.playing {
+    background: #33335a;
+    border-color: #6a6aa0;
+}
+
+.find-rec-preview.loading .icon {
+    animation: find-preview-wait 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes find-preview-wait {
+    from { opacity: 1; }
+    to { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .find-rec-preview.loading .icon {
+        animation: none;
+        opacity: 0.6;
+    }
+}
+
+/* Failed: the app's warning amber (.analysis-warning); the reason is in the
+   dialog's error bar. */
+.find-rec-preview.failed {
+    color: #fc8;
+    border-color: #6b5320;
 }
 
 .find-demo-row {
@@ -7796,7 +7844,8 @@ button.toolbar-overflow-btn {
     }
 
     /* Phone: place takes the first line; date, length, rate, quality and
-       source share the second; Load stays at the right of the first line.
+       source share the second; preview and Load stay at the right of the
+       first line.
        The heading row keeps only its sort buttons, after "Sort by". */
     .find-rec-head {
         display: none;
@@ -7831,7 +7880,7 @@ button.toolbar-overflow-btn {
         grid-column: 1 / -2;
     }
 
-    .find-rec-row .find-rec-load {
+    .find-rec-row .find-rec-actions {
         grid-column: -2 / -1;
         grid-row: 1;
     }

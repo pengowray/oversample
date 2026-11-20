@@ -55,6 +55,26 @@ function recording(i: number) {
   };
 }
 
+/** A silent mono 16-bit WAV, for the preview's audio element. */
+function silentWav(seconds: number, rate = 8000): Buffer {
+  const bytes = seconds * rate * 2;
+  const b = Buffer.alloc(44 + bytes);
+  b.write("RIFF", 0);
+  b.writeUInt32LE(36 + bytes, 4);
+  b.write("WAVE", 8);
+  b.write("fmt ", 12);
+  b.writeUInt32LE(16, 16);
+  b.writeUInt16LE(1, 20);
+  b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(rate, 24);
+  b.writeUInt32LE(rate * 2, 28);
+  b.writeUInt16LE(2, 32);
+  b.writeUInt16LE(16, 34);
+  b.write("data", 36);
+  b.writeUInt32LE(bytes, 40);
+  return b;
+}
+
 /**
  * Serves species in pages of 100 and recordings in pages of 50 (cursors are offsets).
  * `modern` servers list `rates` in their facets; `failSecondRecordingsPage` fails the
@@ -286,5 +306,77 @@ test.describe("Find recordings", () => {
       expect(u.searchParams.has("min_smp")).toBe(false);
     }
     await expect(page.locator(".xc-error")).toHaveCount(0);
+  });
+
+  test("preview plays audible recordings and leaves out ultrasonic ones", async ({ page }) => {
+    await stubSearch(page, { modern: true });
+    const items = [
+      { ...recording(0), id: "xc:200001", smp: 48000 },
+      { ...recording(1), id: "xc:200002", smp: 384000 },
+      {
+        ...recording(2),
+        id: "inat:5/0",
+        source: "inat",
+        smp: null,
+        audio_via: "proxy",
+        audio_url: "https://static.inaturalist.org/sounds/5.m4a",
+      },
+    ];
+    // Registered after stubSearch, so it answers first.
+    await page.route("**/search/recordings**", (route) =>
+      json(route, {
+        total: items.length,
+        total_exact: true,
+        by_source: { xc: 2, inat: 1 },
+        cursor: null,
+        truncated: false,
+        items,
+        status: { xc: "ready" },
+      }),
+    );
+    const audio: string[] = [];
+    await page.route("**/xc/audio/**", (route) => {
+      audio.push(route.request().url());
+      return route.fulfill({
+        status: 200,
+        contentType: "audio/wav",
+        headers: { "Access-Control-Allow-Origin": "*" },
+        body: silentWav(5),
+      });
+    });
+    // The relay's "/search/audio/inat%3A5%2F0" falls through to stubSearch's 404.
+
+    await openDialog(page);
+    await page.locator(".find-fixed-row", { hasText: "All recordings" }).click();
+    const rows = page.locator(".find-rec-row");
+    await expect(rows).toHaveCount(3);
+    // 384 kHz: no preview button, Load only.
+    await expect(rows.nth(1).locator(".find-rec-preview")).toHaveCount(0);
+    await expect(rows.nth(1).locator(".find-rec-load")).toBeVisible();
+
+    const play = rows.nth(0).locator(".find-rec-preview");
+    await expect(play).toHaveAttribute("aria-label", "Play preview");
+    await play.click();
+    await expect(play).toHaveClass(/playing/);
+    await expect(play).toHaveAttribute("aria-label", "Stop preview");
+    expect(audio[0]).toMatch(/\/xc\/audio\/200001$/);
+    await play.click();
+    await expect(play).toHaveAttribute("aria-label", "Play preview");
+    await expect(play).not.toHaveClass(/playing/);
+
+    // Starting another preview stops the first; this one's file is missing.
+    await play.click();
+    await expect(play).toHaveClass(/playing/);
+    const missing = rows.nth(2).locator(".find-rec-preview");
+    await missing.click();
+    await expect(play).toHaveAttribute("aria-label", "Play preview");
+    await expect(missing).toHaveClass(/failed/);
+    await expect(page.locator(".xc-error")).toContainText("Could not play preview: Daubenton's Bat");
+
+    // Closing the dialog removes the player.
+    await play.click();
+    await expect(play).toHaveClass(/playing/);
+    await page.locator(".find-modal .xc-modal-close").click();
+    await expect(page.locator("audio")).toHaveCount(0);
   });
 });

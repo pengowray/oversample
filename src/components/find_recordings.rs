@@ -20,6 +20,7 @@ use leptos::task::spawn_local;
 use crate::components::file_sidebar::{
     fetch_bytes, fetch_demo_index, find_open_demo, load_named_bytes, load_single_demo, DemoEntry,
 };
+use crate::components::icons::Icon;
 use crate::search_client::{
     self as search, Facets, Filter, RecSort, RecordingItem, SearchError, SpeciesHit, SpeciesSort,
     DEFAULT_KM, GROUPS, MIN_RATES, RADII_KM,
@@ -83,6 +84,11 @@ const DEMOS_NOTE: &str = "Hand-picked recordings, mostly of bats. They load quic
 const ALL_RECORDINGS: &str = "All recordings";
 const XC_BROWSER: &str = "Explore Xeno-canto";
 const COMMONS_BROWSER: &str = "Search Wikimedia Commons";
+const PREVIEW_PLAY: &str = "Play preview";
+const PREVIEW_STOP: &str = "Stop preview";
+const PREVIEW_LOADING: &str = "Loading preview. Click to stop.";
+const PREVIEW_RETRY: &str = "Could not play preview. Click to try again.";
+const PREVIEW_FAILED: &str = "Could not play preview: {name} ({reason})";
 
 /// Country names that take "the" in a sentence ("in the United States").
 const COUNTRIES_WITH_THE: [&str; 14] = [
@@ -239,6 +245,124 @@ fn detect_link(text: &str) -> Option<Link> {
     }
 }
 
+// ── Preview ─────────────────────────────────────────────────────────────────
+
+/// Files at this sample rate or more are taken as ultrasonic recordings (bats, mostly).
+/// The preview plays a file at its own speed, where bat calls are out of hearing, so
+/// those rows get no preview button; Load opens them with heterodyne or time expansion.
+/// A slowed preview (`playbackRate` 0.1 with `preservesPitch` off) is not reliable:
+/// Firefox mutes audio below 0.25x, and browsers differ on which high-rate WAVs they
+/// decode.
+const ULTRASONIC_SMP: u32 = 96_000;
+
+/// Whether a result row gets a preview button. Below [`ULTRASONIC_SMP`] the whole file
+/// is in the audible range, including bats recorded through a heterodyne detector and
+/// time-expanded files. With no rate, bats are left out unless the file is time
+/// expanded; `grp` is the group of the listed species, or of the Group filter.
+fn has_preview(item: &RecordingItem, grp: Option<&str>) -> bool {
+    match item.smp {
+        Some(r) => r < ULTRASONIC_SMP,
+        None => grp != Some("bats") || item.time_expansion.is_some_and(|te| te > 1.0),
+    }
+}
+
+/// `encodeURIComponent`, so the URL can be built and tested outside a browser.
+fn encode_component(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// The server's copy of a recording whose host does not let the browser fetch it.
+fn relay_url(proxy_base: &str, id: &str) -> String {
+    format!("{proxy_base}/search/audio/{}", encode_component(id))
+}
+
+/// Where the preview streams a recording from: the same places Load fetches it from.
+/// Xeno-canto recordings come through the server's `/xc/audio`, which needs no key and
+/// leaves the file in the server's cache for a Load that follows.
+fn preview_url(item: &RecordingItem, proxy_base: &str) -> Option<String> {
+    match item.audio_via.as_str() {
+        "xc" => item
+            .xc_number()
+            .map(|n| format!("{proxy_base}/xc/audio/{n}")),
+        "proxy" => Some(relay_url(proxy_base, &item.id)),
+        _ => Some(item.audio_url.clone()).filter(|u| !u.is_empty()),
+    }
+}
+
+/// A result row's name in messages: "XC928094, Common Pipistrelle".
+fn row_name(item: &RecordingItem) -> String {
+    let species = if item.en.is_empty() {
+        format!("{} {}", item.gen, item.sp)
+    } else {
+        item.en.clone()
+    };
+    match item.xc_number() {
+        Some(n) => format!("XC{n}, {species}"),
+        None => species,
+    }
+}
+
+/// Why a preview failed, from the audio element's `MediaError` code. `None` for an
+/// aborted load (a new preview or Stop).
+fn media_error_reason(code: u16) -> Option<&'static str> {
+    match code {
+        1 => None,
+        2 => Some("network error"),
+        3 => Some("the browser could not decode the file"),
+        4 => Some("file not found, or in a format this browser can't play"),
+        _ => Some("unknown error"),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PreviewState {
+    Loading,
+    Playing,
+    Failed,
+}
+
+/// The row whose preview is loading, playing or last failed.
+#[derive(Clone, Debug, PartialEq)]
+struct Preview {
+    id: String,
+    name: String,
+    state: PreviewState,
+}
+
+thread_local! {
+    /// The dialog's one audio element, shared by every row. Kept here as well as in the
+    /// view, so closing the dialog can stop it after its reactive nodes are gone.
+    static PREVIEW_AUDIO: RefCell<Option<web_sys::HtmlAudioElement>> = const { RefCell::new(None) };
+}
+
+/// Stops the preview and ends its download.
+fn silence_preview() {
+    PREVIEW_AUDIO.with(|a| {
+        if let Some(el) = a.borrow().as_ref() {
+            let _ = el.pause();
+            let _ = el.remove_attribute("src");
+            el.load();
+        }
+    });
+}
+
+/// A small square: the Stop button's icon, drawn like [`Icon`]'s set.
+fn stop_icon() -> impl IntoView {
+    view! {
+        <svg class="icon" viewBox="0 0 24 24" width="1em" height="1em" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/>
+        </svg>
+    }
+}
+
 /// A result row's second line: the recordist and the licence label, the
 /// same label the toolbar badge shows once the recording is loaded.
 fn recordist_and_licence(item: &RecordingItem) -> String {
@@ -361,11 +485,7 @@ async fn load_item(state: AppState, item: RecordingItem) -> Result<(), String> {
         }
         via => {
             let url = if via == "proxy" {
-                format!(
-                    "{}/search/audio/{}",
-                    xc_client::proxy_base(),
-                    String::from(js_sys::encode_uri_component(&item.id))
-                )
+                relay_url(&xc_client::proxy_base(), &item.id)
             } else {
                 item.audio_url.clone()
             };
@@ -669,6 +789,138 @@ pub fn FindRecordings() -> impl IntoView {
     // The two scrolling panes, watched for their end.
     let species_el = NodeRef::<html::Div>::new();
     let detail_el = NodeRef::<html::Div>::new();
+
+    // ── Preview ─────────────────────────────────────────────────────────
+    // One audio element for the dialog: starting a row's preview stops the one before.
+
+    let audio_el = NodeRef::<html::Audio>::new();
+    let preview: RwSignal<Option<Preview>> = RwSignal::new(None);
+    Effect::new(move |_| {
+        if let Some(el) = audio_el.get() {
+            PREVIEW_AUDIO.with(|a| *a.borrow_mut() = Some(el));
+        }
+    });
+    on_cleanup(|| {
+        silence_preview();
+        PREVIEW_AUDIO.with(|a| *a.borrow_mut() = None);
+    });
+
+    let stop_preview = move || {
+        silence_preview();
+        preview.try_set(None);
+    };
+
+    // A new list (another species, filter or order) has no Stop button for the old row.
+    Effect::new(move |_| {
+        recs.epoch.track();
+        stop_preview();
+    });
+
+    // Marks the current row as failed and says why in the error bar.
+    let fail_preview = move |reason: &str| {
+        let Some(name) = preview
+            .try_with_untracked(|p| {
+                p.as_ref()
+                    .filter(|p| p.state != PreviewState::Failed)
+                    .map(|p| p.name.clone())
+            })
+            .flatten()
+        else {
+            return;
+        };
+        silence_preview();
+        preview.try_update(|p| {
+            if let Some(p) = p {
+                p.state = PreviewState::Failed;
+            }
+        });
+        error.try_set(Some(fill(
+            PREVIEW_FAILED,
+            &[("name", &name), ("reason", reason)],
+        )));
+    };
+
+    let set_preview_state = move |state: PreviewState| {
+        preview.update(|p| {
+            if let Some(p) = p.as_mut().filter(|p| p.state != PreviewState::Failed) {
+                p.state = state;
+            }
+        });
+    };
+
+    let on_preview_error = move || {
+        let code = PREVIEW_AUDIO.with(|a| {
+            a.borrow().as_ref().and_then(|el| {
+                let err = js_sys::Reflect::get(el, &"error".into()).ok()?;
+                js_sys::Reflect::get(&err, &"code".into()).ok()?.as_f64()
+            })
+        });
+        let Some(code) = code else {
+            return;
+        };
+        if let Some(reason) = media_error_reason(code as u16) {
+            fail_preview(reason);
+        }
+    };
+
+    // The row's button: plays its preview, or stops it while it loads or plays.
+    let toggle_preview = move |id: String, name: String, url: String| {
+        let current = preview.with_untracked(|p| {
+            p.as_ref()
+                .filter(|p| p.id == id && p.state != PreviewState::Failed)
+                .is_some()
+        });
+        if current {
+            stop_preview();
+            return;
+        }
+        let Some(el) = PREVIEW_AUDIO.with(|a| a.borrow().clone()) else {
+            return;
+        };
+        if preview.with_untracked(|p| p.as_ref().is_some_and(|p| p.state == PreviewState::Failed)) {
+            error.set(None);
+        }
+        preview.set(Some(Preview {
+            id: id.clone(),
+            name,
+            state: PreviewState::Loading,
+        }));
+        el.set_src(&url);
+        let played = match el.play() {
+            Ok(promise) => promise,
+            Err(_) => {
+                fail_preview("the browser blocked playback");
+                return;
+            }
+        };
+        spawn_local(async move {
+            let Err(e) = wasm_bindgen_futures::JsFuture::from(played).await else {
+                return;
+            };
+            // AbortError: a newer preview or Stop. NotSupportedError: the element's
+            // error event gives the reason.
+            let kind = js_sys::Reflect::get(&e, &"name".into())
+                .ok()
+                .and_then(|n| n.as_string())
+                .unwrap_or_default();
+            if matches!(kind.as_str(), "AbortError" | "NotSupportedError") {
+                return;
+            }
+            if preview.try_with_untracked(|p| p.as_ref().is_some_and(|p| p.id == id)) == Some(true)
+            {
+                let reason = if kind == "NotAllowedError" {
+                    "the browser blocked playback".to_string()
+                } else {
+                    js_sys::Reflect::get(&e, &"message".into())
+                        .ok()
+                        .and_then(|m| m.as_string())
+                        .filter(|m| !m.is_empty())
+                        .unwrap_or(kind)
+                };
+                fail_preview(&reason);
+            }
+        });
+    };
 
     // "Current recording" from the last time the dialog was open may be another file
     // now: take its position again, or go back to Anywhere if it has none.
@@ -1022,16 +1274,9 @@ pub fn FindRecordings() -> impl IntoView {
         if loading.get_untracked().is_some() {
             return;
         }
+        stop_preview();
         loading.set(Some(id));
-        let species_name = if item.en.is_empty() {
-            format!("{} {}", item.gen, item.sp)
-        } else {
-            item.en.clone()
-        };
-        let name = match item.xc_number() {
-            Some(n) => format!("XC{n}, {species_name}"),
-            None => species_name,
-        };
+        let name = row_name(&item);
         spawn_local(async move {
             let result = load_item(state, item).await;
             loading.try_set(None);
@@ -1057,6 +1302,7 @@ pub fn FindRecordings() -> impl IntoView {
         if loading.get_untracked().is_some() {
             return;
         }
+        stop_preview();
         loading.set(Some(entry.filename.clone()));
         spawn_local(async move {
             let load_id = state.loading_start(&entry.filename);
@@ -1085,6 +1331,7 @@ pub fn FindRecordings() -> impl IntoView {
         if loading.get_untracked().is_some() {
             return;
         }
+        stop_preview();
         loading.set(Some("link".into()));
         spawn_local(async move {
             let result = match link {
@@ -1518,6 +1765,47 @@ pub fn FindRecordings() -> impl IntoView {
             };
             view! { <span class="find-rec-species">{name}</span> }
         });
+        let grp = match selected.get_untracked() {
+            Selected::Species(hit) => Some(hit.grp),
+            _ => filter.with_untracked(|f| f.group.clone()),
+        };
+        let preview_btn = has_preview(&item, grp.as_deref())
+            .then(|| preview_url(&item, &xc_client::proxy_base()))
+            .flatten()
+            .map(|url| {
+                let row_id = id.clone();
+                let name = row_name(&item);
+                let state = Memo::new(move |_| {
+                    preview.with(|p| p.as_ref().filter(|p| p.id == row_id).map(|p| p.state))
+                });
+                let label = move || match state.get() {
+                    Some(PreviewState::Loading | PreviewState::Playing) => PREVIEW_STOP,
+                    Some(PreviewState::Failed) => PREVIEW_RETRY,
+                    None => PREVIEW_PLAY,
+                };
+                let tip = move || match state.get() {
+                    Some(PreviewState::Loading) => PREVIEW_LOADING,
+                    _ => label(),
+                };
+                let id = id.clone();
+                view! {
+                    <button
+                        class="xc-btn xc-btn-small find-rec-preview"
+                        class:loading=move || state.get() == Some(PreviewState::Loading)
+                        class:playing=move || state.get() == Some(PreviewState::Playing)
+                        class:failed=move || state.get() == Some(PreviewState::Failed)
+                        aria-label=label
+                        title=tip
+                        aria-busy=move || (state.get() == Some(PreviewState::Loading)).then_some("true")
+                        on:click=move |_| toggle_preview(id.clone(), name.clone(), url.clone())
+                    >
+                        {move || match state.get() {
+                            Some(PreviewState::Loading | PreviewState::Playing) => stop_icon().into_any(),
+                            _ => view! { <Icon kind=Icon::Play /> }.into_any(),
+                        }}
+                    </button>
+                }
+            });
         view! {
             <div class="find-rec-row" class:with-species=show_species>
                 {species_cell}
@@ -1530,13 +1818,16 @@ pub fn FindRecordings() -> impl IntoView {
                 <span class="find-rec-num">{rate}</span>
                 <span class="find-rec-q">{quality_label(&item.quality)}</span>
                 <a class="find-rec-source" href=item.page_url.clone() target="_blank" rel="noopener">{source}</a>
-                <button
-                    class="xc-btn xc-btn-small find-rec-load"
-                    disabled=move || loading.get().is_some()
-                    on:click=move |_| start_load(id_for_btn.clone(), for_click.clone())
-                >
-                    {move || if loading.get().as_deref() == Some(id.as_str()) { "Loading\u{2026}" } else { "Load" }}
-                </button>
+                <span class="find-rec-actions">
+                    {preview_btn}
+                    <button
+                        class="xc-btn xc-btn-small find-rec-load"
+                        disabled=move || loading.get().is_some()
+                        on:click=move |_| start_load(id_for_btn.clone(), for_click.clone())
+                    >
+                        {move || if loading.get().as_deref() == Some(id.as_str()) { "Loading\u{2026}" } else { "Load" }}
+                    </button>
+                </span>
                 <span class="find-rec-detail">{detail}</span>
             </div>
         }
@@ -1855,6 +2146,14 @@ pub fn FindRecordings() -> impl IntoView {
                         <button class="xc-link-btn" on:click=move |_| open_wiki_browser()>{COMMONS_BROWSER}</button>
                     </div>
                 })}
+                <audio
+                    node_ref=audio_el
+                    preload="none"
+                    on:playing=move |_| set_preview_state(PreviewState::Playing)
+                    on:waiting=move |_| set_preview_state(PreviewState::Loading)
+                    on:ended=move |_| stop_preview()
+                    on:error=move |_| on_preview_error()
+                ></audio>
             </div>
         </div>
     }
@@ -1920,6 +2219,82 @@ mod tests {
         )
         .unwrap();
         assert_eq!(file_name(&item), "Myotis (iNaturalist).m4a");
+    }
+
+    fn rec(json: serde_json::Value) -> RecordingItem {
+        let mut base = serde_json::json!({
+            "id": "xc:928094", "source": "xc", "gen": "Myotis", "sp": "daubentonii",
+            "en": "Daubenton's Bat", "audio_url": "https://xeno-canto.org/928094/download",
+            "audio_via": "xc",
+        });
+        base.as_object_mut()
+            .unwrap()
+            .extend(json.as_object().unwrap().clone());
+        serde_json::from_value(base).unwrap()
+    }
+
+    #[test]
+    fn preview_only_for_audible_rates() {
+        let at = |smp: u32| rec(serde_json::json!({ "smp": smp }));
+        // Known rate: below 96 kHz plays, whatever the group.
+        assert!(has_preview(&at(44_100), Some("bats")));
+        assert!(has_preview(&at(48_000), None));
+        assert!(!has_preview(&at(96_000), Some("birds")));
+        assert!(!has_preview(&at(384_000), None));
+        // Unknown rate: bats only when time expanded.
+        let unknown = rec(serde_json::json!({}));
+        assert!(has_preview(&unknown, None));
+        assert!(has_preview(&unknown, Some("birds")));
+        assert!(!has_preview(&unknown, Some("bats")));
+        let te = rec(serde_json::json!({ "time_expansion": 10.0 }));
+        assert!(has_preview(&te, Some("bats")));
+    }
+
+    #[test]
+    fn preview_streams_from_where_load_fetches() {
+        let base = "https://api.example";
+        assert_eq!(
+            preview_url(&rec(serde_json::json!({})), base).as_deref(),
+            Some("https://api.example/xc/audio/928094")
+        );
+        let relayed = rec(serde_json::json!({
+            "id": "inat:123/0", "source": "inat", "audio_via": "proxy",
+            "audio_url": "https://static.inaturalist.org/sounds/1.m4a",
+        }));
+        assert_eq!(
+            preview_url(&relayed, base).as_deref(),
+            Some("https://api.example/search/audio/inat%3A123%2F0")
+        );
+        let direct = rec(serde_json::json!({
+            "id": "gbif:9", "source": "gbif", "audio_via": "direct",
+            "audio_url": "https://archive.org/download/a/b.wav",
+        }));
+        assert_eq!(
+            preview_url(&direct, base).as_deref(),
+            Some("https://archive.org/download/a/b.wav")
+        );
+        let none =
+            rec(serde_json::json!({ "id": "gbif:9", "audio_via": "direct", "audio_url": "" }));
+        assert_eq!(preview_url(&none, base), None);
+    }
+
+    #[test]
+    fn component_encoding_matches_the_browser() {
+        assert_eq!(encode_component("inat:1/0 a"), "inat%3A1%2F0%20a");
+        assert_eq!(encode_component("A-z_0.!~*'()"), "A-z_0.!~*'()");
+        assert_eq!(encode_component("é"), "%C3%A9");
+    }
+
+    #[test]
+    fn row_names() {
+        assert_eq!(
+            row_name(&rec(serde_json::json!({}))),
+            "XC928094, Daubenton's Bat"
+        );
+        assert_eq!(
+            row_name(&rec(serde_json::json!({ "id": "inat:1/0", "en": "" }))),
+            "Myotis daubentonii"
+        );
     }
 
     #[test]
