@@ -1,4 +1,4 @@
-"""Data for the live view's component maps (birdnet-pc.bin).
+"""Data for the live view's component maps (birdnet-pc-rows.bin, the default).
 
 Fits the same PCA as pca_axes.py on BirdNET V2.4's 6,522 class rows (the
 final dense layer, each row scaled to length 1, as the species map uses), and
@@ -20,6 +20,11 @@ recordings and highlights the species at that same percentile of the class
 rows (quantile mapping).
 
   python -I pc_bands.py MODEL.onnx LABELS.txt OUT.bin EMB.npz [EMB.npz ...]
+
+As run on 2026-11-20 (pc_bands.txt is its output):
+
+  python -I pc_bands.py birdnet-v2.4-embeddings-fp32.onnx birdnet_labels.txt \
+      birdnet-pc-rows.bin HSN_hp/emb_raw.npz POW/emb_raw.npz
 
 EMB.npz files hold BirdNET embeddings of real recordings under key "birdnet"
 (shape [..., 1024]); the ones used were BirdSet's HSN and POW test sets
@@ -50,7 +55,10 @@ from sklearn.decomposition import PCA
 DENSE = "const_fold_opt__1508"  # MatMul initializer, 1024 x 6522
 BIAS = "model/CLASS_DENSE_LAYER/BiasAdd/ReadVariableOp/resource"
 CLASSES = 6522
-N = 8
+# 12: past PC12 the components no longer form areas on the map (share of a
+# species' 10 nearest neighbours on the UMAP layout in the same half: 0.65 at
+# PC12, 0.58 to 0.63 for PC13 to PC16, 0.5 is chance). See README.md.
+N = 12
 QUANTILES = np.linspace(0, 100, 21)
 
 
