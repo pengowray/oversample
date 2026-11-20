@@ -1,0 +1,103 @@
+14795 classes, 14742 live
+variance, PC1..PC16 (%): 2.32 1.23 1.05 0.94 0.93 0.83 0.77 0.73 0.66 0.64 0.62 0.62 0.60 0.59 0.56 0.54
+same PCA with each column shuffled (%): 0.21 0.16 0.15 0.13
+umap-js n_neighbors=15 min_dist=0.1: 21.9 s
+umap-js n_neighbors=50 min_dist=0.1: 66.0 s
+
+class vectors, halves: share of 10 nearest neighbours in the same half, PC1..PC16
+  t-SNE          mean 0.71 (PC1-12):  0.65 0.70 0.75 0.73 0.73 0.73 0.71 0.70 0.71 0.70 0.69 0.69 0.68 0.69 0.68 0.68
+  UMAP 15/0.1    mean 0.70 (PC1-12):  0.67 0.70 0.76 0.72 0.73 0.73 0.70 0.70 0.69 0.68 0.66 0.67 0.64 0.66 0.66 0.64
+  UMAP 50/0.1    mean 0.69 (PC1-12):  0.66 0.70 0.76 0.71 0.71 0.73 0.70 0.69 0.69 0.67 0.64 0.66 0.64 0.65 0.65 0.63
+chosen UMAP: UMAP 15/0.1
+wrote ./perch-umap.bin
+median distance to the 10th nearest class: t-SNE 0.0201, UMAP 0.0134, ratio 0.67
+components kept: 12 (share of neighbours in the same half >= 0.65 on UMAP 15/0.1)
+wrote ./perch-pc-rows.bin, 252336 bytes, from 16560 reference readings
+readings outside the classes' 5-95% range, per PC: 0.00 0.38 0.03 0.02 0.00 0.05 0.17 0.26 0.02 0.08 0.01 0.07
+
+PC1 (2.32%)
+  low:  [no eBird code] Tutelina elegans; [no eBird code] Crioceris duodecimpunctata; [no eBird code] Hemiechinus auritus; [no eBird code] Micrurus tener; [no eBird code] Gastrotheca ovifera; [no eBird code] Atelerix frontalis; [no eBird code] Malacosoma disstria; Agelastes niger; Bangsia arcaei; [no eBird code] Adelphobates quinquevittatus; [no eBird code] Ratufa affinis; [no eBird code] Dorisiana metcalfi
+  high: Dacnis viguieri; Gliciphila notabilis; [no eBird code] Gastrotheca nicefori; [no eBird code] Andinobates victimatus; [no eBird code] Teleogryllus bicoloripes; [no eBird code] Isophya thracica; [no eBird code] Oedipoda germanica; [no eBird code] Crotalus cerastes; Leptoptilos dubius; [no eBird code] Sciurus oculatus; [no eBird code] Stumpffia miery; [no eBird code] Parapholidoptera noxia
+  low tenth: with an eBird code (birds) 0.29, sound events 0.00, other 0.71
+  high tenth: with an eBird code (birds) 0.80, sound events 0.04, other 0.16
+
+PC2 (1.23%)
+  low:  Aplonis mysolensis (Moluccan Starling); [no eBird code] Vitreorana ritae; [no eBird code] Nasalis larvatus; [no eBird code] Pristimantis chiastonotus; Malimbus cassini; Elminia nigromitrata; [no eBird code] Pristimantis crepitaculus; [no eBird code] Thecadactylus rapicauda; Glycichaera fallax; [no eBird code] Boana diabolica; [no eBird code] Trachycephalus resinifictrix; Acrocephalus syrinx
+  high: [no eBird code] Montana macedonica; [no eBird code] Anterastes serbicus; [no eBird code] Anonconotus italoaustriacus; [no eBird code] Incertana drepanensis; [no eBird code] Parnassiana panaetolikon; [no eBird code] Odontura glabricauda; [no eBird code] Ephippiger apulus; [no eBird code] Poecilimon karakushi; [no eBird code] Hemielimaea cucullata; [no eBird code] Sacculiphallus punctatus; [no eBird code] Nahlaksia suphattra; [no eBird code] Dociostaurus jagoi
+  low tenth: with an eBird code (birds) 0.81, sound events 0.00, other 0.19
+  high tenth: with an eBird code (birds) 0.08, sound events 0.00, other 0.92
+
+PC3 (1.05%)
+  low:  [no eBird code] Pristimantis chiastonotus; [no eBird code] Pristimantis zeuctotylus; [no eBird code] Hyalinobatrachium colymbiphyllum; [no eBird code] Phyllomedusa bicolor; [no eBird code] Vitreorana ritae; Malacoptila fusca (White-chested Puffbird); [no eBird code] Trachycephalus hadroceps; Hylexetastes stresemanni (Bar-bellied Woodcreeper); [no eBird code] Trachycephalus resinifictrix; Oneillornis lunulatus (Lunulated Antbird); Microxenops milleri (Rufous-tailed Xenops); [no eBird code] Phyllodytes edelmoi
+  high: Thlypopsis ruficeps; Clytomyias insignis; Anisognathus lacrymosus (Lacrimose Mountain Tanager); [no eBird code] Silvicultrix frontalis; Aglaeactis cupripennis; Lampornis castaneoventris; Coeligena iris (Rainbow Starfrontlet); Catamblyrhynchus diadema (Plushcap); Atlapetes albofrenatus (Moustached Brushfinch); Campylopterus hyperythrus; Tangara nigroviridis (Beryl-spangled Tanager); Heliangelus strophianus
+  low tenth: with an eBird code (birds) 0.53, sound events 0.01, other 0.45
+  high tenth: with an eBird code (birds) 0.87, sound events 0.00, other 0.13
+
+PC4 (0.94%)
+  low:  [no eBird code] Lynx rufus; Dicrurus caerulescens (White-bellied Drongo); Dicrurus aeneus (Bronzed Drongo); Dicrurus macrocercus (Black Drongo); Strix seloputo (Spotted Wood-Owl); Rhipidura euryura; [no eBird code] Rusa unicolor; Ptilonorhynchus violaceus (Satin Bowerbird); [no eBird code] Puma concolor; Oriolus traillii (Maroon Oriole); Pterorhinus caerulatus; Dicrurus bracteatus (Spangled Drongo)
+  high: Myiobius atricaudus (Black-tailed Flycatcher); Cotinga cayana; Heliothryx auritus (Black-eared Fairy); Thalurania colombica (Crowned Woodnymph); Heliodoxa schreibersii; Phaethornis atrimentalis (Black-throated Hermit); Malacoptila fusca (White-chested Puffbird); Euchrepomis spodioptila (Ash-winged Antwren); Heliodoxa aurescens; Glaucis hirsutus (Rufous-breasted Hermit); Phylloscartes virescens (Olive-green Tyrannulet); Eutoxeres aquila (White-tipped Sicklebill)
+  low tenth: with an eBird code (birds) 0.66, sound events 0.02, other 0.32
+  high tenth: with an eBird code (birds) 0.75, sound events 0.00, other 0.25
+
+PC5 (0.93%)
+  low:  [no eBird code] Burbunga hillieri; [no eBird code] Hylarana macrodactyla; [no eBird code] Popplepsalta subtropica; [no eBird code] Nasalis larvatus; Malimbus ballmanni; [no eBird code] Tamasa tristigma; [no eBird code] Ducetia antipoda; [no eBird code] Cicada lodosi; [no eBird code] Diceroprocta marevagans; [no eBird code] Symposiachrus bimaculatus; [no eBird code] Tettigettalna boulardi; [no eBird code] Arunta perulata
+  high: [no eBird code] Varecia rubra; [no eBird code] Lama glama; [no eBird code] Caracal caracal; [no eBird code] Arctocephalus australis; [no eBird code] Equus caballus; [no eBird code] Camelus bactrianus; [no eBird code] Diceros bicornis; [no eBird code] Rangifer tarandus; [no eBird code] Phacochoerus aethiopicus; [no eBird code] Bos javanicus; [no eBird code] Sus barbatus; [no eBird code] Equus hemionus
+  low tenth: with an eBird code (birds) 0.38, sound events 0.00, other 0.62
+  high tenth: with an eBird code (birds) 0.62, sound events 0.06, other 0.32
+
+PC6 (0.83%)
+  low:  Dicrurus remifer (Lesser Racket-tailed Drongo); Dicrurus balicassius (Balicassiao); Dicrurus sharpei; Dicrurus leucophaeus (Ashy Drongo); Dicrurus montanus (Sulawesi Drongo); Pachycephala hypoxantha (Bornean Whistler); Mixornis flavicollis (Grey-cheeked Tit-Babbler); Chloropsis aurifrons (Golden-fronted Leafbird); [no eBird code] Sheppardia polioptera; Rhipidura perlata (Spotted Fantail); Cossypha albicapillus (White-crowned Robin-Chat); Chloropsis palawanensis
+  high: [no eBird code] Okanagana cruentifera; [no eBird code] Proarna uruguayensis; [no eBird code] Myopsalta binotata; [no eBird code] Okanagana arctostaphylae; [no eBird code] Pseudorhynchus crassiceps; [no eBird code] Arenopsaltria nubivena; [no eBird code] Elachistocleis bicolor; [no eBird code] Hexacentrus mundus; [no eBird code] Pauropsalta contigua; [no eBird code] Huechys sanguinea; [no eBird code] Okanagana orithyia; [no eBird code] Okanagana gibbera
+  low tenth: with an eBird code (birds) 0.67, sound events 0.00, other 0.33
+  high tenth: with an eBird code (birds) 0.37, sound events 0.00, other 0.63
+
+PC7 (0.77%)
+  low:  Oenanthe pileata (Capped Wheatear); Oenanthe isabellina (Isabelline Wheatear); Calandrella blanfordi; Calandrella eremica; Melanocorypha maxima (Tibetan Lark); Oenanthe bottae; [no eBird code] Boana sibleszi; Lanius phoenicuroides (Turkestan Shrike); Calendulauda albescens (Karoo Lark); Spizocorys fremantlii; Macronyx ameliae; [no eBird code] Anarhynchus montanus
+  high: [no eBird code] Clidophleps vagans; [no eBird code] Neoconocephalus velox; [no eBird code] Platypleura fulvigera; [no eBird code] Pseudorhynchus crassiceps; [no eBird code] Diceroprocta cinctifera; [no eBird code] Mogannia hebes; [no eBird code] Diceroprocta apache; [no eBird code] Neotibicen auriferus; [no eBird code] Arenopsaltria fullo; [no eBird code] Hadoa inaudita; [no eBird code] Leptosemia huasipana; [no eBird code] Okanagana gibbera
+  low tenth: with an eBird code (birds) 0.80, sound events 0.00, other 0.20
+  high tenth: with an eBird code (birds) 0.44, sound events 0.05, other 0.51
+
+PC8 (0.73%)
+  low:  Pheugopedius mystacalis (Whiskered Wren); Grallaria ruficapilla (Chestnut-crowned Antpitta); Myiarchus cephalotes (Pale-edged Flycatcher); Coccyzus vieilloti (Puerto Rican Lizard-Cuckoo); Carpornis cucullata (Hooded Berryeater); Coccyzus merlini (Great Lizard-Cuckoo); Momotus aequatorialis (Andean Motmot); Campephilus pollens (Powerful Woodpecker); [no eBird code] Isthmohyla picadoi; Hemitriccus granadensis (Black-throated Tody-Tyrant); Cyanocorax chrysops (Plush-crested Jay); Thamnophilus unicolor (Uniform Antshrike)
+  high: Calendulauda sabota (Sabota Lark); Eremopterix australis; Mirafra javanica (Singing Bushlark); Calandrella acutirostris (Hume's Lark); Anthus pallidiventris; Montifringilla henrici; [no eBird code] Onychostruthus taczanowskii; Orochelidon andecola; Sporopipes frontalis (Speckle-fronted Weaver); Eremopterix leucotis; Oenanthe pileata (Capped Wheatear); Quelea quelea (Red-billed Quelea)
+  low tenth: with an eBird code (birds) 0.67, sound events 0.00, other 0.33
+  high tenth: with an eBird code (birds) 0.81, sound events 0.02, other 0.16
+
+PC9 (0.66%)
+  low:  [no eBird code] Huechys sanguinea; [no eBird code] Okanagana cruentifera; [no eBird code] Diceroprocta aurantiaca; [no eBird code] Clidophleps distanti; [no eBird code] Arenopsaltria nubivena; [no eBird code] Okanagana rubrobasalis; [no eBird code] Diceroprocta eugraphica; Spiziapteryx circumcincta (Spot-winged Falconet); [no eBird code] Cicadatra hyalina; [no eBird code] Diceroprocta apache; [no eBird code] Bradyporus oniscus; [no eBird code] Clidophleps beameri
+  high: [no eBird code] Phrynobatrachus discogularis; [no eBird code] Arthroleptella atermina; [no eBird code] Breviceps mossambicus; [no eBird code] Semnodactylus wealii; [no eBird code] Rhinella castaneotica; [no eBird code] Cacosternum boettgeri; [no eBird code] Litoria cooloolensis; [no eBird code] Uperoleia laevigata; [no eBird code] Uperoleia tyleri; [no eBird code] Fritziana fissilis; [no eBird code] Peltophryne florentinoi; [no eBird code] Loxoblemmus equestris
+  low tenth: with an eBird code (birds) 0.74, sound events 0.00, other 0.26
+  high tenth: with an eBird code (birds) 0.28, sound events 0.04, other 0.68
+
+PC10 (0.64%)
+  low:  [no eBird code] Meliphaga albonotata; Icterus auricapillus (Orange-crowned Oriole); Sporophila americana; Aprositornis disjuncta; Dendroplex kienerii; Myrmotherula surinamensis (Guianan Streaked-Antwren); Eudyptes moseleyi; Phoenicoparrus jamesi (James's Flamingo); Mazaria propinqua (White-bellied Spinetail); Sporophila fringilloides (White-naped Seedeater); Pipra aureola (Crimson-hooded Manakin); Sporophila atrirostris (Black-billed Seed-Finch)
+  high: [no eBird code] Dendropsophus giesleri; Batrachostomus septimus (Philippine Frogmouth); [no eBird code] Fritziana mitus; Nothocrax urumutum (Nocturnal Curassow); Podargus ocellatus (Marbled Frogmouth); Asio solomonensis; Lophostrix cristata (Crested Owl); Otus lempiji (Sunda Scops Owl); [no eBird code] Mixophyes coggeri; Otus rufescens (Reddish Scops Owl); Aegotheles tatei; Megascops roraimae (Foothill Screech-Owl)
+  low tenth: with an eBird code (birds) 0.72, sound events 0.00, other 0.28
+  high tenth: with an eBird code (birds) 0.70, sound events 0.01, other 0.29
+
+PC11 (0.62%)
+  low:  [no eBird code] Leptodactylus poecilochilus; Scotopelia peli; Nyctibius grandis (Great Potoo); [no eBird code] Scinax x-signatus; [no eBird code] Yoyetta corindi; Eleothreptus candicans; [no eBird code] Terpandrus woodgeri; Arremon schlegeli (Golden-winged Sparrow); [no eBird code] Gryllita arizonae; Sporophila maximiliani; Sporophila crassirostris (Large-billed Seed-Finch); [no eBird code] Boana lanciformis
+  high: [no eBird code] Gryllodes supplicans; [no eBird code] Gryllus leei; [no eBird code] Velarifictorus grylloides; [no eBird code] Nisitrus malaya; [no eBird code] Acheta hispanicus; [no eBird code] Gryllus vocalis; [no eBird code] Prosciurillus leucomus; [no eBird code] Leptobrachella arayai; [no eBird code] Gryllus lightfooti; [no eBird code] Cercopis vulnerata; [no eBird code] Neonemobius variegatus; [no eBird code] Gryllus saxatilis
+  low tenth: with an eBird code (birds) 0.60, sound events 0.00, other 0.40
+  high tenth: with an eBird code (birds) 0.70, sound events 0.01, other 0.30
+
+PC12 (0.62%)
+  low:  [no eBird code] Platylomia bocki; [no eBird code] Crotalus horridus; [no eBird code] Euterpnosia chibensis; [no eBird code] Macrosemia pieli; [no eBird code] Crotalus pyrrhus; [no eBird code] Crotalus ornatus; [no eBird code] Guyalna cuta; [no eBird code] Elaphe quatuorlineata; [no eBird code] Terpnosia ganesa; [no eBird code] Mixophyes schevilli; [no eBird code] Macrosemia fengi; [no eBird code] Pituophis catenifer
+  high: Acrocephalus syrinx; Psarocolius cassini; Microxenops milleri (Rufous-tailed Xenops); Caprimulgus phalaena; Melanerpes herminieri; Lamprotornis ornatus; Piculus litae; [no eBird code] Ramosomyia viridifrons; Metabolus rugensis; Tockus damarensis; Tockus rufirostris (Southern Red-billed Hornbill); Tockus leucomelas (Southern Yellow-billed Hornbill)
+  low tenth: with an eBird code (birds) 0.49, sound events 0.04, other 0.47
+  high tenth: with an eBird code (birds) 0.70, sound events 0.00, other 0.29
+
+check on 208 of 1500 sampled readings with a class at 0.3 or more (292 s):
+  PC1: mean gap 0.458, shuffled 0.451, correlation -0.03
+  PC2: mean gap 0.245, shuffled 0.253, correlation 0.14
+  PC3: mean gap 0.178, shuffled 0.204, correlation 0.18
+  PC4: mean gap 0.287, shuffled 0.290, correlation 0.13
+  PC5: mean gap 0.212, shuffled 0.269, correlation 0.32
+  PC6: mean gap 0.248, shuffled 0.273, correlation 0.53
+  PC7: mean gap 0.253, shuffled 0.291, correlation 0.30
+  PC8: mean gap 0.195, shuffled 0.261, correlation 0.45
+  PC9: mean gap 0.284, shuffled 0.285, correlation 0.01
+  PC10: mean gap 0.344, shuffled 0.360, correlation 0.18
+  PC11: mean gap 0.230, shuffled 0.286, correlation 0.49
+  PC12: mean gap 0.162, shuffled 0.184, correlation 0.26
+EXIT 0

@@ -952,8 +952,13 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
                 {option(DetectionMethod::Bats, "BattyBirdNET", "Bat species of Europe and the USA")}
                 {region_select}
             </div>
-            <Show when=move || method() == DetectionMethod::BirdNet>
-                <live_view::LiveView />
+            // One live view for both models, so picking the other one restarts
+            // the readings with it instead of building the view again.
+            <Show when=move || matches!(method(), DetectionMethod::BirdNet | DetectionMethod::Perch)>
+                <live_view::LiveView method=Signal::derive(move || match method() {
+                    DetectionMethod::Perch => Method::Perch,
+                    _ => Method::BirdNet,
+                }) />
             </Show>
             {move || match method() {
                 DetectionMethod::Inbuilt => view! { <InbuiltDetection /> }.into_any(),

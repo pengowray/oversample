@@ -1,9 +1,9 @@
-// Live BirdNET view (experimental), drawn with Apache ECharts (vendor/,
-// Apache-2.0), loaded the first time the view is shown.
+// Live view (experimental) for BirdNET or Perch, drawn with Apache ECharts
+// (vendor/, Apache-2.0), loaded the first time the view is shown.
 //
 // Called from src/live_embedding.rs:
-//   oversampleLiveEmbedding.update(el, json, speciesJson)
-//   oversampleLiveEmbedding.dispose(el)
+//   oversampleLiveEmbedding.update(el, json, speciesJson, pcJson)
+//   oversampleLiveEmbedding.dispose(el)  (also when the model changes)
 // `json` is { min, top: [[name, score, unlikelyHere]...],
 //   trail: [[x, y, secondsAgo, score, umapX, umapY]...] (x, y on the t-SNE layout),
 //   rows: [name...], rowsUnlikely: [bool...], heard (any reading in the history),
@@ -14,11 +14,14 @@
 //     start with: { at: { x, y, ux, uy, s } or null, range ("12.4s to 15.4s") };
 //     `top` is then that reading's,
 //   pending: paused and that reading not in yet; `top` is then empty and the
-//     map shows no marker }
+//     map shows no marker,
+//   model: { name, hearing (said for bat recordings), jump: [t-SNE, UMAP]
+//     (placement radius on each layout) } }
 // `speciesJson` is [[x, y, name, scientific]...] for the map's species (t-SNE
 // places), or null when it was sent before. `pcJson` comes with it:
-// { variance: [share...], ranks: [[0..255 per species]...],
-// basis: 'rows' | 'recordings', umap: [[x, y]...] or null (UMAP places) }.
+// { variance: [share...] (empty without components), ranks: [[0..255 per
+// species]...], basis: 'rows' | 'recordings', umap: [[x, y]...] or null (UMAP
+// places), ends: [[low end, high end]...] per component, or empty }.
 (function () {
   let loading = null;
   function loadEcharts() {
@@ -230,7 +233,10 @@
   // Jumps longer than this on the map are not joined by the trail line, so
   // it never crosses the gap between unrelated groups (the same radius as
   // placement: species sit closer together on the UMAP layout).
-  const jump = (el) => (isUmap(el) ? 0.11 : 0.15);
+  const jump = (el) => {
+    const j = (el.__last && el.__last.model && el.__last.model.jump) || [0.15, 0.11];
+    return isUmap(el) ? j[1] : j[0];
+  };
 
   // The species' places on the active layout: [[x, y]...].
   function points(el) {
@@ -681,21 +687,6 @@
   // Middle fifth first and the outer fifths last, so where points overlap
   // the ends of the component show.
   const PC_ORDER = [2, 1, 3, 0, 4];
-  // What lies at the two ends of each class-row component (pc_bands.txt).
-  const PC_ENDS_ROWS = [
-    ['Amazonian antshrikes and antbirds', 'larks'],
-    ['waterbirds: cormorants, gulls, herons', 'Andean tanagers and warblers'],
-    ['southern seabirds and waterfowl', 'Asian flycatchers and drongos'],
-    ['African larks and scrub robins', 'North American woodpeckers and warblers'],
-    ['North American warblers and sparrows', 'African and Asian forest birds'],
-    ['North American orioles and thrashers', 'a mix: canastero, flowerpecker, bay owl, hornbill'],
-    ['dry-country thrashers, meadowlark, wheatear', 'South Asian sunbirds, coucal, crow'],
-    ['terns and Asian forest birds', 'African doves, turacos, coucals'],
-    ['South Asian laughingthrushes and babblers', 'Australian and New Guinea birds: cockatoos, honeyeaters, bowerbird'],
-    ['a mix: harrier, crake, thornbird, hornero, plover', 'European crows, jays and tits'],
-    ['South American pigeons, tinamou, motmot', 'a mix: hummingbird, booby, avocet, grebe'],
-    ['Himalayan warblers, treecreepers and tits', 'a mix: antpitta, frogmouth, myna, drongo'],
-  ];
 
   // Per component: each species' own fifth, and the fifth and strength of
   // the area around it. Worked out once per layout.
@@ -907,6 +898,11 @@
     const div = el.__parts.pcs;
     const pc = el.__pc;
     const n = pc.variance.length;
+    if (n === 0) {
+      // No components for this model: no small maps.
+      div.innerHTML = '';
+      return null;
+    }
     const gap = 4;
     const cols = pcColumns(n, div.clientWidth, gap);
     div.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
@@ -915,7 +911,8 @@
     const dpr = window.devicePixelRatio || 1;
     const px = Math.round(size * dpr);
     const rows = pc.basis === 'rows';
-    const between = rows ? "BirdNET's classes" : 'recordings';
+    const model = (el.__last && el.__last.model && el.__last.model.name) || 'BirdNET';
+    const between = rows ? `${model}'s classes` : 'recordings';
     div.innerHTML = '';
     const tip = document.createElement('div');
     tip.className = 'live-emb-near live-emb-pc-tip';
@@ -957,7 +954,8 @@
       maps.push(m);
 
       const share = `${(pc.variance[k] * 100).toFixed(1)}% of the variation between ${between}`;
-      const [lo, hi] = (rows && PC_ENDS_ROWS[k]) || ['', ''];
+      // What lies at the two ends of the component (pc_bands.txt), if known.
+      const [lo, hi] = (rows && pc.ends && pc.ends[k]) || ['', ''];
       const ends = lo
         ? `<div class="live-emb-tip-line">${swatch(0)}Low end: ${esc(lo)}</div><div class="live-emb-tip-line">${swatch(4)}High end: ${esc(hi)}</div>`
         : '';
@@ -1136,7 +1134,7 @@
       html = `${range}<span class="live-emb-none">No species at ${d.min.toFixed(2)} or above</span>`;
       next = `Highest: ${named(first)} ${first[1].toFixed(2)}${others ? ', ' + others : ''}`;
       // Bat recordings: say why nothing is found.
-      if (d.ultrasonic) next += '<br>BirdNET hears up to 15 kHz, so bat calls do not show here.';
+      if (d.ultrasonic && d.model) next += `<br>${esc(d.model.hearing)}`;
     }
     el.innerHTML = html + (next ? `<div class="live-emb-next">${next}</div>` : '');
     const n = el.querySelector('.live-emb-next');
@@ -1308,6 +1306,16 @@
       el.__parts = null;
       el.__rows = 0;
       el.__liveSpecies = false;
+      // The next update may be of another model: its species, layouts and
+      // components replace these.
+      el.__species = null;
+      el.__pc = null;
+      el.__pts = null;
+      el.__grid = null;
+      el.__colours = null;
+      el.__sel = null;
+      el.__view = null;
+      el.__last = null;
       el.innerHTML = '';
     },
   };

@@ -592,3 +592,85 @@ fn live_matches_the_run() {
         assert!((score - top[0].confidence).abs() < 0.05);
     }
 }
+
+/// Perch's `Live` request on the 5 s of a run's window gives the same top
+/// class and nearly the same softmax share as the run, and the same embedding.
+/// Also prints the time per reading.
+#[test]
+fn perch_live_matches_the_run() {
+    let Some(models) = perch_dir() else {
+        eprintln!("PERCH_MODELS_DIR not set; skipped");
+        return;
+    };
+    let mut s = Session::new();
+    load_part(
+        &mut s,
+        ModelPart::PerchEmbedding,
+        &models.join("perch_v2_embed.tract.onnx"),
+    );
+    load_part(
+        &mut s,
+        ModelPart::PerchClassifier,
+        &models.join("perch_v2_head.int8.bin"),
+    );
+    let (samples, rate) = load(
+        &sounds_dir()
+            .join("no-bat-sounds/sounds/XC1083752 - Pauraque - Nyctidromus albicollis.wav"),
+        30.0,
+    );
+    let out = analyse(&mut s, Method::Perch, &samples, rate);
+    let mut checked = 0;
+    for (k, (start, end, top)) in out.windows.iter().enumerate().take(4) {
+        let a = (start * rate as f64) as usize;
+        let b = ((end * rate as f64) as usize).min(samples.len());
+        if b - a < 5 * rate as usize {
+            continue;
+        }
+        let mut live: Option<Vec<f32>> = None;
+        let mut sink = |m: FromWorker, emb: Option<&[f32]>| {
+            if let FromWorker::Live { .. } = m {
+                live = emb.map(<[f32]>::to_vec);
+            }
+        };
+        let t = std::time::Instant::now();
+        s.handle(
+            ToWorker::Live {
+                req: k as u32,
+                source_rate: rate,
+            },
+            Attached {
+                samples: Some(samples[a..b].to_vec()),
+                ..Default::default()
+            },
+            &mut sink,
+            &|| 0.0,
+        );
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        let live = live.expect("a Live answer");
+        assert_eq!(live.len(), PERCH_EMBEDDING_LEN + PERCH_CLASSES);
+        let (embedding, scores) = live.split_at(PERCH_EMBEDDING_LEN);
+        let total: f32 = scores.iter().sum();
+        assert!(
+            (total - 1.0).abs() < 1e-3,
+            "softmax shares add up to {total}"
+        );
+        let (best, score) = scores
+            .iter()
+            .enumerate()
+            .max_by(|x, y| x.1.total_cmp(y.1))
+            .unwrap();
+        let run_emb = &out.embeddings[k * PERCH_EMBEDDING_LEN..(k + 1) * PERCH_EMBEDDING_LEN];
+        let dot: f32 = embedding.iter().zip(run_emb).map(|(x, y)| x * y).sum();
+        let norm = |v: &[f32]| v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let cos = dot / (norm(embedding) * norm(run_emb));
+        eprintln!(
+            "window {k}: run {} {:.3}, live {best} {score:.3}, embedding cosine {cos:.5}, {ms:.0} ms",
+            top[0].class, top[0].confidence
+        );
+        assert_eq!(best, top[0].class as usize);
+        assert!((score - top[0].confidence).abs() < 0.05);
+        assert!(cos > 0.99);
+        checked += 1;
+    }
+    assert!(checked > 0, "no whole 5 s window to check");
+}
