@@ -11,8 +11,12 @@
 //! found that 2 groups split calls from background as well as anything else
 //! tried, and held up with few windows.
 //!
-//! Groups are numbered by size, largest first, so Group 1 is usually the
-//! background and the numbers stay put when the grouping is redone.
+//! Quiet windows (`super::quiet`) can be left out before reducing, so the
+//! groups are kinds of sound and not sound and silence. A window left out has
+//! no group.
+//!
+//! Groups are numbered by size, largest first, and the numbers stay put when
+//! the grouping is redone.
 //!
 //! Pure functions; the caching and scheduling are in
 //! `crate::components::sound_groups`.
@@ -34,7 +38,7 @@ const SEED: u64 = 0x50_0d_67_00_95;
 
 /// Fill colours of the groups on the row and in the legend, Group 1 first.
 ///
-/// Group 1 (the largest, usually background) is a dark grey, so the smaller
+/// Group 1 (the largest, often background noise) is a dark grey, so the smaller
 /// groups stand out against it. The others are kept apart from the species
 /// rows above them, which are pink, sky blue, violet and light grey
 /// (`SPECIES_COLOURS` in `canvas::overlays`): green, orange and yellow.
@@ -54,27 +58,33 @@ pub const GROUP_COLOURS: [&str; 4] = ["#4a4c56", "#50dc96", "#e8743c", "#e0c040"
 /// centred and reduced to the top principal components.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Reduced {
-    /// Number of windows.
+    /// Number of windows reduced (the windows left out are not counted).
     pub n: usize,
     /// Values per window in `points`. 0 when every embedding is the same.
     pub dims: usize,
     /// `n` rows of `dims` values.
     pub points: Vec<f32>,
+    /// Per row of `points`, its window number.
+    pub windows: Vec<usize>,
+    /// All the windows, including those left out.
+    pub total: usize,
 }
 
 /// Which group each window is in.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Grouping {
     /// Per window (in window order), its group: 0 is Group 1, the largest.
-    pub of_window: Vec<u8>,
+    /// `None` for a window left out (quiet).
+    pub of_window: Vec<Option<u8>>,
     /// Windows in each group, largest first. Every group has at least one.
     pub sizes: Vec<usize>,
 }
 
 /// Reduce the first `embeddings.len() / dim` windows' embeddings
 /// (`ClassifierState::embeddings`, `dim` floats per window), in one go.
-pub fn reduce(embeddings: &[f32], dim: usize) -> Reduced {
-    let mut r = Reducer::new(embeddings, dim);
+/// `left_out[i]` true leaves window `i` out; windows past its end are kept.
+pub fn reduce(embeddings: &[f32], dim: usize, left_out: &[bool]) -> Reduced {
+    let mut r = Reducer::new(embeddings, dim, left_out);
     while !r.step() {}
     r.finish()
 }
@@ -85,25 +95,40 @@ pub struct Reducer {
     n: usize,
     dims: usize,
     projection: Option<TopProjection>,
+    windows: Vec<usize>,
+    total: usize,
 }
 
 impl Reducer {
-    /// Copies the embeddings, so `embeddings` can be let go before stepping.
-    pub fn new(embeddings: &[f32], dim: usize) -> Self {
-        let n = embeddings.len().checked_div(dim).unwrap_or(0);
-        match centred(embeddings, dim, n) {
+    /// Copies the kept windows' embeddings, so `embeddings` can be let go
+    /// before stepping.
+    pub fn new(embeddings: &[f32], dim: usize, left_out: &[bool]) -> Self {
+        let total = embeddings.len().checked_div(dim).unwrap_or(0);
+        let windows: Vec<usize> = (0..total)
+            .filter(|&i| !left_out.get(i).copied().unwrap_or(false))
+            .collect();
+        let n = windows.len();
+        let mut kept = Vec::with_capacity(n * dim);
+        for &i in &windows {
+            kept.extend_from_slice(&embeddings[i * dim..(i + 1) * dim]);
+        }
+        match centred(kept, dim, n) {
             Some(x) => {
                 let dims = MAX_DIMS.min(n - 1).min(dim);
                 Self {
                     n,
                     dims,
                     projection: Some(TopProjection::new(x, n, dim, dims)),
+                    windows,
+                    total,
                 }
             }
             None => Self {
                 n,
                 dims: 0,
                 projection: None,
+                windows,
+                total,
             },
         }
     }
@@ -118,6 +143,8 @@ impl Reducer {
             n: self.n,
             dims: self.dims,
             points: self.projection.map_or_else(Vec::new, TopProjection::finish),
+            windows: self.windows,
+            total: self.total,
         }
     }
 }
@@ -125,8 +152,7 @@ impl Reducer {
 /// The first `n` windows scaled to length 1 and centred, or `None` when
 /// there is nothing to separate them by (fewer than 2 windows, or all the
 /// same).
-fn centred(embeddings: &[f32], dim: usize, n: usize) -> Option<Vec<f32>> {
-    let mut x: Vec<f32> = embeddings[..n * dim].to_vec();
+fn centred(mut x: Vec<f32>, dim: usize, n: usize) -> Option<Vec<f32>> {
     // Scale each window to length 1. A window of zeros stays zeros.
     for row in x.chunks_exact_mut(dim.max(1)) {
         crate::pca::normalize(row);
@@ -226,35 +252,39 @@ fn kmeans_once(r: &Reduced, k: usize, rng: &mut SplitMix64) -> (Vec<usize>, f64)
     (assign, cost)
 }
 
-/// Sort the windows of `r` into `k` groups. `None` when there are fewer
-/// than `k + 1` windows. Identical windows give one group; fewer distinct
+/// Sort the windows of `r` into `k` groups. `None` when fewer than `k + 1`
+/// windows were reduced. Identical windows give one group; fewer distinct
 /// windows than `k` give fewer groups. The same input always gives the same
 /// result.
 pub fn group(r: &Reduced, k: usize) -> Option<Grouping> {
     if k == 0 || r.n < k + 1 {
         return None;
     }
-    if r.dims == 0 {
-        return Some(Grouping {
-            of_window: vec![0; r.n],
-            sizes: vec![r.n],
-        });
-    }
-    let mut best: Option<(Vec<usize>, f64)> = None;
-    for restart in 0..RESTARTS {
-        let mut rng = SplitMix64::new(SEED.wrapping_add(restart));
-        let (assign, cost) = kmeans_once(r, k, &mut rng);
-        if best.as_ref().is_none_or(|(_, c)| cost < *c) {
-            best = Some((assign, cost));
+    let assign = if r.dims == 0 {
+        vec![0; r.n]
+    } else {
+        let mut best: Option<(Vec<usize>, f64)> = None;
+        for restart in 0..RESTARTS {
+            let mut rng = SplitMix64::new(SEED.wrapping_add(restart));
+            let (assign, cost) = kmeans_once(r, k, &mut rng);
+            if best.as_ref().is_none_or(|(_, c)| cost < *c) {
+                best = Some((assign, cost));
+            }
         }
+        best?.0
+    };
+    let (numbers, sizes) = number_by_size(&assign);
+    let mut of_window = vec![None; r.total];
+    for (&w, n) in r.windows.iter().zip(numbers) {
+        of_window[w] = Some(n);
     }
-    let (assign, _) = best?;
-    Some(number_by_size(&assign))
+    Some(Grouping { of_window, sizes })
 }
 
 /// Renumber clusters by size, largest first; equal sizes by the earliest
-/// window. Empty clusters are dropped.
-fn number_by_size(assign: &[usize]) -> Grouping {
+/// window. Empty clusters are dropped. Each point's new number, and the
+/// sizes.
+fn number_by_size(assign: &[usize]) -> (Vec<u8>, Vec<usize>) {
     let k = assign.iter().copied().max().map_or(0, |m| m + 1);
     let mut size = vec![0usize; k];
     let mut first = vec![usize::MAX; k];
@@ -268,10 +298,10 @@ fn number_by_size(assign: &[usize]) -> Grouping {
     for (n, &c) in order.iter().enumerate() {
         new_number[c] = n as u8;
     }
-    Grouping {
-        of_window: assign.iter().map(|&a| new_number[a]).collect(),
-        sizes: order.iter().map(|&c| size[c]).collect(),
-    }
+    (
+        assign.iter().map(|&a| new_number[a]).collect(),
+        order.iter().map(|&c| size[c]).collect(),
+    )
 }
 
 /// What the model most often heard in one group.
@@ -300,22 +330,27 @@ fn most_frequent(counts: &std::collections::HashMap<u16, usize>) -> Option<(u16,
 }
 
 /// For each group of `g`, its most frequent top class in `run`. Windows
-/// without scores count in the group's size. Equal counts go to the lower
-/// class number.
+/// without scores count in the group's size; windows with no group (quiet)
+/// are not counted anywhere. Equal counts go to the lower class number.
 pub fn group_tops(g: &Grouping, run: &ClassifierRun) -> Vec<GroupTop> {
     use std::collections::HashMap;
     let n = g.sizes.len();
+    let grouped = || {
+        run.windows
+            .iter()
+            .zip(&g.of_window)
+            .filter_map(|(w, grp)| grp.map(|grp| (w, grp as usize)))
+    };
     let mut firsts: Vec<HashMap<u16, usize>> = vec![HashMap::new(); n];
-    for (w, &grp) in run.windows.iter().zip(&g.of_window) {
+    for (w, grp) in grouped() {
         if let Some(s) = w.top.first() {
-            *firsts[grp as usize].entry(s.class).or_default() += 1;
+            *firsts[grp].entry(s.class).or_default() += 1;
         }
     }
     let tops: Vec<Option<(u16, usize)>> = firsts.iter().map(most_frequent).collect();
     let mut sums = vec![0.0f32; n];
     let mut seconds: Vec<HashMap<u16, usize>> = vec![HashMap::new(); n];
-    for (w, &grp) in run.windows.iter().zip(&g.of_window) {
-        let grp = grp as usize;
+    for (w, grp) in grouped() {
         let Some((class, _)) = tops[grp] else {
             continue;
         };
@@ -416,11 +451,11 @@ mod tests {
     #[test]
     fn two_blobs_are_split() {
         let (e, is_b) = mixed(0, 5, 40);
-        let g = group(&reduce(&e, DIM), 2).unwrap();
+        let g = group(&reduce(&e, DIM, &[]), 2).unwrap();
         assert_eq!(g.sizes, vec![30, 10]);
         for (i, &b) in is_b.iter().enumerate() {
             // The larger blob is Group 1.
-            assert_eq!(g.of_window[i], u8::from(b), "window {i}");
+            assert_eq!(g.of_window[i], Some(u8::from(b)), "window {i}");
         }
     }
 
@@ -430,42 +465,42 @@ mod tests {
         let mut e = blob(0, 12, &mut rng);
         e.extend(blob(3, 9, &mut rng));
         e.extend(blob(9, 6, &mut rng));
-        let r = reduce(&e, DIM);
+        let r = reduce(&e, DIM, &[]);
         for k in GROUP_CHOICES {
             let a = group(&r, k).unwrap();
-            assert_eq!(Some(a.clone()), group(&reduce(&e, DIM), k));
+            assert_eq!(Some(a.clone()), group(&reduce(&e, DIM, &[]), k));
             assert_eq!(a.sizes.len(), k);
         }
         let g = group(&r, 3).unwrap();
         assert_eq!(g.sizes, vec![12, 9, 6]);
-        assert!(g.of_window[..12].iter().all(|&x| x == 0));
-        assert!(g.of_window[12..21].iter().all(|&x| x == 1));
-        assert!(g.of_window[21..].iter().all(|&x| x == 2));
+        assert!(g.of_window[..12].iter().all(|&x| x == Some(0)));
+        assert!(g.of_window[12..21].iter().all(|&x| x == Some(1)));
+        assert!(g.of_window[21..].iter().all(|&x| x == Some(2)));
     }
 
     #[test]
     fn numbered_by_size_then_first_window() {
-        let g = number_by_size(&[2, 2, 0, 1, 1, 1, 0, 2, 2]);
-        assert_eq!(g.sizes, vec![4, 3, 2]);
-        assert_eq!(g.of_window, vec![0, 0, 2, 1, 1, 1, 2, 0, 0]);
+        let (numbers, sizes) = number_by_size(&[2, 2, 0, 1, 1, 1, 0, 2, 2]);
+        assert_eq!(sizes, vec![4, 3, 2]);
+        assert_eq!(numbers, vec![0, 0, 2, 1, 1, 1, 2, 0, 0]);
         // Equal sizes: the group seen first comes first. A cluster number
         // with no windows is dropped.
-        let g = number_by_size(&[3, 3, 1, 1]);
-        assert_eq!(g.sizes, vec![2, 2]);
-        assert_eq!(g.of_window, vec![0, 0, 1, 1]);
+        let (numbers, sizes) = number_by_size(&[3, 3, 1, 1]);
+        assert_eq!(sizes, vec![2, 2]);
+        assert_eq!(numbers, vec![0, 0, 1, 1]);
     }
 
     #[test]
     fn too_few_windows() {
         let (e, _) = mixed(0, 5, 3);
-        let r = reduce(&e, DIM);
+        let r = reduce(&e, DIM, &[]);
         assert_eq!(r.n, 3);
         assert!(group(&r, 2).is_some());
         assert!(group(&r, 3).is_none());
         assert!(group(&r, 4).is_none());
-        assert!(group(&reduce(&[], DIM), 2).is_none());
+        assert!(group(&reduce(&[], DIM, &[]), 2).is_none());
         // A partial window at the end is ignored.
-        assert_eq!(reduce(&e[..2 * DIM + 3], DIM).n, 2);
+        assert_eq!(reduce(&e[..2 * DIM + 3], DIM, &[]).n, 2);
     }
 
     #[test]
@@ -474,15 +509,15 @@ mod tests {
         for _ in 0..6 {
             e.extend((0..DIM).map(|i| i as f32));
         }
-        let g = group(&reduce(&e, DIM), 3).unwrap();
+        let g = group(&reduce(&e, DIM, &[]), 3).unwrap();
         assert_eq!(g.sizes, vec![6]);
-        assert_eq!(g.of_window, vec![0; 6]);
+        assert_eq!(g.of_window, vec![Some(0); 6]);
         // Same direction, different lengths: alike once scaled to length 1.
         let mut e2 = Vec::new();
         for s in 1..=5 {
             e2.extend((0..DIM).map(|i| (i + 1) as f32 * s as f32));
         }
-        assert_eq!(group(&reduce(&e2, DIM), 2).unwrap().sizes, vec![5]);
+        assert_eq!(group(&reduce(&e2, DIM, &[]), 2).unwrap().sizes, vec![5]);
         // Only two distinct windows, four groups asked for: two groups.
         let mut e3 = Vec::new();
         for i in 0..6 {
@@ -490,7 +525,7 @@ mod tests {
             v[if i < 4 { 0 } else { 1 }] = 1.0;
             e3.extend(v);
         }
-        let g = group(&reduce(&e3, DIM), 4).unwrap();
+        let g = group(&reduce(&e3, DIM, &[]), 4).unwrap();
         assert_eq!(g.sizes, vec![4, 2]);
     }
 
@@ -498,9 +533,38 @@ mod tests {
     fn zero_windows_do_not_break_grouping() {
         let (mut e, _) = mixed(0, 5, 12);
         e[..DIM].iter_mut().for_each(|x| *x = 0.0);
-        let g = group(&reduce(&e, DIM), 2).unwrap();
+        let g = group(&reduce(&e, DIM, &[]), 2).unwrap();
         assert_eq!(g.of_window.len(), 12);
         assert!(g.sizes.iter().sum::<usize>() == 12);
+    }
+
+    #[test]
+    fn left_out_windows_have_no_group() {
+        let (mut e, is_b) = mixed(0, 5, 40);
+        // Windows 2, 3 and 39 left out; window 3 is made far from the rest,
+        // so it would be a group of its own if it were kept.
+        let mut left_out = vec![false; 40];
+        for i in [2, 3, 39] {
+            left_out[i] = true;
+        }
+        e[3 * DIM..4 * DIM].iter_mut().for_each(|x| *x = -5.0);
+        let r = reduce(&e, DIM, &left_out);
+        assert_eq!((r.n, r.total), (37, 40));
+        let g = group(&r, 2).unwrap();
+        assert_eq!(g.of_window.len(), 40);
+        assert_eq!(g.sizes, vec![27, 10]);
+        for (i, &b) in is_b.iter().enumerate() {
+            let want = (!left_out[i]).then_some(u8::from(b));
+            assert_eq!(g.of_window[i], want, "window {i}");
+        }
+        // Too few kept windows for the groups asked for.
+        let mut most = vec![true; 40];
+        most[0] = false;
+        most[1] = false;
+        assert!(group(&reduce(&e, DIM, &most), 2).is_none());
+        assert!(group(&reduce(&e, DIM, &[true; 40]), 2).is_none());
+        // A left-out list shorter than the windows keeps the rest.
+        assert_eq!(reduce(&e, DIM, &[true]).n, 39);
     }
 
     fn run(tops: &[Option<u16>]) -> ClassifierRun {
@@ -539,7 +603,7 @@ mod tests {
     #[test]
     fn groups_with_the_same_name_get_their_average_confidence() {
         let g = Grouping {
-            of_window: vec![0, 0, 1, 1, 2],
+            of_window: [0, 0, 1, 1, 2].map(Some).to_vec(),
             sizes: vec![2, 2, 1],
         };
         let mut r = run(&[Some(1), Some(1), Some(1), Some(1), Some(2)]);
@@ -566,9 +630,22 @@ mod tests {
     }
 
     #[test]
+    fn windows_without_a_group_are_not_counted() {
+        let g = Grouping {
+            of_window: vec![Some(0), None, Some(0), None, Some(1)],
+            sizes: vec![2, 1],
+        };
+        let r = run(&[Some(1), Some(0), Some(2), Some(0), Some(2)]);
+        let tops = group_tops(&g, &r);
+        // Class 0 tops both quiet windows but no group.
+        assert_eq!((tops[0].size, tops[0].top), (2, Some((1, 1))));
+        assert_eq!((tops[1].size, tops[1].top), (1, Some((2, 1))));
+    }
+
+    #[test]
     fn hints_name_the_most_frequent_top_class() {
         let g = Grouping {
-            of_window: vec![0, 0, 0, 0, 1, 1, 1, 0],
+            of_window: [0, 0, 0, 0, 1, 1, 1, 0].map(Some).to_vec(),
             sizes: vec![5, 3],
         };
         let r = run(&[
@@ -634,7 +711,7 @@ mod tests {
         }
         for (name, e) in [("noise", &noise), ("6 sound types", &sounds)] {
             let t = std::time::Instant::now();
-            let mut r = Reducer::new(e, dim);
+            let mut r = Reducer::new(e, dim, &[]);
             let mut longest = std::time::Duration::ZERO;
             loop {
                 let s = std::time::Instant::now();

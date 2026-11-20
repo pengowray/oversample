@@ -15,9 +15,17 @@
 //! no more often than every ten times its last duration, so a long file does
 //! not hold up the page. When the run ends it is redone straight away.
 //!
+//! Quiet windows (`crate::classifier::quiet`) are left out of the grouping.
+//! Their check needs the file's frame levels, measured once per file and
+//! method by reading the whole file in pieces (streamed files too) after the
+//! run has stopped, and cached. During a run the quiet check is used only if
+//! the levels are already cached (a rerun); otherwise every window is grouped
+//! until the run stops.
+//!
 //! The group hints ("mostly Gentoo Penguin") are not cached: a BattyBirdNET
 //! rescore changes the top classes but not the embeddings.
 
+use crate::classifier::quiet::{self, FrameLevels, LevelMeter, FRAMES_PER_WINDOW};
 use crate::classifier::sound_groups::{
     self as sg, GroupTop, Grouping, Reduced, GROUP_CHOICES, GROUP_COLOURS,
 };
@@ -27,6 +35,7 @@ use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use oversample_core::audio::source::ChannelView;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -39,6 +48,11 @@ struct Entry {
     windows: usize,
     /// [`fingerprint`] of the embeddings it was made from.
     first: u64,
+    /// Per window (`windows` of them), whether it is quiet and left out.
+    quiet: Rc<Vec<bool>>,
+    /// The quiet check was made (or could not be: the file's audio was
+    /// gone). False while a run goes on with no levels cached yet.
+    quiet_checked: bool,
     reduced: Rc<Reduced>,
     /// Per number of groups: the grouping, `None` with too few windows.
     groupings: HashMap<usize, Option<Rc<Grouping>>>,
@@ -48,8 +62,16 @@ struct Entry {
     done_at: f64,
 }
 
+/// A file's frame levels for one method, and the file length they cover.
+struct Levels {
+    total_samples: u64,
+    /// `None` when the file could not be found.
+    levels: Option<Rc<FrameLevels>>,
+}
+
 thread_local! {
     static CACHE: RefCell<HashMap<Key, Entry>> = RefCell::new(HashMap::new());
+    static LEVELS: RefCell<HashMap<Key, Levels>> = RefCell::new(HashMap::new());
     /// Notified when a grouping is added to the cache.
     static UPDATED: ArcTrigger = ArcTrigger::new();
     /// A reduction or grouping is being worked out.
@@ -87,11 +109,23 @@ fn embedded(state: AppState, key: Key) -> (usize, u64) {
     })
 }
 
+/// The current state of the sound groups of one file and method.
+pub struct Current {
+    /// The grouping with the picked number of groups; `None` with too few
+    /// windows that are not quiet.
+    pub grouping: Option<Rc<Grouping>>,
+    /// Per window, whether it is quiet and has no group.
+    pub quiet: Rc<Vec<bool>>,
+    /// Windows that are not quiet (the ones grouped).
+    pub kept: usize,
+}
+
 /// The current grouping of `file`'s windows for `method`, with the picked
-/// number of groups. `None` until worked out, with too few windows, or when
-/// the row is off. Reactive. While a run adds windows, the last grouping is
-/// returned until the next one is ready; windows after it have no group.
-pub fn grouping(state: AppState, file: u64, method: Method) -> Option<Rc<Grouping>> {
+/// number of groups, and which windows are quiet. `None` until worked out or
+/// when the row is off. Reactive. While a run adds windows, the last
+/// grouping is returned until the next one is ready; windows after it have
+/// no group.
+pub fn current(state: AppState, file: u64, method: Method) -> Option<Current> {
     UPDATED.with(|t| t.track());
     if !state.call_detection.sound_groups().get() {
         return None;
@@ -105,7 +139,11 @@ pub fn grouping(state: AppState, file: u64, method: Method) -> Option<Rc<Groupin
         if e.first != first || e.windows > windows {
             return None;
         }
-        group_now(e, k)
+        Some(Current {
+            grouping: group_now(e, k),
+            quiet: e.quiet.clone(),
+            kept: e.reduced.n,
+        })
     })
 }
 
@@ -130,22 +168,26 @@ fn hints(run: &ClassifierRun, tops: &[GroupTop]) -> Vec<String> {
     sg::hints(tops, |c| class_name(run, c))
 }
 
-/// The "Sound groups" row for `run`, and each group's hover name ("Group 2:
-/// mostly Gentoo Penguin"). Reactive. `None` when there is no grouping.
+/// The "Sound groups" row for `run`, each group's hover name ("Group 2:
+/// mostly Gentoo Penguin"), and per window whether it is quiet (empty cell,
+/// no group). Reactive. `None` when there is no grouping.
 pub fn row(
     state: AppState,
     file: u64,
     method: Method,
     run: &ClassifierRun,
-) -> Option<(ScoreRow, Vec<String>)> {
-    let g = grouping(state, file, method)?;
+) -> Option<(ScoreRow, Vec<String>, Vec<bool>)> {
+    let Current {
+        grouping, quiet, ..
+    } = current(state, file, method)?;
+    let g = grouping?;
     let names = hints(run, &sg::group_tops(&g, run))
         .iter()
         .enumerate()
         .map(|(i, hint)| format!("Group {}: {hint}", i + 1))
         .collect();
     let cells = (0..run.windows.len())
-        .map(|i| g.of_window.get(i).map(|&x| f32::from(x)))
+        .map(|i| g.of_window.get(i).copied().flatten().map(f32::from))
         .collect();
     Some((
         ScoreRow {
@@ -157,25 +199,147 @@ pub fn row(
             cells,
         },
         names,
+        quiet.to_vec(),
     ))
 }
 
-/// Work out the reduction for `key` and its grouping into `k` groups, one
-/// round at a time with the page drawing in between. The cache entry is
-/// replaced only once both are ready, so the row keeps showing the last
-/// grouping until then.
-fn compute(state: AppState, key: Key, k: usize, done: ArcTrigger) {
+/// The band the quiet check measures in, in Hz: the part of the spectrum
+/// the model looks at, less rumble under 250 Hz. BirdNET looks at 0 to
+/// 15 kHz of its 48 kHz input; BattyBirdNET is BirdNET on audio slowed from
+/// 256 kHz, so its band is 256 / 48 times higher.
+fn band(method: Method) -> (f32, f32) {
+    match method {
+        Method::BirdNet | Method::Perch => (250.0, 15_000.0),
+        Method::Bats => {
+            let scale = method.model_rate() as f32 / 48_000.0;
+            (250.0 * scale, 15_000.0 * scale)
+        }
+    }
+}
+
+/// Samples read per piece when measuring levels.
+const LEVEL_PIECE: u64 = 1 << 20;
+
+/// What [`measure`] found.
+enum Measured {
+    Levels(Option<Rc<FrameLevels>>),
+    /// The file was left before the measuring finished.
+    Abandoned,
+}
+
+/// `file`'s frame levels for `method`, from the cache or by reading the
+/// whole file in pieces with the page drawing in between. A piece that
+/// cannot be read counts as silence, as it does in the run.
+async fn measure(state: AppState, key: Key) -> Measured {
+    let (file, method) = key;
+    let found = state.library.files().with_untracked(|files| {
+        files
+            .iter()
+            .find(|f| f.id == file)
+            .map(|f| (f.audio.source.clone(), f.audio.sample_rate))
+    });
+    let Some((source, rate)) = found else {
+        return Measured::Levels(None);
+    };
+    let total = source.total_samples();
+    let cached = LEVELS.with(|l| {
+        l.borrow()
+            .get(&key)
+            .filter(|l| l.total_samples == total)
+            .map(|l| l.levels.clone())
+    });
+    if let Some(levels) = cached {
+        return Measured::Levels(levels);
+    }
+    let mut meter = LevelMeter::new(
+        rate,
+        method.window_secs() / FRAMES_PER_WINDOW as f64,
+        band(method),
+    );
+    let mut at = 0u64;
+    while at < total {
+        let len = LEVEL_PIECE.min(total - at) as usize;
+        let read = crate::audio::streaming_source::read_region_ready(
+            &*source,
+            ChannelView::MonoMix,
+            at,
+            len,
+        )
+        .await;
+        if state.current_file_id() != Some(file) {
+            return Measured::Abandoned;
+        }
+        let samples = read.unwrap_or_else(|| vec![0.0; len]);
+        meter.push(&samples);
+        if samples.len() < len {
+            if source.length_is_estimated() {
+                break;
+            }
+            meter.push(&vec![0.0; len - samples.len()]);
+        }
+        at += len as u64;
+        crate::web_util::yield_now().await;
+    }
+    let levels = Some(Rc::new(meter.finish()));
+    LEVELS.with(|l| {
+        l.borrow_mut().insert(
+            key,
+            Levels {
+                total_samples: total,
+                levels: levels.clone(),
+            },
+        )
+    });
+    Measured::Levels(levels)
+}
+
+/// The cached levels for `key`, if measured: `Some(None)` when the file
+/// could not be found.
+fn cached_levels(key: Key) -> Option<Option<Rc<FrameLevels>>> {
+    LEVELS.with(|l| l.borrow().get(&key).map(|l| l.levels.clone()))
+}
+
+/// Work out the quiet windows, the reduction for `key` and its grouping into
+/// `k` groups, one round at a time with the page drawing in between. With
+/// `measure_levels`, the file's levels are measured if not cached; without,
+/// cached levels are used if there are any. The cache entry is replaced only
+/// once all is ready, so the row keeps showing the last grouping until then.
+fn compute(state: AppState, key: Key, k: usize, measure_levels: bool, done: ArcTrigger) {
     BUSY.with(|b| b.set(true));
     spawn_local(async move {
         crate::web_util::yield_now().await;
+        let levels = if measure_levels {
+            match measure(state, key).await {
+                Measured::Levels(l) => Some(l),
+                Measured::Abandoned => {
+                    BUSY.with(|b| b.set(false));
+                    done.notify();
+                    return;
+                }
+            }
+        } else {
+            cached_levels(key)
+        };
+        let quiet_checked = levels.is_some();
+        let times: Vec<(f64, f64)> = state.classifier.results().with_untracked(|m| {
+            m.get(&key).map_or_else(Vec::new, |r| {
+                r.windows.iter().map(|w| (w.start_s, w.end_s)).collect()
+            })
+        });
         let len = key.1.embedding_len();
         let started = state.classifier.embeddings().with_untracked(|m| {
             m.get(&key).map(|e| {
                 let w = e.len() / len;
-                (w, fingerprint(e, len), sg::Reducer::new(&e[..w * len], len))
+                let mut quiet = match levels.as_ref().and_then(Option::as_ref) {
+                    Some(l) => quiet::quiet_windows(l, &times[..w.min(times.len())]),
+                    None => Vec::new(),
+                };
+                quiet.resize(w, false);
+                let reducer = sg::Reducer::new(&e[..w * len], len, &quiet);
+                (w, fingerprint(e, len), quiet, reducer)
             })
         });
-        if let Some((windows, first, mut reducer)) = started {
+        if let Some((windows, first, quiet, mut reducer)) = started {
             // About 20 ms a round for an hour of BirdNET, natively.
             let mut took_ms = 0.0;
             loop {
@@ -190,6 +354,8 @@ fn compute(state: AppState, key: Key, k: usize, done: ArcTrigger) {
             let mut entry = Entry {
                 windows,
                 first,
+                quiet: Rc::new(quiet),
+                quiet_checked,
                 reduced: Rc::new(reducer.finish()),
                 groupings: HashMap::new(),
                 took_ms,
@@ -235,14 +401,16 @@ pub fn drive(state: AppState) {
         let cached = CACHE.with(|c| {
             c.borrow().get(&key).map(|e| {
                 (
-                    e.windows == windows && e.first == first,
+                    // Made from these windows, and with the quiet check
+                    // once the run has stopped.
+                    e.windows == windows && e.first == first && (running || e.quiet_checked),
                     e.done_at + RUN_GAP_MS.max(10.0 * e.took_ms),
                 )
             })
         });
         match cached {
             // Up to date. A missing number of groups is worked out by
-            // `grouping` when the row asks for it.
+            // `current` when the row asks for it.
             Some((true, _)) => {}
             Some((false, due)) if running && due > now_ms() => {
                 WAITING.with(|w| w.set(Some(key)));
@@ -258,7 +426,7 @@ pub fn drive(state: AppState) {
                     tick.notify();
                 });
             }
-            _ => compute(state, key, k, tick.clone()),
+            _ => compute(state, key, k, !running, tick.clone()),
         }
     });
 }
@@ -272,24 +440,52 @@ fn windows_text(n: usize) -> String {
     }
 }
 
-/// The legend under the controls: one line per group, or why there is none.
+/// "9 quiet windows are not grouped".
+fn quiet_text(n: usize) -> String {
+    if n == 1 {
+        "1 quiet window is not grouped".to_string()
+    } else {
+        format!("{n} quiet windows are not grouped")
+    }
+}
+
+/// The legend under the controls: one line per group, or why there is none,
+/// and how many quiet windows were left out.
 fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
     let k = state.call_detection.sound_group_count().get();
-    let g = grouping(state, file, method);
+    let cur = current(state, file, method);
+    let quiet = cur
+        .as_ref()
+        .map_or(0, |c| c.quiet.iter().filter(|&&q| q).count());
+    let quiet_note = (quiet > 0).then(|| {
+        view! { <div class="detection-status-note sound-groups-note">{quiet_text(quiet)}</div> }
+    });
     state.classifier.results().with(|m| {
         let run = m.get(&(file, method))?;
-        let Some(g) = g else {
+        let Some(g) = cur.as_ref().and_then(|c| c.grouping.clone()) else {
             // A run that will never have enough windows says so; one still
             // going may get them.
             let (windows, _) = embedded(state, (file, method));
-            let short = run.complete && windows > 0 && windows < k + 1;
+            let kept = cur.as_ref().map_or(windows, |c| c.kept);
+            let short = run.complete && windows > 0 && kept < k + 1;
+            let text = if quiet > 0 {
+                format!(
+                    "{k} groups need at least {} windows that are not quiet. This file has {} that {} not quiet.",
+                    k + 1,
+                    windows_text(kept),
+                    if kept == 1 { "is" } else { "are" }
+                )
+            } else {
+                format!(
+                    "{k} groups need at least {} windows. This file has {}.",
+                    k + 1,
+                    windows_text(windows)
+                )
+            };
             return short.then(|| {
                 view! {
-                    <div class="detection-status-note sound-groups-note">{format!(
-                        "{k} groups need at least {} windows. This file has {}.",
-                        k + 1,
-                        windows_text(windows)
-                    )}</div>
+                    <div class="detection-status-note sound-groups-note">{text}</div>
+                    {quiet_note}
                 }
                 .into_any()
             });
@@ -330,6 +526,7 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                 <table class="detection-table sound-groups-legend">
                     <tbody>{rows}</tbody>
                 </table>
+                {quiet_note}
             }
             .into_any(),
         )

@@ -138,12 +138,14 @@ fn build(state: AppState) -> Option<ScoreStrips> {
             }
         }
         let mut group_names = Vec::new();
+        let mut quiet = Vec::new();
         if groups_on {
-            if let Some((row, names)) =
+            if let Some((row, names, q)) =
                 crate::components::sound_groups::row(state, file, method, run)
             {
                 rows.push(row);
                 group_names = names;
+                quiet = q;
             }
         }
         (!rows.is_empty()).then(|| ScoreStrips {
@@ -152,6 +154,7 @@ fn build(state: AppState) -> Option<ScoreStrips> {
             floors: window_floors(run),
             min_confidence: min,
             group_names,
+            quiet,
         })
     })
 }
@@ -183,6 +186,9 @@ fn hover_text(strips: &ScoreStrips, r: usize, i: usize) -> Option<(String, Strin
         ),
         (ScoreRowKind::Component, None) => format!("{}: not analysed yet", row.label),
         (ScoreRowKind::Groups, Some(g)) => strips.group_names.get(g as usize)?.clone(),
+        (ScoreRowKind::Groups, None) if strips.quiet.get(i) == Some(&true) => {
+            "Quiet: not grouped".to_string()
+        }
         (ScoreRowKind::Groups, None) => format!("{}: not grouped yet", row.label),
     };
     Some((line, window))

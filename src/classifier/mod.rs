@@ -53,6 +53,7 @@
 
 pub mod bat_pick;
 pub mod location;
+pub mod quiet;
 pub mod species_map;
 pub mod store;
 pub mod sound_groups;

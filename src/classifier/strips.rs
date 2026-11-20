@@ -72,6 +72,9 @@ pub struct ScoreStrips {
     /// For the sound groups row, each group's name and hint as hovered,
     /// Group 1 first: "Group 2: mostly Gentoo Penguin". Empty without the row.
     pub group_names: Vec<String>,
+    /// For the sound groups row, per window: quiet, so it has no group and
+    /// its cell is empty. Empty without the row.
+    pub quiet: Vec<bool>,
 }
 
 /// The class of `run` with this scientific name.
