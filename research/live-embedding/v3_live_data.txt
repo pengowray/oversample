@@ -1,0 +1,100 @@
+variance, PC1..PC16 (%): 1.93 0.91 0.78 0.73 0.70 0.63 0.61 0.56 0.54 0.51 0.49 0.48 0.46 0.44 0.42 0.41
+same PCA with each column shuffled (%): 0.16 0.15 0.15 0.15
+
+class rows, halves: share of 10 nearest neighbours in the same half, PC1..PC16
+  t-SNE          mean 0.70 (PC1-12):  0.65 0.76 0.69 0.70 0.76 0.71 0.73 0.68 0.68 0.68 0.68 0.67 0.67 0.66 0.65 0.63
+  UMAP 15/0.1    mean 0.73 (PC1-12):  0.76 0.82 0.74 0.73 0.78 0.72 0.77 0.70 0.69 0.71 0.64 0.68 0.71 0.67 0.62 0.60
+  UMAP 50/0.1    mean 0.72 (PC1-12):  0.76 0.83 0.72 0.72 0.77 0.72 0.76 0.69 0.68 0.70 0.63 0.66 0.70 0.66 0.60 0.58
+chosen UMAP: UMAP 15/0.1
+wrote ./birdnet-v3-umap.bin
+median distance to the 10th nearest class: t-SNE 0.0226, UMAP 0.0151, ratio 0.67
+wrote ./birdnet-v3-pc-rows.bin, 203208 bytes, from 16560 reference readings
+readings outside the classes' 5-95% range, per PC: 1.00 0.68 0.38 0.28 0.01 0.14 0.09 0.39 0.01 0.44 0.02 0.19
+reference windows' best confidence: median 0.130; share at 0.1 or more 0.54, 0.25 or more 0.43, 0.5 or more 0.36
+second best at 0.1 or more in 0.29 of windows; median second best 0.041
+
+PC1 (1.93%), compactness on UMAP 15/0.1 0.76
+  low:  Styan's Bulbul (Pycnonotus taivanus); Rufous-capped Babbler (Cyanoderma ruficeps); Small-billed Elaenia (Elaenia parvirostris); Spotted Pardalote (Pardalotus punctatus); White-eyed Parakeet (Psittacara leucophthalmus); Yellow-crowned Tyrannulet (Tyrannulus elatus); Rusty-margined Flycatcher (Myiozetetes cayanensis); Southeastern Beardless Tyrannulet (Camptostoma obsoletum); Forest Elaenia (Myiopagis gaimardii); Rufous Whistler (Pachycephala rufiventris); Pygmy Antwren (Myrmotherula brachyura); Rufous-margined Antwren (Herpsilochmus rufimarginatus)
+  high: Torrent-lark (Grallina bruijnii); Tana River Red Colobus (Piliocolobus rufomitratus); Rarotonga Starling (Aplonis cinerascens); Amazon Dwarf Squirrel (Microsciurus flaviventer); Black Storm Petrel (Hydrobates melania); Guam Rail (Gallirallus owstoni); Golden Bamboo Lemur (Hapalemur aureus); Coquerel's Sifaka (Propithecus coquereli); Pohnpei Kingfisher (Todiramphus reichenbachii); Pohnpei Flycatcher (Myiagra pluto); Olivaceous Piha (Snowornis cryptolophus); Grey-brown White-eye (Zosterops ponapensis)
+  low tenth: birds 0.95, insects 0.02, amphibians 0.02, mammals 0.01, sounds 0.00
+  high tenth: birds 0.89, insects 0.00, amphibians 0.03, mammals 0.08, other animals 0.01
+
+PC2 (0.91%), compactness on UMAP 15/0.1 0.82
+  low:  Southern Pig-tailed Macaque (Macaca nemestrina); Dusky Crested Flycatcher (Elminia nigromitrata); Black Berrypecker (Melanocharis nigra); Greater Green Leafbird (Chloropsis sonnerati); Proboscis Monkey (Nasalis larvatus); Sula Golden Bulbul (Hypsipetes longirostris); Rufous-backed Dwarf Kingfisher (Ceyx rufidorsa); Prevost's Squirrel (Callosciurus prevostii); Chestnut-breasted Malkoha (Phaenicophaeus curvirostris); Brown Tit-Babbler (Macronus striaticeps); Orange-tufted Spiderhunter (Arachnothera flammifera); Yellow-eared Spiderhunter (Arachnothera chrysogenys)
+  high: Puna Ground Tyrant (Muscisaxicola juninensis); Blue-bearded Helmetcrest (Oxypogon cyanolaemus); Stark's Lark (Spizocorys starki); Moreno's Ground Dove (Metriopelia morenoi); Tractrac Chat (Emarginata tractrac); Arabian Lark (Eremalauda eremodites); White-fronted Ground Tyrant (Muscisaxicola albifrons); Perija Metaltail (Metallura iracunda); African Savanna Elephant (Loxodonta africana); Rufous-webbed Bush Tyrant (Cnemarchus rufipennis); Coastal Miner (Geositta peruviana); Naretha Bluebonnet (Northiella narethae)
+  low tenth: birds 0.97, insects 0.00, mammals 0.02
+  high tenth: birds 0.88, insects 0.02, amphibians 0.03, mammals 0.06, other animals 0.01
+
+PC3 (0.78%), compactness on UMAP 15/0.1 0.74
+  low:  Proboscis Monkey (Nasalis larvatus); Mangrove Cicada (Arunta interclusa); Queensland Bark Cicada (Burbunga queenslandica); Choctaw Ground Cricket (Allonemobius shalontaki); African Crake (Crecopsis egregia); Woodworth's Frog (Limnonectes woodworthi); Slender-billed Weaver (Ploceus pelzelni); Black-billed Coucal (Centropus bernsteini); Philippine Duck (Anas luzonica); Cuban Ground Cricket (Neonemobius cubensis); Pink-spotted Trig (Anaxipha rosamacula); Hardhead (Aythya australis)
+  high: Princess Stephanie's Astrapia (Astrapia stephaniae); Rufescent Imperial Pigeon (Ducula chalconota); St. Lucia Oriole (Icterus laudabilis); Martinique Thrasher (Ramphocinclus brachyurus); Crested Satinbird (Cnemophilus macgregorii); Yellow-legged Pigeon (Columba pallidiceps); Olivaceous Piha (Snowornis cryptolophus); Giant Antpitta (Grallaria gigantea); Wattled Ploughbill (Eulacestoma nigropectus); Dusky Piha (Lipaugus fuscocinereus); Tacarcuna Chlorospingus (Chlorospingus tacarcunae); Golden Bamboo Lemur (Hapalemur aureus)
+  low tenth: birds 0.71, insects 0.14, amphibians 0.12, mammals 0.02, other animals 0.01
+  high tenth: birds 0.97, insects 0.00, amphibians 0.01, mammals 0.03
+
+PC4 (0.73%), compactness on UMAP 15/0.1 0.73
+  low:  Goldfish (Carassius auratus); Collared Peccary (Pecari tajacu); Eastern Massasauga (Sistrurus catenatus); Delicate Ambertail (Yoyetta delicata); Northern Royal Albatross (Diomedea sanfordi); Gopher Snake (Pituophis catenifer); Drumming Sword Wolf Spider (Gladicosa gulosa); Blue Whale (Balaenoptera musculus); Northern Flying Squirrel (Glaucomys sabrinus); Mule Deer (Odocoileus hemionus); Chestnut-bellied Malkoha (Phaenicophaeus sumatranus); Gravel Grasshopper (Chorthippus pullus)
+  high: Western Violet-backed Sunbird (Anthreptes longuemarei); Southern Hyliota (Hyliota australis); Reichard's Seedeater (Crithagra reichardi); Dybowski's Twinspot (Euschistospiza dybowskii); Copper Sunbird (Cinnyris cupreus); Black-and-white Mannikin (Spermestes bicolor); White-shouldered Black Tit (Melaniparus guineensis); African Firefinch (Lagonosticta rubricata); Böhm's Bee-eater (Merops boehmi); African Blue Flycatcher (Elminia longicauda); Brown Firefinch (Lagonosticta nitidula); Western Black-headed Batis (Batis erlangeri)
+  low tenth: birds 0.43, insects 0.28, amphibians 0.06, mammals 0.19, other animals 0.03, sounds 0.01
+  high tenth: birds 1.00, insects 0.00, mammals 0.00
+
+PC5 (0.70%), compactness on UMAP 15/0.1 0.78
+  low:  Javan Hawk-Eagle (Nisaetus bartelsi); Salmon-crested Cockatoo (Cacatua moluccensis); Rhesus Macaque (Macaca mulatta); Nuku Hiva Imperial Pigeon (Ducula galeata); Visayan Hornbill (Penelopides panini); Olive Baboon (Papio anubis); Iphis Monarch (Pomarea iphis); Hamadryas Baboon (Papio hamadryas); African Sacred Ibis (Threskiornis aethiopicus); Moustached Kingfisher (Actenoides bougainvillei); Spectacled Flying-fox (Pteropus conspicillatus); Yellow-billed Giant Honeyeater (Gymnomyza viridis)
+  high: Ashy-tailed Swift (Chaetura andrei); Short-billed Honeycreeper (Cyanerpes nitidus); Orange-crowned Euphonia (Euphonia saturata); Rufous-crested Coquette (Lophornis delattrei); Blue-whiskered Tanager (Tangara johannae); Wire-crested Thorntail (Discosura popelairii); Scarlet-thighed Dacnis (Dacnis venusta); Grey-and-gold Tanager (Poecilostreptus palmeri); Many-spotted Hummingbird (Taphrospilus hypostictus); Slate-throated Gnatcatcher (Polioptila schistaceigula); Spotted Tanager (Ixothraupis punctata); Green Thorntail (Discosura conversii)
+  low tenth: birds 0.90, insects 0.01, amphibians 0.00, mammals 0.09, other animals 0.00
+  high tenth: birds 0.91, insects 0.02, amphibians 0.05, mammals 0.02
+
+PC6 (0.63%), compactness on UMAP 15/0.1 0.72
+  low:  Delicate Ambertail (Yoyetta delicata); Javan Blue Robin (Myiomela diana); Mozambique Forest Tree Frog (Leptopelis mossambicus); Euterpnosia alpina; Javan Sunbird (Aethopyga mystacalis); Prairie Cicada (Okanagana balli); Eastern Massasauga (Sistrurus catenatus); Eyebrowed Jungle Flycatcher (Vauriella gularis); Maroon-naped Sunbird (Aethopyga guimarasensis); Euterpnosia viridifrons; Javan Leafbird (Chloropsis cochinchinensis); Spotted Snout-Burrower (Hemisus guttatus)
+  high: Tana River Red Colobus (Piliocolobus rufomitratus); Rarotonga Starling (Aplonis cinerascens); Caroline Reed Warbler (Acrocephalus syrinx); Pohnpei Flycatcher (Myiagra pluto); Collared Peccary (Pecari tajacu); Samoan Myzomela (Myzomela nigriventris); Chuuk Flycatcher (Myiagra oceanica); Pacific Imperial Pigeon (Ducula pacifica); Purple-breasted Cotinga (Cotinga cotinga); Harbour Porpoise (Phocoena phocoena); Buff-bellied Monarch (Neolalage banksiana); White-lipped Peccary (Tayassu pecari)
+  low tenth: birds 0.45, insects 0.31, amphibians 0.22, mammals 0.02, other animals 0.01
+  high tenth: birds 0.89, insects 0.00, amphibians 0.01, mammals 0.10, other animals 0.00
+
+PC7 (0.61%), compactness on UMAP 15/0.1 0.77
+  low:  Yellow-rumped Siskin (Spinus uropygialis); Cochabamba Mountain Finch (Poospiza garleppi); Hume's White-eye (Zosterops auriventer); Rufous-naped Ground Tyrant (Muscisaxicola rufivertex); Moluccan Starling (Aplonis mysolensis); Philippine Leafbird (Chloropsis flavipennis); Handsome Sunbird (Aethopyga bella); Obi Golden Bulbul (Hypsipetes lucasi); Mindanao Pygmy Babbler (Dasycrotapha plateni); Red-throated Sunbird (Anthreptes rhodolaemus); Yellow-sided Flowerpecker (Dicaeum aureolimbatum); Sula Hanging Parrot (Loriculus sclateri)
+  high: Eastern Grey Kangaroo (Macropus giganteus); Common Wallaroo (Osphranter robustus); Southern Tree Hyrax (Dendrohyrax arboreus); Mandrill (Mandrillus sphinx); Small-eared Greater Galago (Otolemur garnettii); Impala (Aepyceros melampus); Eastern Crested Guineafowl (Guttera pucherani); Short-eared Brush-tailed Possum (Trichosurus caninus); Southern Crested Guineafowl (Guttera edouardi); White-backed Night Heron (Calherodius leuconotus); Common Brushtail Possum (Trichosurus vulpecula); Olive Baboon (Papio anubis)
+  low tenth: birds 0.99, insects 0.00, mammals 0.01
+  high tenth: birds 0.48, insects 0.18, amphibians 0.17, mammals 0.15, other animals 0.02
+
+PC8 (0.56%), compactness on UMAP 15/0.1 0.70
+  low:  Eastern Parotia (Parotia helenae); Archbold's Bowerbird (Archboldia papuensis); Bellied Bright Bush-cricket (Poecilimon thoracicus); Brunner's Bright Bush-cricket (Poecilimon brunneri); Slender Bright Bush-cricket (Poecilimon gracilis); Macedonian Bright Bush-Cricket (Poecilimon macedonicus); Tessellana nigrosignata; Metaplastes ippolitoi; Elegant Bright Bush-Cricket (Poecilimon elegans); Crinkle-collared Manucode (Manucodia chalybatus); Oak Bush-cricket (Meconema thalassinum); Western Parotia (Parotia sefilata)
+  high: Asian Openbill (Anastomus oscitans); European Carp (Cyprinus carpio); Antipodean Albatross (Diomedea antipodensis); Salvin's Albatross (Thalassarche salvini); Indian Cormorant (Phalacrocorax fuscicollis); Black Storm Petrel (Hydrobates melania); Northern Giant Petrel (Macronectes halli); White-beaked Dolphin (Lagenorhynchus albirostris); Reed Cormorant (Microcarbo africanus); Great White Pelican (Pelecanus onocrotalus); Shy Albatross (Thalassarche cauta); Indian Swiftlet (Aerodramus unicolor)
+  low tenth: birds 0.72, insects 0.22, amphibians 0.01, mammals 0.05, other animals 0.00
+  high tenth: birds 0.87, insects 0.02, amphibians 0.04, mammals 0.07, other animals 0.01, sounds 0.00
+
+PC9 (0.54%), compactness on UMAP 15/0.1 0.69
+  low:  Grey-throated Sunbird (Anthreptes griseigularis); Golden Palm Weaver (Ploceus bojeri); Antillean Crested Hummingbird (Orthorhyncus cristatus); Sahul Sunbird (Cinnyris frenatus); Red-billed Emerald (Chlorostilbon gibsoni); White-throated Ground Dove (Pampusana xanthonura); Samoan Myzomela (Myzomela nigriventris); Snowy-bellied Hummingbird (Saucerottia edward); Kosrae Fruit Dove (Ptilinopus hernsheimi); Indigo-capped Hummingbird (Saucerottia cyanifrons); Pohnpei Fantail (Rhipidura kubaryi); Mariana Fruit Dove (Ptilinopus roseicapilla)
+  high: Barred Owlet-nightjar (Aegotheles bennettii); Marail Guan (Penelope marail); Guenther's Forest Frog (Platymantis guentheri); Ash-throated Gnateater (Conopophaga peruviana); Bolivian Bamboo Rat (Dactylomys boliviensis); Western Crested Guineafowl (Guttera verreauxi); Plumed Guineafowl (Guttera plumifera); Northern Night Monkey (Aotus trivirgatus); Kinkajou (Potos flavus); Map Tree Frog (Boana geographica); White-winged Lark (Alauda leucoptera); Diminutive Forest Frog (Platymantis mimulus)
+  low tenth: birds 0.80, insects 0.15, amphibians 0.02, mammals 0.02, other animals 0.01
+  high tenth: birds 0.81, insects 0.01, amphibians 0.13, mammals 0.05, other animals 0.00
+
+PC10 (0.51%), compactness on UMAP 15/0.1 0.71
+  low:  Whistling Warbler (Catharopeza bishopi); Diminutive Forest Frog (Platymantis mimulus); Girard's Robber Frog (Ischnocnema parva); Chestnut Sparrow (Passer eminibey); Fearful Owl (Asio solomonensis); St. Lucia Wren (Troglodytes mesoleucus); St. Lucia Amazon (Amazona versicolor); Black-billed Streamertail (Trochilus scitulus); Kolombangara Monarch (Symposiachrus browni); Goldie's Lorikeet (Glossoptilus goldiei); Ornebius aperta; Goldie's Bird-of-paradise (Paradisaea decora)
+  high: Metaplastes ippolitoi; Eastern Alpine Bush-cricket (Anonconotus italoaustriacus); Bellied Bright Bush-cricket (Poecilimon thoracicus); Elegant Bright Bush-Cricket (Poecilimon elegans); Gravel Grasshopper (Chorthippus pullus); Alpine Thick-necked Grasshopper (Aeropedellus variegatus); Brunner's Bright Bush-cricket (Poecilimon brunneri); Macedonian Bright Bush-Cricket (Poecilimon macedonicus); Bronze Glandular Bush-cricket (Bradyporus dasypus); Southern Oak Bush-cricket (Meconema meridionale); Poecilimon pergamicus; Jago's Cross-backed Grasshopper (Dociostaurus jagoi)
+  low tenth: birds 0.80, insects 0.04, amphibians 0.14, mammals 0.03
+  high tenth: birds 0.73, insects 0.19, amphibians 0.00, mammals 0.06, other animals 0.02, sounds 0.00
+
+PC11 (0.49%), compactness on UMAP 15/0.1 0.64
+  low:  Bonobo (Pan paniscus); Bengal Sacred Langur (Semnopithecus entellus); Banded Mongoose (Mungos mungo); Rhesus Macaque (Macaca mulatta); Mandrill (Mandrillus sphinx); Hamadryas Baboon (Papio hamadryas); Victoria Crowned Pigeon (Goura victoria); Black-winged Lovebird (Agapornis taranta); South American Coati (Nasua nasua); Himalayan Swiftlet (Aerodramus brevirostris); Olive Baboon (Papio anubis); Indian Rhinoceros (Rhinoceros unicornis)
+  high: Great Knot (Calidris tenuirostris); Bokikokiko (Acrocephalus aequinoctialis); Taveuni Silktail (Lamprolia victoriae); Nauru Reed Warbler (Acrocephalus rehsei); Yap Monarch (Monarcha godeffroyi); Guam Rail (Gallirallus owstoni); Olive-colored White-eye (Zosterops oleagineus); Rimatara Reed Warbler (Acrocephalus rimitarae); Chuuk Flycatcher (Myiagra oceanica); Caroline Reed Warbler (Acrocephalus syrinx); Cook Reed Warbler (Acrocephalus kerearako); Norfolk Robin (Petroica multicolor)
+  low tenth: birds 0.81, insects 0.01, amphibians 0.01, mammals 0.17, other animals 0.00
+  high tenth: birds 0.85, insects 0.05, amphibians 0.08, mammals 0.01, other animals 0.01
+
+PC12 (0.48%), compactness on UMAP 15/0.1 0.68
+  low:  Adelaide Firetail (Yoyetta aaede); Orange-bellied Parrot (Neophema chrysogaster); Delicate Ambertail (Yoyetta delicata); Principe Weaver (Ploceus princeps); White-breasted Robin (Eopsaltria georgiana); Cassinia Cicada (Chelapsalta puer); Little Lorikeet (Psitteuteles pusillus); Mt Lofty Firetail (Yoyetta loftyensis); North Coast Ambertail (Yoyetta corindi); Elegant Parrot (Neophema elegans); Orange Clicker (Kobonga umbrimargo); Common Squirrel Monkey (Saimiri sciureus)
+  high: Sumichrast's Vesper Rat (Nyctomys sumichrasti); Dulit Frogmouth (Batrachostomus harterti); Philippine Eagle-Owl (Ketupa philippensis); Rinjani Scops Owl (Otus jolandae); Enggano Scops Owl (Otus enganensis); Azara’s Night Monkey (Aotus azarae); Sulawesi Cuckoo (Cuculus crassirostris); Palawan Frogmouth (Batrachostomus chaseni); Sunda Frogmouth (Batrachostomus cornutus); Guam Rail (Gallirallus owstoni); White-crested Tiger Heron (Tigriornis leucolopha); Arabian Eagle-Owl (Bubo milesi)
+  low tenth: birds 0.72, insects 0.16, amphibians 0.07, mammals 0.04, other animals 0.01
+  high tenth: birds 0.87, insects 0.07, amphibians 0.03, mammals 0.03
+
+check on 5950 readings with a class at 0.5 or more:
+  PC1: mean gap 0.413, shuffled 0.437, correlation 0.27
+  PC2: mean gap 0.404, shuffled 0.412, correlation 0.52
+  PC3: mean gap 0.362, shuffled 0.363, correlation 0.05
+  PC4: mean gap 0.130, shuffled 0.177, correlation 0.51
+  PC5: mean gap 0.186, shuffled 0.227, correlation 0.52
+  PC6: mean gap 0.278, shuffled 0.280, correlation 0.07
+  PC7: mean gap 0.250, shuffled 0.275, correlation 0.34
+  PC8: mean gap 0.372, shuffled 0.377, correlation 0.49
+  PC9: mean gap 0.227, shuffled 0.245, correlation 0.21
+  PC10: mean gap 0.118, shuffled 0.142, correlation 0.36
+  PC11: mean gap 0.191, shuffled 0.241, correlation 0.45
+  PC12: mean gap 0.409, shuffled 0.412, correlation 0.13

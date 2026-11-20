@@ -1,12 +1,13 @@
-# Live view (experimental): BirdNET and Perch 2.0
+# Live view (experimental): BirdNET, BirdNET+ V3.0 and Perch 2.0
 
-A view in the Call detection tab (BirdNET or Perch 2.0 picked, "Live view"
-switched on) that shows what the model hears in the last 3 s (BirdNET V2.4)
-or 5 s (Perch 2.0) of audio, a few times a second, while a file plays or the
-microphone listens. Most of this page describes BirdNET, the first model the
-view ran; [Perch 2.0](#perch-20) lists what differs with Perch. Code:
+A view in the Call detection tab (BirdNET V2.4, BirdNET+ V3.0 or Perch 2.0
+picked, "Live view" switched on) that shows what the model hears in the last
+3 s (BirdNET V2.4 and V3.0) or 5 s (Perch 2.0) of audio, a few times a
+second, while a file plays or the microphone listens. Most of this page
+describes BirdNET V2.4, the first model the view ran; [Perch 2.0](#perch-20)
+and [BirdNET+ V3.0](#birdnet-v30) list what differs with them. Code:
 `src/live_embedding.rs` (worker, requests, placement, strip rows, and the
-`BIRDNET` and `PERCH` model settings), `live-embedding.js` (charts, Apache
+`BIRDNET`, `BIRDNET_V3` and `PERCH` model settings), `live-embedding.js` (charts, Apache
 ECharts), and `src/components/file_sidebar/call_detection_panel/live_view.rs`
 (switch and status line). The worker message is `ToWorker::Live` in
 `oversample-ipc/src/classifier.rs`.
@@ -170,6 +171,113 @@ python -I perch_live_data.py perch_v2_head.npz labels.csv perch_v2_ebird_classes
   (hornbills, oropendola, woodpeckers). Where Perch's labels have no English
   name the script prints the scientific name only, so the insect, frog and
   mammal groups are named from their genera.
+
+## BirdNET+ V3.0
+
+With BirdNET+ V3.0 picked as the method, the view runs V3.0 (added
+2026-11-21). Everything below works the same way, with these values
+(`BIRDNET_V3` in `src/live_embedding.rs`):
+
+| | BirdNET V2.4 | BirdNET+ V3.0 |
+|---|---|---|
+| Reading | last 3 s, resampled to 48 kHz | last 3 s, resampled to 32 kHz |
+| Answer | 1,024-value embedding, 6,522 scores (sigmoid) | 1,280-value embedding, 11,725 confidences (the model's own sigmoid; no second one) |
+| Digital silence (every sample 0) | run | not run: no scores, an embedding of zeros, as Analyse does. Nothing new is drawn; a file window is kept in the results as Analyse keeps it |
+| Labels | downloaded with the model | `birdnet-v3-labels.tsv`, served with the app |
+| Minimum confidence | BirdNET's setting | V3.0's own setting (default 0.25) |
+| Shortest gap between requests | 250 ms | 500 ms (as Perch: the model takes 320 to 410 ms per window in WASM, so one request in flight paces the readings) |
+| Request given up after | 5 s | 10 s |
+| Readings averaged in the component graphs | 4 (about 1 s) | 2 (about 1 s) |
+| t-SNE map and placement radius | `birdnet-map.bin`, 0.15 | `birdnet-v3-map.bin`, 0.105 |
+| UMAP layout and placement radius | `birdnet-umap.bin`, 0.11 | `birdnet-v3-umap.bin`, 0.07 |
+| Component maps | `birdnet-pc-rows.bin` (12) | `birdnet-v3-pc-rows.bin` (12); no recordings file |
+| Score for a row in the strip | 0.1 | 0.1 |
+| Note for bat recordings | "BirdNET hears up to 15 kHz, ..." | "BirdNET+ V3.0 hears up to 15 kHz, so bat calls do not show here." |
+
+- **Readings kept in the file's results**, as for V2.4 and Perch
+  (`src/classifier/played.rs`): the cut from `live_cut` lines up with
+  Analyse's 32 kHz windows. Checked by `birdnet_v3_kept_reading_is_the_run_window`
+  and `birdnet_v3_live_matches_the_run` in `birdnet-worker/tests/real_models.rs`
+  (`BIRDNET_V3_MODEL` set to the pruned file).
+- **Rows above the spectrogram:** the principal-component rows work for V3.0
+  too, from `birdnet-v3-pc-rows.bin` (`components_for` in
+  `src/components/score_strips.rs`).
+- **Live explorer** stays on BirdNET V2.4, as with Perch: while the live view
+  runs V3.0 it shows the spectrum only.
+
+### BirdNET+ V3.0 data files
+
+Made by `v3_live_data.py` (output in `v3_live_data.txt`) from the class
+rows and from V3.0 embeddings of BirdSet's HSN and POW test sets
+(`birdset_embed_v3.py`):
+
+```bash
+M=~/.cache/oversample-research/birdnet-v3/zenodo/BirdNET+_V3.0_Global_12K_FP16_pruned.onnx
+B=~/.cache/oversample-research/birdnet-v3/birdset
+python -I birdset_embed_v3.py $M ~/datasets/birdset/POW ~/datasets/birdset/out/POW/labels.npz $B/POW.npz
+python -I birdset_embed_v3.py $M ~/datasets/birdset/HSN ~/datasets/birdset/out/HSN_hp/labels.npz $B/HSN.npz
+python -I v3_live_data.py $M ../birdnet-v3-bench/birdnet-v3-labels.tsv \
+    ../species-map/birdnet-v3-map.bin . $B/HSN.npz $B/POW.npz > v3_live_data.txt
+```
+
+(Python from the `batchi-noisier2noise` venv; the two embedding runs took 7
+and 15 minutes on a busy machine, about 70 ms per window with 6 threads.)
+
+- **Class vectors:** each class's row of the pruned head's weight, scaled to
+  length 1, as `research/species-map/project_v3.py` uses for the t-SNE map
+  (see its README for why that row is the class's vector). All 11,725
+  classes have one.
+- **UMAP layout** (`birdnet-v3-umap.bin`): umap-js (`umap_js.cjs`, seeded) on
+  the rows after PCA to 50 dimensions, scaled back to length 1, as for
+  Perch; 15 neighbours, minimum distance 0.1 (50 neighbours was slightly
+  less compact). The 10th nearest class is at 0.0151 map units against
+  0.0226 on t-SNE, so the placement radius is 0.105 x 0.67 = 0.07.
+  Insects, frogs, mammals and birds form separate regions; on the genus
+  check of `research/species-map/v3-check.txt` it keeps less than t-SNE
+  (0.075 against 0.339), as V2.4's and Perch's UMAP layouts did.
+- **Components** (`birdnet-v3-pc-rows.bin`, OPC1, 12 components, 1,280
+  dimensions, 11,725 classes): PCA of the class rows. Shares of variance,
+  PC1 to PC12: 1.93, 0.91, 0.78, 0.73, 0.70, 0.63, 0.61, 0.56, 0.54, 0.51,
+  0.49 and 0.48% (each column shuffled: 0.16%). 12 to match V2.4 and Perch.
+  Share of a class's 10 nearest neighbours on the UMAP layout in the same
+  half: 0.76, 0.82, 0.74, 0.73, 0.78, 0.72, 0.77, 0.70, 0.69, 0.71, 0.64,
+  0.68 (PC13 0.71, PC14 to PC16 0.67 to 0.60), so PC11 is the only one under
+  V2.4's 0.65 rule.
+- **Percentiles of a reading:** the reference quantiles come from 16,560
+  BirdSet windows (the 3 s starting 1 s into each 5 s window of HSN and
+  POW, none digitally silent). V2.4's file used three 3 s windows per 5 s
+  window (about 50,000); one is enough for 21 quantiles. On PC1 every
+  reading lies outside the classes' 5 to 95% range (the embedding is
+  non-negative and sits to one side), so the quantile mapping matters as
+  much as for V2.4.
+- **Check** (5,950 windows with a class at 0.5 or more; reading percentile
+  against its top class's percentile, mean gap / shuffled gap /
+  correlation): PC1 0.41 / 0.44 / 0.27, PC2 0.40 / 0.41 / 0.52, PC3 0.36 /
+  0.36 / 0.05, PC4 0.13 / 0.18 / 0.51, PC5 0.19 / 0.23 / 0.52, PC6 0.28 /
+  0.28 / 0.07, PC7 0.25 / 0.28 / 0.34, PC8 0.37 / 0.38 / 0.49, PC9 0.23 /
+  0.25 / 0.21, PC10 0.12 / 0.14 / 0.36, PC11 0.19 / 0.24 / 0.45, PC12 0.41 /
+  0.41 / 0.13. As with V2.4 and Perch, a reading follows its top class
+  only loosely; on PC3, PC6 and PC12 hardly at all. All positive (V2.4 had
+  two negative). HSN and POW are North American birds only.
+- **Strip rows:** 0.1, as for the other models. White noise gives no class
+  above 0.03 (`research/birdnet-v3-bench`); on the BirdSet windows the
+  best class reaches 0.1 in 54% and the second best in 29% (median 0.04).
+- **Component ends** (the tooltip's "Low end" and "High end", from the 12
+  classes at each end and the taxon groups in each outer tenth): PC1 small
+  forest songbirds / Pacific island birds, lemurs and monkeys; PC2 Southeast
+  Asian forest birds, monkeys and squirrels / Andean and desert ground
+  birds; PC3 cicadas, crickets, frogs and waterbirds / New Guinea and
+  Andean forest birds; PC4 insects, mammals, snakes and fish (43% birds) /
+  African sunbirds, firefinches and seedeaters; PC5 monkeys, baboons and
+  large loud birds / tropical American tanagers and hummingbirds; PC6
+  cicadas, frogs and Javan forest birds / Pacific island birds and some
+  mammals; PC7 sunbirds, flowerpeckers, white-eyes and finches / mammals and
+  guineafowl (48% birds); PC8 European bush-crickets and birds-of-paradise
+  / seabirds and waterbirds; PC9 hummingbirds, sunbirds and island doves /
+  night birds and mammals, guineafowl, frogs; PC10 island birds and small
+  frogs / European bush-crickets and grasshoppers; PC11 monkeys and other
+  mammals / Pacific island reed warblers and monarchs; PC12 Australian
+  cicadas and parrots / owls, frogmouths and other night birds.
 
 ## What the view shows, and why
 

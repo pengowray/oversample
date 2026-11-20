@@ -1,0 +1,82 @@
+
+XC540767 - Gentoo Penguin - Pygoscelis papua.mp3 (48000 Hz, 47.0 s)
+    0-3 s: Gentoo Penguin 0.72, Macaroni Penguin 0.04, Northern Gannet 0.03; top class's row is number 2 by cosine to the embedding
+    t-SNE: at (+0.413, +0.521), pulled by 3 of 3 (Gentoo Penguin; Macaroni Penguin; Northern Gannet); nearest: Gentoo Penguin, Adelie Penguin, Chinstrap Penguin, Western Rockhopper Penguin, Australasian Gannet
+    UMAP: at (-0.139, -0.261), pulled by 3 of 3 (Gentoo Penguin; Macaroni Penguin; Northern Gannet); nearest: Antipodean Albatross, Gentoo Penguin, South Polar Skua, Vampire Ground Finch, Chatham Albatross
+    3-6 s: Gentoo Penguin 0.87, Black-legged Kittiwake 0.01, Magellanic Penguin 0.01; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (+0.413, +0.520), pulled by 3 of 3 (Gentoo Penguin; Black-legged Kittiwake; Magellanic Penguin); nearest: Gentoo Penguin, Adelie Penguin, Chinstrap Penguin, Western Rockhopper Penguin, Australasian Gannet
+    UMAP: at (-0.139, -0.263), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Chatham Albatross
+    6-9 s: Gentoo Penguin 0.90, Macaroni Penguin 0.03, Magellanic Penguin 0.02; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (+0.414, +0.519), pulled by 3 of 3 (Gentoo Penguin; Macaroni Penguin; Magellanic Penguin); nearest: Gentoo Penguin, Chinstrap Penguin, Adelie Penguin, Western Rockhopper Penguin, Macaroni Penguin
+    UMAP: at (-0.139, -0.262), pulled by 2 of 3 (Gentoo Penguin; Macaroni Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Chatham Albatross
+    9-12 s: Gentoo Penguin 0.77, Chopi Blackbird 0.03, Little Ringed Plover 0.02; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (+0.413, +0.520), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Adelie Penguin, Chinstrap Penguin, Western Rockhopper Penguin, Australasian Gannet
+    UMAP: at (-0.139, -0.263), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Chatham Albatross
+   12-15 s: Gentoo Penguin 0.46, Adelie Penguin 0.06, White Wagtail 0.02; top class's row is number 2 by cosine to the embedding
+    t-SNE: at (+0.413, +0.520), pulled by 2 of 3 (Gentoo Penguin; Adelie Penguin); nearest: Gentoo Penguin, Adelie Penguin, Chinstrap Penguin, Western Rockhopper Penguin, Australasian Gannet
+    UMAP: at (-0.137, -0.264), pulled by 2 of 3 (Gentoo Penguin; Adelie Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Common Murre
+   15-18 s: Gentoo Penguin 0.87, Black-legged Kittiwake 0.02, Northern Gannet 0.02; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (+0.412, +0.521), pulled by 3 of 3 (Gentoo Penguin; Black-legged Kittiwake; Northern Gannet); nearest: Adelie Penguin, Gentoo Penguin, Chinstrap Penguin, Australasian Gannet, Cape Gannet
+    UMAP: at (-0.139, -0.262), pulled by 2 of 3 (Gentoo Penguin; Northern Gannet); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Chatham Albatross
+   18-21 s: Gentoo Penguin 0.91, Adelie Penguin 0.11, Black-footed Albatross 0.07; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (+0.413, +0.520), pulled by 2 of 3 (Gentoo Penguin; Adelie Penguin); nearest: Gentoo Penguin, Adelie Penguin, Chinstrap Penguin, Western Rockhopper Penguin, Australasian Gannet
+    UMAP: at (-0.137, -0.264), pulled by 2 of 3 (Gentoo Penguin; Adelie Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Common Murre
+   21-24 s: Gentoo Penguin 0.88, American Golden Plover 0.03, Black-legged Kittiwake 0.01; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (+0.413, +0.521), pulled by 2 of 3 (Gentoo Penguin; Black-legged Kittiwake); nearest: Gentoo Penguin, Adelie Penguin, Chinstrap Penguin, Western Rockhopper Penguin, Australasian Gannet
+    UMAP: at (-0.139, -0.263), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Chatham Albatross
+   24-27 s: Gentoo Penguin 0.91, Rose-breasted Grosbeak 0.02, Great Horned Owl 0.01; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (+0.413, +0.520), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Adelie Penguin, Chinstrap Penguin, Western Rockhopper Penguin, Australasian Gannet
+    UMAP: at (-0.139, -0.263), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Chatham Albatross
+   27-30 s: Gentoo Penguin 0.74, Austral Thrush 0.01, House Sparrow 0.00; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (+0.413, +0.520), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Adelie Penguin, Chinstrap Penguin, Western Rockhopper Penguin, Australasian Gannet
+    UMAP: at (-0.139, -0.263), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Chatham Albatross
+   30-33 s: Gentoo Penguin 0.95, Red-shouldered Hawk 0.08, Black-legged Kittiwake 0.03; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (+0.412, +0.521), pulled by 2 of 3 (Gentoo Penguin; Black-legged Kittiwake); nearest: Adelie Penguin, Gentoo Penguin, Chinstrap Penguin, Australasian Gannet, Cape Gannet
+    UMAP: at (-0.139, -0.263), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Chatham Albatross
+   33-36 s: Gentoo Penguin 0.15, Torresian Crow 0.03, Carrion Crow 0.02; top class's row is number 9 by cosine to the embedding
+    below 0.25: not placed
+   36-39 s: Gentoo Penguin 0.44, Adelie Penguin 0.05, Black-legged Kittiwake 0.03; top class's row is number 5 by cosine to the embedding
+    t-SNE: at (+0.411, +0.521), pulled by 3 of 3 (Gentoo Penguin; Adelie Penguin; Black-legged Kittiwake); nearest: Adelie Penguin, Chinstrap Penguin, Gentoo Penguin, Australasian Gannet, Cape Gannet
+    UMAP: at (-0.137, -0.264), pulled by 2 of 3 (Gentoo Penguin; Adelie Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Common Murre
+   39-42 s: Gentoo Penguin 0.84, Black-legged Kittiwake 0.02, Townsend's Solitaire 0.02; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (+0.412, +0.521), pulled by 2 of 3 (Gentoo Penguin; Black-legged Kittiwake); nearest: Gentoo Penguin, Adelie Penguin, Chinstrap Penguin, Australasian Gannet, Western Rockhopper Penguin
+    UMAP: at (-0.139, -0.263), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Chatham Albatross
+   42-45 s: Gentoo Penguin 0.83, Red-breasted Nuthatch 0.02, Slaty-legged Crake 0.01; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (+0.413, +0.520), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Adelie Penguin, Chinstrap Penguin, Western Rockhopper Penguin, Australasian Gannet
+    UMAP: at (-0.139, -0.263), pulled by 1 of 3 (Gentoo Penguin); nearest: Gentoo Penguin, Antipodean Albatross, South Polar Skua, Vampire Ground Finch, Chatham Albatross
+
+XC1083752 - Pauraque - Nyctidromus albicollis.wav (192000 Hz, 25.6 s)
+    0-3 s: Pauraque 0.95, Rufous Nightjar 0.00, Little Nightjar 0.00; top class's row is number 2 by cosine to the embedding
+    t-SNE: at (-0.116, +0.256), pulled by 3 of 3 (Pauraque; Rufous Nightjar; Little Nightjar); nearest: Pauraque, Rufous Nightjar, Little Nightjar, White-tailed Nightjar, Spot-tailed Nightjar
+    UMAP: at (+0.507, -0.202), pulled by 3 of 3 (Pauraque; Rufous Nightjar; Little Nightjar); nearest: Pauraque, Common Potoo, Black-capped Screech Owl, Silky-tailed Nightjar, Giant Snipe
+    3-6 s: Pauraque 0.95, Little Nightjar 0.00, Rufous Nightjar 0.00; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (-0.116, +0.256), pulled by 3 of 3 (Pauraque; Little Nightjar; Rufous Nightjar); nearest: Pauraque, Rufous Nightjar, Little Nightjar, White-tailed Nightjar, Spot-tailed Nightjar
+    UMAP: at (+0.507, -0.202), pulled by 3 of 3 (Pauraque; Little Nightjar; Rufous Nightjar); nearest: Pauraque, Common Potoo, Black-capped Screech Owl, Silky-tailed Nightjar, Giant Snipe
+    6-9 s: Pauraque 0.95, Rufous Nightjar 0.00, Little Nightjar 0.00; top class's row is number 2 by cosine to the embedding
+    t-SNE: at (-0.116, +0.256), pulled by 3 of 3 (Pauraque; Rufous Nightjar; Little Nightjar); nearest: Pauraque, Rufous Nightjar, Little Nightjar, White-tailed Nightjar, Spot-tailed Nightjar
+    UMAP: at (+0.507, -0.202), pulled by 3 of 3 (Pauraque; Rufous Nightjar; Little Nightjar); nearest: Pauraque, Common Potoo, Black-capped Screech Owl, Silky-tailed Nightjar, Giant Snipe
+    9-12 s: Pauraque 0.94, Rusty-margined Flycatcher 0.88, Great Kiskadee 0.02; top class's row is number 6 by cosine to the embedding
+    t-SNE: at (-0.116, +0.256), pulled by 1 of 3 (Pauraque); nearest: Pauraque, Rufous Nightjar, Little Nightjar, White-tailed Nightjar, Spot-tailed Nightjar
+    UMAP: at (+0.507, -0.202), pulled by 1 of 3 (Pauraque); nearest: Pauraque, Common Potoo, Black-capped Screech Owl, Silky-tailed Nightjar, Giant Snipe
+   12-15 s: Pauraque 0.92, Pied Puffbird 0.06, White-collared Swift 0.03; top class's row is number 25 by cosine to the embedding
+    t-SNE: at (-0.116, +0.256), pulled by 1 of 3 (Pauraque); nearest: Pauraque, Rufous Nightjar, Little Nightjar, White-tailed Nightjar, Spot-tailed Nightjar
+    UMAP: at (+0.507, -0.202), pulled by 1 of 3 (Pauraque); nearest: Pauraque, Common Potoo, Black-capped Screech Owl, Silky-tailed Nightjar, Giant Snipe
+   15-18 s: Pauraque 0.95, Rufous Nightjar 0.00, Little Nightjar 0.00; top class's row is number 2 by cosine to the embedding
+    t-SNE: at (-0.116, +0.256), pulled by 3 of 3 (Pauraque; Rufous Nightjar; Little Nightjar); nearest: Pauraque, Rufous Nightjar, Little Nightjar, White-tailed Nightjar, Spot-tailed Nightjar
+    UMAP: at (+0.507, -0.202), pulled by 3 of 3 (Pauraque; Rufous Nightjar; Little Nightjar); nearest: Pauraque, Common Potoo, Black-capped Screech Owl, Silky-tailed Nightjar, Giant Snipe
+   18-21 s: Pauraque 0.98, Tropical Kingbird 0.90, Little Nightjar 0.01; top class's row is number 2 by cosine to the embedding
+    t-SNE: at (-0.116, +0.256), pulled by 2 of 3 (Pauraque; Little Nightjar); nearest: Pauraque, Rufous Nightjar, Little Nightjar, White-tailed Nightjar, Spot-tailed Nightjar
+    UMAP: at (+0.507, -0.202), pulled by 2 of 3 (Pauraque; Little Nightjar); nearest: Pauraque, Common Potoo, Black-capped Screech Owl, Silky-tailed Nightjar, Giant Snipe
+   21-24 s: Pauraque 0.98, Ornate Stipplethroat 0.27, Tropical Kingbird 0.22; top class's row is number 9 by cosine to the embedding
+    t-SNE: at (-0.116, +0.256), pulled by 1 of 3 (Pauraque); nearest: Pauraque, Rufous Nightjar, Little Nightjar, White-tailed Nightjar, Spot-tailed Nightjar
+    UMAP: at (+0.507, -0.202), pulled by 1 of 3 (Pauraque); nearest: Pauraque, Common Potoo, Black-capped Screech Owl, Silky-tailed Nightjar, Giant Snipe
+
+XC1086259 - Common Scoter - Melanitta nigra.wav (192000 Hz, 6.4 s)
+    0-3 s: Common Scoter 0.80, Eurasian Coot 0.00, Canada Goose 0.00; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (-0.015, +0.275), pulled by 1 of 3 (Common Scoter); nearest: Common Scoter, Buff-collared Nightjar, Common Poorwill, Elf Owl, Stresemann's Bristlefront
+    UMAP: at (-0.382, +0.157), pulled by 2 of 3 (Common Scoter; Eurasian Coot); nearest: Common Scoter, Snow Goose, Ring-billed Gull, Wood Duck, Red-throated Loon
+    3-6 s: Common Scoter 0.93, Common Poorwill 0.04, Yellow-throated Toucan 0.02; top class's row is number 1 by cosine to the embedding
+    t-SNE: at (-0.014, +0.275), pulled by 2 of 3 (Common Scoter; Common Poorwill); nearest: Common Scoter, Buff-collared Nightjar, Common Poorwill, Elf Owl, Chuck-will's-widow
+    UMAP: at (-0.383, +0.158), pulled by 2 of 3 (Common Scoter; Common Poorwill); nearest: Common Scoter, Snow Goose, Wood Duck, Ring-billed Gull, Greylag Goose
+wrote /home/pengo/.cache/oversample-research/birdnet-v3/maps/v3-place-tsne.png
+wrote /home/pengo/.cache/oversample-research/birdnet-v3/maps/v3-place-umap.png
