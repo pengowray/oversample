@@ -470,10 +470,8 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
             let short = run.complete && windows > 0 && kept < k + 1;
             let text = if quiet > 0 {
                 format!(
-                    "{k} groups need at least {} windows that are not quiet. This file has {} that {} not quiet.",
-                    k + 1,
-                    windows_text(kept),
-                    if kept == 1 { "is" } else { "are" }
+                    "{k} groups need at least {} windows with sound. This file has {kept}.",
+                    k + 1
                 )
             } else {
                 format!(
