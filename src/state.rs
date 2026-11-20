@@ -3070,7 +3070,7 @@ impl AppState {
                 progress: 0.0,
                 method: DetectionMethod::Inbuilt,
                 bat_pick: crate::classifier::BatPick::Auto,
-                min_confidence: 0.5,
+                min_confidence: 0.05,
                 perch_min_confidence: 0.3,
                 mark_unexpected: true,
                 selected_window: None,

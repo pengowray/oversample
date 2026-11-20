@@ -470,7 +470,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         }
 
         let label = match choice() {
-            ModelChoice::BirdNet => "Analyse with BirdNET".to_string(),
+            ModelChoice::BirdNet => "Analyse with BirdNET V2.4".to_string(),
             ModelChoice::Bats(r) => format!("Analyse with BattyBirdNET ({})", r.label()),
             ModelChoice::Perch => "Analyse with Perch 2.0".to_string(),
         };
@@ -761,7 +761,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         let a = catalog::attribution(method);
         let (byline, used_by, cant_run) = match method {
             Method::BirdNet => (
-                "Powered by BirdNET.",
+                "Powered by BirdNET V2.4.",
                 " Used by BirdNET and BattyBirdNET.",
                 "BirdNET and BattyBirdNET",
             ),
