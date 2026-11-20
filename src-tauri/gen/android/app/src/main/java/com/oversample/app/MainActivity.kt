@@ -13,6 +13,7 @@ class MainActivity : TauriActivity() {
   private var geolocationPlugin: GeolocationPlugin? = null
   private var zoomPlugin: ZoomPlugin? = null
   private var audioServicePlugin: AudioServicePlugin? = null
+  private var googleAuthPlugin: GoogleAuthPlugin? = null
 
   override fun onWebViewCreate(webView: android.webkit.WebView) {
     // Enable native pinch-to-zoom so users can zoom in to read text
@@ -50,6 +51,10 @@ class MainActivity : TauriActivity() {
     val audioSvcPlugin = AudioServicePlugin(this)
     audioServicePlugin = audioSvcPlugin
     PluginManager.load(null, "audio-service", audioSvcPlugin, "{}")
+
+    val gaPlugin = GoogleAuthPlugin(this)
+    googleAuthPlugin = gaPlugin
+    PluginManager.load(null, "google-auth", gaPlugin, "{}")
 
     super.onCreate(savedInstanceState)
     // Note: We do NOT override the WebChromeClient. The generated RustWebChromeClient

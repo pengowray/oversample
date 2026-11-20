@@ -235,8 +235,8 @@ fn app_state() -> Option<AppState> {
     with(|s| s.state)
 }
 
-/// Whether Drive copies are made here. Off in the desktop app until the
-/// account-home model lands: there, sign-in works and a read-only check of
+/// Whether Drive copies are made here. Off in the desktop and Android apps
+/// until the account-home model lands: there, sign-in works and a read-only check of
 /// the account's Drive runs (`desktop_check`), but nothing is compared,
 /// uploaded, downloaded or created.
 fn copies_enabled() -> bool {
@@ -722,20 +722,19 @@ fn on_error(gen: u64, e: DriveError) {
 // ── Start, sign-in, sign-out ────────────────────────────────────────────
 
 /// Start the feature: ask whether Google sign-in is offered (the server on
-/// the web; the app's own Rust side on the desktop, which says no on
-/// Android and in builds with no client id) and whether this device is
-/// signed in.
+/// the web; the app's own Rust side on the desktop, which says no in builds
+/// with no client id; Play services on Android, which says no on phones
+/// without it) and whether this device is signed in.
 pub fn init(state: AppState) {
-    let provider = if state.is_tauri {
-        google_auth::Provider::Desktop
-    } else {
+    let provider = if !state.is_tauri {
         google_auth::Provider::Web
+    } else if crate::tauri_bridge::is_android() {
+        google_auth::Provider::Android
+    } else {
+        google_auth::Provider::Desktop
     };
     google_auth::set_provider(provider);
-    state
-        .drive
-        .desktop()
-        .set(provider == google_auth::Provider::Desktop);
+    state.drive.desktop().set(provider.is_native());
     with(|s| {
         s.state = Some(state);
         s.version = Some(ArcRwSignal::new(0));
@@ -757,11 +756,11 @@ pub fn init(state: AppState) {
 }
 
 /// Open the Google sign-in window (web: a pop-up; desktop: the system
-/// browser). Call from a click handler (browsers block pop-up windows opened
-/// later).
+/// browser; Android: Play services' screen). Call from a click handler
+/// (browsers block pop-up windows opened later).
 pub fn sign_in(state: AppState) {
-    if google_auth::provider() == google_auth::Provider::Desktop {
-        desktop_sign_in(state);
+    if google_auth::provider().is_native() {
+        native_sign_in(state);
         return;
     }
     let Some(window) = web_sys::window() else {
@@ -823,8 +822,9 @@ pub fn sign_in(state: AppState) {
 }
 
 /// Desktop: the Rust side opens the system browser and waits for Google's
-/// redirect (up to 5 minutes, or until Cancel).
-fn desktop_sign_in(state: AppState) {
+/// redirect (up to 5 minutes, or until Cancel). Android: Play services shows
+/// its account and consent screen.
+fn native_sign_in(state: AppState) {
     use crate::state::DriveSignInProblem;
     if state.drive.signing_in().get_untracked() {
         return;
@@ -832,7 +832,7 @@ fn desktop_sign_in(state: AppState) {
     state.drive.sign_in_problem().set(None);
     state.drive.signing_in().set(true);
     wasm_bindgen_futures::spawn_local(async move {
-        let result = google_auth::desktop_sign_in().await;
+        let result = google_auth::native_sign_in().await;
         state.drive.signing_in().set(false);
         match result {
             Ok(status) => {
@@ -852,9 +852,9 @@ fn desktop_sign_in(state: AppState) {
     });
 }
 
-/// Desktop: stop a sign-in that waits for the browser.
+/// Desktop and Android: stop a sign-in that is still waiting.
 pub fn cancel_sign_in() {
-    google_auth::desktop_cancel_sign_in();
+    google_auth::native_cancel_sign_in();
 }
 
 /// Signed in: find the account, compare all files, upload what waits.
@@ -883,6 +883,7 @@ async fn start_session() {
     if !alive(gen) {
         return;
     }
+    google_auth::remember_account(&email);
     if !copies_enabled() {
         state.drive.email().set(Some(email));
         desktop_check(gen).await;
@@ -1724,7 +1725,9 @@ fn drop_pending(sync_key: &str, seq: u64) {
 
 /// Where annotation sets are kept on this device: the browser's private
 /// folder (OPFS), or on the desktop the app's own annotations folder
-/// (Tauri commands). Projects are in OPFS on both.
+/// (Tauri commands). Projects are in OPFS on both. Android makes no copies
+/// yet, so nothing here runs there; where its account's sets will live is
+/// still to be decided.
 pub(crate) mod local {
     use super::google_auth::{self, Provider};
 

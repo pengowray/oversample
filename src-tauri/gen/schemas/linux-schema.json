@@ -2373,6 +2373,78 @@
           "markdownDescription": "Denies the getWifiSsid command without any pre-configured scope."
         },
         {
+          "description": "Enables the accessToken command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-accessToken",
+          "markdownDescription": "Enables the accessToken command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancelSignIn command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-cancelSignIn",
+          "markdownDescription": "Enables the cancelSignIn command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the setAccount command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-setAccount",
+          "markdownDescription": "Enables the setAccount command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the signIn command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-signIn",
+          "markdownDescription": "Enables the signIn command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the signOut command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-signOut",
+          "markdownDescription": "Enables the signOut command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-status",
+          "markdownDescription": "Enables the status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the accessToken command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-accessToken",
+          "markdownDescription": "Denies the accessToken command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancelSignIn command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-cancelSignIn",
+          "markdownDescription": "Denies the cancelSignIn command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the setAccount command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-setAccount",
+          "markdownDescription": "Denies the setAccount command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the signIn command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-signIn",
+          "markdownDescription": "Denies the signIn command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the signOut command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-signOut",
+          "markdownDescription": "Denies the signOut command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-status",
+          "markdownDescription": "Denies the status command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cancelExportEntry command without any pre-configured scope.",
           "type": "string",
           "const": "media-store:allow-cancelExportEntry",

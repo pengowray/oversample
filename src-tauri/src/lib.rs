@@ -43,6 +43,7 @@ pub fn run() {
         .plugin(tauri::plugin::Builder::<_, ()>::new("media-store").build())
         .plugin(tauri::plugin::Builder::<_, ()>::new("geolocation").build())
         .plugin(tauri::plugin::Builder::<_, ()>::new("audio-service").build())
+        .plugin(tauri::plugin::Builder::<_, ()>::new("google-auth").build())
         .manage(Mutex::new(None::<MicState>))
         .manage(Mutex::new(None::<PlaybackState>))
         .manage(Mutex::new(None::<UsbStreamState>))

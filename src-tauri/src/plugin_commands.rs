@@ -66,6 +66,17 @@ pub const PLUGIN_COMMANDS: &[(&str, &[&str])] = &[
             "openAppSettings",
         ],
     ),
+    (
+        "google-auth",
+        &[
+            "status",
+            "signIn",
+            "cancelSignIn",
+            "accessToken",
+            "setAccount",
+            "signOut",
+        ],
+    ),
 ];
 
 #[cfg(test)]

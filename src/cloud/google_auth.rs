@@ -1,11 +1,17 @@
-//! Google sign-in, from one of two providers:
+//! Google sign-in, from one of three providers:
 //!
 //! - Web: the Oversample API keeps the Google sign-in (a cookie on its own
 //!   site) and hands out short-lived Drive access tokens.
 //! - Desktop: the app's own Rust side signs in through the system browser
 //!   (`src-tauri/src/google_auth.rs`) and hands out access tokens through
-//!   Tauri commands. Android and builds with no client id report the
-//!   feature as unavailable.
+//!   Tauri commands. Builds with no client id report the feature as
+//!   unavailable.
+//! - Android: Google Play services signs in (`GoogleAuthPlugin.kt`, the
+//!   `google-auth` plugin) and hands out access tokens. Phones without Play
+//!   services report the feature as unavailable.
+//!
+//! Desktop and Android ("native") answer with the same shapes, so the code
+//! below treats them alike apart from the command names.
 //!
 //! The app keeps the current access token in memory only, never in
 //! localStorage, and asks for a new one shortly before it expires or when
@@ -27,12 +33,20 @@ const RENEW_MARGIN_MS: f64 = 60_000.0;
 pub enum Provider {
     Web,
     Desktop,
+    Android,
+}
+
+impl Provider {
+    /// Signs in inside the app (desktop or Android), not through the API.
+    pub fn is_native(self) -> bool {
+        self != Provider::Web
+    }
 }
 
 thread_local! {
     static TOKEN: RefCell<Option<Token>> = const { RefCell::new(None) };
     static PROVIDER: Cell<Provider> = const { Cell::new(Provider::Web) };
-    /// Drive refused the last token: the desktop side must renew, not
+    /// Drive refused the last token: the native side must renew, not
     /// hand back its cached one.
     static FORCE_RENEW: Cell<bool> = const { Cell::new(false) };
 }
@@ -68,12 +82,47 @@ pub struct Status {
     pub persistent: bool,
 }
 
-/// Call a desktop command; `Err` holds its error code ("signed_out",
+/// The native commands, by their desktop names.
+#[derive(Clone, Copy)]
+enum Cmd {
+    Status,
+    SignIn,
+    CancelSignIn,
+    AccessToken,
+    SignOut,
+}
+
+impl Cmd {
+    fn name(self, provider: Provider) -> &'static str {
+        match (provider, self) {
+            (Provider::Android, Cmd::Status) => "plugin:google-auth|status",
+            (Provider::Android, Cmd::SignIn) => "plugin:google-auth|signIn",
+            (Provider::Android, Cmd::CancelSignIn) => "plugin:google-auth|cancelSignIn",
+            (Provider::Android, Cmd::AccessToken) => "plugin:google-auth|accessToken",
+            (Provider::Android, Cmd::SignOut) => "plugin:google-auth|signOut",
+            (_, Cmd::Status) => "google_status",
+            (_, Cmd::SignIn) => "google_sign_in",
+            (_, Cmd::CancelSignIn) => "google_sign_in_cancel",
+            (_, Cmd::AccessToken) => "google_access_token",
+            (_, Cmd::SignOut) => "google_sign_out",
+        }
+    }
+}
+
+/// Call a native command; `Err` holds its error code ("signed_out",
 /// "cancelled", ...), or "unavailable" when the command does not exist.
-async fn desktop<T: serde::de::DeserializeOwned>(cmd: &str, args: JsValue) -> Result<T, String> {
-    let v = crate::tauri_bridge::tauri_invoke_js(cmd, &args)
+/// Desktop commands fail with the code; the Android plugin answers
+/// `{ "error": code }`.
+async fn native<T: serde::de::DeserializeOwned>(cmd: Cmd, args: JsValue) -> Result<T, String> {
+    let v = crate::tauri_bridge::tauri_invoke_js(cmd.name(provider()), &args)
         .await
         .map_err(|e| e.as_string().unwrap_or_else(|| "unavailable".into()))?;
+    if let Some(code) = js_sys::Reflect::get(&v, &"error".into())
+        .ok()
+        .and_then(|e| e.as_string())
+    {
+        return Err(code);
+    }
     serde_wasm_bindgen::from_value(v).map_err(|_| "failed".into())
 }
 
@@ -83,7 +132,7 @@ fn no_args() -> JsValue {
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DesktopStatus {
+struct NativeStatus {
     available: bool,
     signed_in: bool,
     persistent: bool,
@@ -92,10 +141,10 @@ struct DesktopStatus {
 /// Whether Google sign-in is offered, and the sign-in state. `None` means
 /// the feature is unavailable: on the web the route is missing, the server
 /// has no Google set-up, or it cannot be reached; on the desktop no client
-/// id is baked in, or the platform is Android.
+/// id is baked in; on Android there is no Google Play services.
 pub async fn status() -> Option<Status> {
-    if provider() == Provider::Desktop {
-        let s: DesktopStatus = desktop("google_status", no_args()).await.ok()?;
+    if provider().is_native() {
+        let s: NativeStatus = native(Cmd::Status, no_args()).await.ok()?;
         return s.available.then_some(Status {
             signed_in: s.signed_in,
             persistent: s.persistent,
@@ -143,7 +192,7 @@ pub async fn access_token() -> Result<String, TokenError> {
         return Ok(token);
     }
     let (token, expires_in) = match provider() {
-        Provider::Desktop => desktop_token().await?,
+        Provider::Desktop | Provider::Android => native_token().await?,
         Provider::Web => web_token().await?,
     };
     let lifetime_ms = if expires_in > 0.0 {
@@ -161,7 +210,7 @@ pub async fn access_token() -> Result<String, TokenError> {
     Ok(token)
 }
 
-async fn desktop_token() -> Result<(String, f64), TokenError> {
+async fn native_token() -> Result<(String, f64), TokenError> {
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Reply {
@@ -171,7 +220,7 @@ async fn desktop_token() -> Result<(String, f64), TokenError> {
     let args = js_sys::Object::new();
     let force = FORCE_RENEW.with(|c| c.replace(false));
     let _ = js_sys::Reflect::set(&args, &"force".into(), &JsValue::from_bool(force));
-    match desktop::<Reply>("google_access_token", args.into()).await {
+    match native::<Reply>(Cmd::AccessToken, args.into()).await {
         Ok(r) => Ok((r.access_token, r.expires_in)),
         Err(code) if code == "signed_out" || code == "unavailable" => Err(TokenError::SignedOut),
         Err(_) => Err(TokenError::Unreachable),
@@ -201,19 +250,23 @@ async fn web_token() -> Result<(String, f64), TokenError> {
 }
 
 /// Drop the cached token (after Drive answered 401, or at sign-out). On the
-/// desktop the next request also renews the token on the Rust side.
+/// desktop and Android the next request also renews the native side's token.
 pub fn forget_token() {
     TOKEN.with(|t| *t.borrow_mut() = None);
     FORCE_RENEW.with(|c| c.set(true));
 }
 
 /// End the sign-in: on the web the server forgets it; on the desktop the
-/// app revokes its access and deletes the stored sign-in. Returns whether
-/// that was done.
+/// app revokes its access and deletes the stored sign-in (Android: through
+/// Play services). Returns whether that was done.
 pub async fn logout() -> bool {
     TOKEN.with(|t| *t.borrow_mut() = None);
-    if provider() == Provider::Desktop {
-        return desktop::<()>("google_sign_out", no_args()).await.is_ok();
+    if provider().is_native() {
+        // Android's reply carries no fields, so it is read as a unit only
+        // when it is not an error.
+        return native::<serde::de::IgnoredAny>(Cmd::SignOut, no_args())
+            .await
+            .is_ok();
     }
     let url = format!("{}/google/logout", base());
     let mut req = Request::new("POST", &url).header(REQUEST_HEADER, "1");
@@ -229,12 +282,12 @@ pub fn login_url() -> String {
     format!("{}/google/login?origin={}", base(), http::encode(&origin))
 }
 
-/// How a desktop sign-in ended without signing in.
+/// How a native sign-in ended without signing in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignInEnd {
     /// The user pressed Cancel in the app.
     Cancelled,
-    /// The user declined on Google's page.
+    /// The user declined on Google's page (Android: closed Google's screen).
     Denied,
     /// The browser did not come back within the time limit.
     TimedOut,
@@ -242,9 +295,10 @@ pub enum SignInEnd {
     Failed,
 }
 
-/// Desktop: open the system browser and wait until sign-in ends.
-pub async fn desktop_sign_in() -> Result<Status, SignInEnd> {
-    match desktop::<DesktopStatus>("google_sign_in", no_args()).await {
+/// Native: open Google's sign-in (desktop: the system browser; Android:
+/// Play services' account and consent screen) and wait until it ends.
+pub async fn native_sign_in() -> Result<Status, SignInEnd> {
+    match native::<NativeStatus>(Cmd::SignIn, no_args()).await {
         Ok(s) => Ok(Status {
             signed_in: s.signed_in,
             persistent: s.persistent,
@@ -258,9 +312,26 @@ pub async fn desktop_sign_in() -> Result<Status, SignInEnd> {
     }
 }
 
-/// Desktop: stop a sign-in that waits for the browser.
-pub fn desktop_cancel_sign_in() {
-    wasm_bindgen_futures::spawn_local(async {
-        let _ = crate::tauri_bridge::tauri_invoke_js("google_sign_in_cancel", &no_args()).await;
+/// Android: tell Play services which Google account signed in (the email
+/// Drive reports), so that token renewal and sign-out ask that account on a
+/// phone with several. Google's own reply does not name the account when
+/// only `drive.file` is asked for. Does nothing elsewhere.
+pub fn remember_account(email: &str) {
+    if provider() != Provider::Android {
+        return;
+    }
+    let args = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&args, &"email".into(), &JsValue::from_str(email));
+    wasm_bindgen_futures::spawn_local(async move {
+        let _ = crate::tauri_bridge::tauri_invoke_js("plugin:google-auth|setAccount", &args.into())
+            .await;
+    });
+}
+
+/// Native: stop a sign-in that is still waiting.
+pub fn native_cancel_sign_in() {
+    let cmd = Cmd::CancelSignIn.name(provider());
+    wasm_bindgen_futures::spawn_local(async move {
+        let _ = crate::tauri_bridge::tauri_invoke_js(cmd, &no_args()).await;
     });
 }

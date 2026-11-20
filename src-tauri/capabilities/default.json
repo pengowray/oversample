@@ -32,6 +32,12 @@
     "audio-service:allow-requestNotificationPermission",
     "audio-service:allow-areCaptureNotificationsShown",
     "audio-service:allow-openNotificationSettings",
-    "audio-service:allow-openAppSettings"
+    "audio-service:allow-openAppSettings",
+    "google-auth:allow-status",
+    "google-auth:allow-signIn",
+    "google-auth:allow-cancelSignIn",
+    "google-auth:allow-accessToken",
+    "google-auth:allow-setAccount",
+    "google-auth:allow-signOut"
   ]
 }

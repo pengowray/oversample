@@ -177,6 +177,12 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the areCaptureNotificationsShown command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-areCaptureNotificationsShown",
+          "markdownDescription": "Enables the areCaptureNotificationsShown command without any pre-configured scope."
+        },
+        {
           "description": "Enables the isIgnoringBatteryOptimizations command without any pre-configured scope.",
           "type": "string",
           "const": "audio-service:allow-isIgnoringBatteryOptimizations",
@@ -187,6 +193,18 @@
           "type": "string",
           "const": "audio-service:allow-isNotificationPermissionGranted",
           "markdownDescription": "Enables the isNotificationPermissionGranted command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the openAppSettings command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-openAppSettings",
+          "markdownDescription": "Enables the openAppSettings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the openNotificationSettings command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:allow-openNotificationSettings",
+          "markdownDescription": "Enables the openNotificationSettings command without any pre-configured scope."
         },
         {
           "description": "Enables the requestDisableBatteryOptimization command without any pre-configured scope.",
@@ -219,6 +237,12 @@
           "markdownDescription": "Enables the updateForegroundAudio command without any pre-configured scope."
         },
         {
+          "description": "Denies the areCaptureNotificationsShown command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-areCaptureNotificationsShown",
+          "markdownDescription": "Denies the areCaptureNotificationsShown command without any pre-configured scope."
+        },
+        {
           "description": "Denies the isIgnoringBatteryOptimizations command without any pre-configured scope.",
           "type": "string",
           "const": "audio-service:deny-isIgnoringBatteryOptimizations",
@@ -229,6 +253,18 @@
           "type": "string",
           "const": "audio-service:deny-isNotificationPermissionGranted",
           "markdownDescription": "Denies the isNotificationPermissionGranted command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the openAppSettings command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-openAppSettings",
+          "markdownDescription": "Denies the openAppSettings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the openNotificationSettings command without any pre-configured scope.",
+          "type": "string",
+          "const": "audio-service:deny-openNotificationSettings",
+          "markdownDescription": "Denies the openNotificationSettings command without any pre-configured scope."
         },
         {
           "description": "Denies the requestDisableBatteryOptimization command without any pre-configured scope.",
@@ -2337,10 +2373,100 @@
           "markdownDescription": "Denies the getWifiSsid command without any pre-configured scope."
         },
         {
+          "description": "Enables the accessToken command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-accessToken",
+          "markdownDescription": "Enables the accessToken command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancelSignIn command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-cancelSignIn",
+          "markdownDescription": "Enables the cancelSignIn command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the setAccount command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-setAccount",
+          "markdownDescription": "Enables the setAccount command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the signIn command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-signIn",
+          "markdownDescription": "Enables the signIn command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the signOut command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-signOut",
+          "markdownDescription": "Enables the signOut command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:allow-status",
+          "markdownDescription": "Enables the status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the accessToken command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-accessToken",
+          "markdownDescription": "Denies the accessToken command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancelSignIn command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-cancelSignIn",
+          "markdownDescription": "Denies the cancelSignIn command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the setAccount command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-setAccount",
+          "markdownDescription": "Denies the setAccount command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the signIn command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-signIn",
+          "markdownDescription": "Denies the signIn command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the signOut command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-signOut",
+          "markdownDescription": "Denies the signOut command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "google-auth:deny-status",
+          "markdownDescription": "Denies the status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancelExportEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-cancelExportEntry",
+          "markdownDescription": "Enables the cancelExportEntry command without any pre-configured scope."
+        },
+        {
           "description": "Enables the cancelRecordingEntry command without any pre-configured scope.",
           "type": "string",
           "const": "media-store:allow-cancelRecordingEntry",
           "markdownDescription": "Enables the cancelRecordingEntry command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cleanupPendingEntries command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-cleanupPendingEntries",
+          "markdownDescription": "Enables the cleanupPendingEntries command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the createExportEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:allow-createExportEntry",
+          "markdownDescription": "Enables the createExportEntry command without any pre-configured scope."
         },
         {
           "description": "Enables the createRecordingEntry command without any pre-configured scope.",
@@ -2349,40 +2475,28 @@
           "markdownDescription": "Enables the createRecordingEntry command without any pre-configured scope."
         },
         {
-          "description": "Enables the exportFile command without any pre-configured scope.",
-          "type": "string",
-          "const": "media-store:allow-exportFile",
-          "markdownDescription": "Enables the exportFile command without any pre-configured scope."
-        },
-        {
           "description": "Enables the finalizeRecordingEntry command without any pre-configured scope.",
           "type": "string",
           "const": "media-store:allow-finalizeRecordingEntry",
           "markdownDescription": "Enables the finalizeRecordingEntry command without any pre-configured scope."
         },
         {
-          "description": "Enables the readRecordingRange command without any pre-configured scope.",
+          "description": "Enables the finishExportEntry command without any pre-configured scope.",
           "type": "string",
-          "const": "media-store:allow-readRecordingRange",
-          "markdownDescription": "Enables the readRecordingRange command without any pre-configured scope."
+          "const": "media-store:allow-finishExportEntry",
+          "markdownDescription": "Enables the finishExportEntry command without any pre-configured scope."
         },
         {
-          "description": "Enables the saveExportBytes command without any pre-configured scope.",
+          "description": "Enables the openRecordingForRead command without any pre-configured scope.",
           "type": "string",
-          "const": "media-store:allow-saveExportBytes",
-          "markdownDescription": "Enables the saveExportBytes command without any pre-configured scope."
+          "const": "media-store:allow-openRecordingForRead",
+          "markdownDescription": "Enables the openRecordingForRead command without any pre-configured scope."
         },
         {
-          "description": "Enables the saveToSharedStorage command without any pre-configured scope.",
+          "description": "Denies the cancelExportEntry command without any pre-configured scope.",
           "type": "string",
-          "const": "media-store:allow-saveToSharedStorage",
-          "markdownDescription": "Enables the saveToSharedStorage command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the saveWavBytes command without any pre-configured scope.",
-          "type": "string",
-          "const": "media-store:allow-saveWavBytes",
-          "markdownDescription": "Enables the saveWavBytes command without any pre-configured scope."
+          "const": "media-store:deny-cancelExportEntry",
+          "markdownDescription": "Denies the cancelExportEntry command without any pre-configured scope."
         },
         {
           "description": "Denies the cancelRecordingEntry command without any pre-configured scope.",
@@ -2391,16 +2505,22 @@
           "markdownDescription": "Denies the cancelRecordingEntry command without any pre-configured scope."
         },
         {
+          "description": "Denies the cleanupPendingEntries command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-cleanupPendingEntries",
+          "markdownDescription": "Denies the cleanupPendingEntries command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the createExportEntry command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-store:deny-createExportEntry",
+          "markdownDescription": "Denies the createExportEntry command without any pre-configured scope."
+        },
+        {
           "description": "Denies the createRecordingEntry command without any pre-configured scope.",
           "type": "string",
           "const": "media-store:deny-createRecordingEntry",
           "markdownDescription": "Denies the createRecordingEntry command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the exportFile command without any pre-configured scope.",
-          "type": "string",
-          "const": "media-store:deny-exportFile",
-          "markdownDescription": "Denies the exportFile command without any pre-configured scope."
         },
         {
           "description": "Denies the finalizeRecordingEntry command without any pre-configured scope.",
@@ -2409,28 +2529,16 @@
           "markdownDescription": "Denies the finalizeRecordingEntry command without any pre-configured scope."
         },
         {
-          "description": "Denies the readRecordingRange command without any pre-configured scope.",
+          "description": "Denies the finishExportEntry command without any pre-configured scope.",
           "type": "string",
-          "const": "media-store:deny-readRecordingRange",
-          "markdownDescription": "Denies the readRecordingRange command without any pre-configured scope."
+          "const": "media-store:deny-finishExportEntry",
+          "markdownDescription": "Denies the finishExportEntry command without any pre-configured scope."
         },
         {
-          "description": "Denies the saveExportBytes command without any pre-configured scope.",
+          "description": "Denies the openRecordingForRead command without any pre-configured scope.",
           "type": "string",
-          "const": "media-store:deny-saveExportBytes",
-          "markdownDescription": "Denies the saveExportBytes command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the saveToSharedStorage command without any pre-configured scope.",
-          "type": "string",
-          "const": "media-store:deny-saveToSharedStorage",
-          "markdownDescription": "Denies the saveToSharedStorage command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the saveWavBytes command without any pre-configured scope.",
-          "type": "string",
-          "const": "media-store:deny-saveWavBytes",
-          "markdownDescription": "Denies the saveWavBytes command without any pre-configured scope."
+          "const": "media-store:deny-openRecordingForRead",
+          "markdownDescription": "Denies the openRecordingForRead command without any pre-configured scope."
         },
         {
           "description": "Enables the closeUsbDevice command without any pre-configured scope.",
@@ -2455,6 +2563,12 @@
           "type": "string",
           "const": "usb-audio:allow-openUsbDevice",
           "markdownDescription": "Enables the openUsbDevice command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the requestAudioPermission command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:allow-requestAudioPermission",
+          "markdownDescription": "Enables the requestAudioPermission command without any pre-configured scope."
         },
         {
           "description": "Enables the requestUsbPermission command without any pre-configured scope.",
@@ -2485,6 +2599,12 @@
           "type": "string",
           "const": "usb-audio:deny-openUsbDevice",
           "markdownDescription": "Denies the openUsbDevice command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the requestAudioPermission command without any pre-configured scope.",
+          "type": "string",
+          "const": "usb-audio:deny-requestAudioPermission",
+          "markdownDescription": "Denies the requestAudioPermission command without any pre-configured scope."
         },
         {
           "description": "Denies the requestUsbPermission command without any pre-configured scope.",
