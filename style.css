@@ -798,6 +798,28 @@ body.sidebar-resizing {
     gap: 4px;
 }
 
+/* "Sound groups" in the Call detection tab: the toggle with the 2 / 3 / 4
+   choice beside it, then one legend line per group. The swatch is a square,
+   like the species swatches in the lists, in the row's colour. */
+.sound-groups-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+.sound-groups-swatch {
+    display: inline-block;
+    vertical-align: -1px;
+    margin-right: 6px;
+    border-radius: 2px;
+}
+.sound-groups-hint {
+    color: #888;
+}
+.sound-groups-note {
+    padding: 0 16px 2px;
+}
+
 .detection-col-flag .unlikely-flag {
     margin-left: 0;
 }

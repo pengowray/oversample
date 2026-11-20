@@ -158,18 +158,18 @@ pub fn set_bool(key: &str, value: bool) {
     set_raw(key, if value { "true" } else { "false" });
 }
 
-/// The saved rows above the spectrogram: species and principal components.
-/// Empty when unset or unreadable.
-pub fn get_score_strips() -> (Vec<crate::classifier::strips::StripSpecies>, Vec<usize>) {
+/// The saved rows above the spectrogram: species, principal components and
+/// sound groups. None picked when unset or unreadable.
+pub fn get_score_strips() -> crate::classifier::strips::StripPicks {
     get_raw(keys::SCORE_STRIPS)
         .map(|raw| crate::classifier::strips::from_stored(&raw))
         .unwrap_or_default()
 }
 
-pub fn set_score_strips(species: &[crate::classifier::strips::StripSpecies], components: &[usize]) {
+pub fn set_score_strips(picks: &crate::classifier::strips::StripPicks) {
     set_raw(
         keys::SCORE_STRIPS,
-        &crate::classifier::strips::to_stored(species, components),
+        &crate::classifier::strips::to_stored(picks),
     );
 }
 

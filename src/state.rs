@@ -1842,6 +1842,11 @@ pub struct CallDetectionState {
     pub strip_species: Vec<crate::classifier::strips::StripSpecies>,
     /// The BirdNET principal components picked for strips, 0 for PC1.
     pub strip_components: Vec<usize>,
+    /// The "Sound groups" row above the spectrogram is on
+    /// (`crate::classifier::sound_groups`). Saved with the strips.
+    pub sound_groups: bool,
+    /// Number of sound groups: 2, 3 or 4. Saved with the strips.
+    pub sound_group_count: usize,
 }
 
 /// The methods in the Call detection tab.
@@ -3085,8 +3090,10 @@ impl AppState {
                 mark_unexpected: true,
                 selected_window: None,
                 preview: None,
-                strip_species: saved_strips.0,
-                strip_components: saved_strips.1,
+                strip_species: saved_strips.species,
+                strip_components: saved_strips.components,
+                sound_groups: saved_strips.sound_groups,
+                sound_group_count: saved_strips.groups,
             }),
 
             classifier: Store::new(ClassifierState::default()),
