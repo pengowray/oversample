@@ -176,7 +176,8 @@ pub type LockedFuture<T> = Pin<Box<dyn Future<Output = T>>>;
 
 /// Run `f` while holding the Web Lock `name`, shared by every tab of this
 /// app, and return its result; `None` if the lock request failed and `f`
-/// did not run. Without the Web Locks API, `f` runs unlocked. Locks are
+/// did not run. Without the Web Locks API, or when the request is refused
+/// at once, `f` runs unlocked. Locks are
 /// always taken in the same order (a file's lock, then `sync.json`'s) so
 /// that two tabs cannot wait on each other.
 pub async fn with_lock<T: 'static>(
@@ -197,10 +198,13 @@ pub async fn with_lock<T: 'static>(
     };
     let out: Rc<RefCell<Option<T>>> = Rc::new(RefCell::new(None));
     let out2 = out.clone();
-    let mut f = Some(f);
+    // Shared, so that a request refused at once (a throw, not a rejected
+    // promise) can still run `f`, unlocked, rather than drop a save.
+    let f = Rc::new(RefCell::new(Some(f)));
+    let f2 = f.clone();
     let callback = Closure::<dyn FnMut(JsValue) -> js_sys::Promise>::new(move |_lock: JsValue| {
         let out = out2.clone();
-        let f = f.take();
+        let f = f2.borrow_mut().take();
         wasm_bindgen_futures::future_to_promise(async move {
             if let Some(f) = f {
                 let v = f().await;
@@ -214,6 +218,13 @@ pub async fn with_lock<T: 'static>(
         &JsValue::from_str(name),
         callback.as_ref().unchecked_ref(),
     );
+    if promise.is_err() {
+        let f = f.borrow_mut().take();
+        if let Some(f) = f {
+            log::warn!("Web Lock {name}: the request was refused; running without it");
+            return Some(f().await);
+        }
+    }
     if let Ok(p) = promise {
         if let Ok(p) = p.dyn_into::<js_sys::Promise>() {
             let _ = wasm_bindgen_futures::JsFuture::from(p).await;
