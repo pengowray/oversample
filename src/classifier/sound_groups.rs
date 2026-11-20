@@ -277,7 +277,7 @@ fn number_by_size(assign: &[usize]) -> Grouping {
 }
 
 /// What the model most often heard in one group.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct GroupTop {
     /// Windows in the group.
     pub size: usize,
@@ -285,39 +285,96 @@ pub struct GroupTop {
     /// whatever its score, and how many windows it tops. `None` when no
     /// window in the group has a score.
     pub top: Option<(u16, usize)>,
+    /// That class's average confidence over the windows it tops.
+    pub mean: f32,
+    /// The class most often in second place in the group's windows, other
+    /// than `top`'s class.
+    pub second: Option<u16>,
+}
+
+/// The class with the highest count; equal counts go to the lower class
+/// number.
+fn most_frequent(counts: &std::collections::HashMap<u16, usize>) -> Option<(u16, usize)> {
+    counts
+        .iter()
+        .map(|(&c, &n)| (c, n))
+        .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)))
 }
 
 /// For each group of `g`, its most frequent top class in `run`. Windows
 /// without scores count in the group's size. Equal counts go to the lower
 /// class number.
 pub fn group_tops(g: &Grouping, run: &ClassifierRun) -> Vec<GroupTop> {
-    let mut counts: Vec<std::collections::HashMap<u16, usize>> =
-        vec![std::collections::HashMap::new(); g.sizes.len()];
+    use std::collections::HashMap;
+    let n = g.sizes.len();
+    let mut firsts: Vec<HashMap<u16, usize>> = vec![HashMap::new(); n];
     for (w, &grp) in run.windows.iter().zip(&g.of_window) {
         if let Some(s) = w.top.first() {
-            *counts[grp as usize].entry(s.class).or_default() += 1;
+            *firsts[grp as usize].entry(s.class).or_default() += 1;
         }
     }
-    g.sizes
-        .iter()
-        .zip(counts)
-        .map(|(&size, c)| GroupTop {
-            size,
-            top: c
-                .into_iter()
-                .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))),
+    let tops: Vec<Option<(u16, usize)>> = firsts.iter().map(most_frequent).collect();
+    let mut sums = vec![0.0f32; n];
+    let mut seconds: Vec<HashMap<u16, usize>> = vec![HashMap::new(); n];
+    for (w, &grp) in run.windows.iter().zip(&g.of_window) {
+        let grp = grp as usize;
+        let Some((class, _)) = tops[grp] else { continue };
+        if w.top.first().is_some_and(|s| s.class == class) {
+            sums[grp] += w.top[0].confidence;
+        }
+        if let Some(s) = w.top.get(1).filter(|s| s.class != class) {
+            *seconds[grp].entry(s.class).or_default() += 1;
+        }
+    }
+    (0..n)
+        .map(|i| GroupTop {
+            size: g.sizes[i],
+            top: tops[i],
+            mean: tops[i].map_or(0.0, |(_, count)| sums[i] / count as f32),
+            second: most_frequent(&seconds[i]).map(|(c, _)| c),
         })
         .collect()
+}
+
+/// The class a group is named after: its top class when that is the top
+/// class in at least half the group's windows.
+fn named_class(top: &GroupTop) -> Option<u16> {
+    top.top
+        .filter(|&(_, count)| count * 2 >= top.size)
+        .map(|(class, _)| class)
 }
 
 /// The group's hint: "mostly Gentoo Penguin" when that class is the top
 /// class in at least half the group's windows, else "mixed". `name` gives a
 /// class's name as shown.
 pub fn hint(top: &GroupTop, name: impl Fn(u16) -> String) -> String {
-    match top.top {
-        Some((class, count)) if count * 2 >= top.size => format!("mostly {}", name(class)),
-        _ => "mixed".to_string(),
+    match named_class(top) {
+        Some(class) => format!("mostly {}", name(class)),
+        None => "mixed".to_string(),
     }
+}
+
+/// Each group's hint. Groups named after the same class also get that
+/// class's average confidence in the group, which is what tells them apart:
+/// "mostly Gentoo Penguin, average confidence 0.97".
+pub fn hints(tops: &[GroupTop], name: impl Fn(u16) -> String) -> Vec<String> {
+    tops.iter()
+        .enumerate()
+        .map(|(i, top)| {
+            let base = hint(top, &name);
+            let class = named_class(top);
+            let shared = class.is_some()
+                && tops
+                    .iter()
+                    .enumerate()
+                    .any(|(j, other)| j != i && named_class(other) == class);
+            if shared {
+                format!("{base}, average confidence {:.2}", top.mean)
+            } else {
+                base
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -480,6 +537,35 @@ mod tests {
     }
 
     #[test]
+    fn groups_with_the_same_name_get_their_average_confidence() {
+        let g = Grouping {
+            of_window: vec![0, 0, 1, 1, 2],
+            sizes: vec![2, 2, 1],
+        };
+        let mut r = run(&[Some(1), Some(1), Some(1), Some(1), Some(2)]);
+        for (w, c) in r.windows.iter_mut().zip([0.9, 1.0, 0.2, 0.1, 0.5]) {
+            w.top[0].confidence = c;
+        }
+        r.windows[2].top.push(Score {
+            class: 0,
+            confidence: 0.05,
+        });
+        let tops = group_tops(&g, &r);
+        assert!((tops[0].mean - 0.95).abs() < 1e-6);
+        assert_eq!(tops[0].second, None);
+        assert_eq!(tops[1].second, Some(0));
+        let name = |c: u16| crate::classifier::strips::display_name(&r.labels[c as usize]);
+        assert_eq!(
+            hints(&tops, name),
+            [
+                "mostly Bravo, average confidence 0.95",
+                "mostly Bravo, average confidence 0.15",
+                "mostly Charlie",
+            ]
+        );
+    }
+
+    #[test]
     fn hints_name_the_most_frequent_top_class() {
         let g = Grouping {
             of_window: vec![0, 0, 0, 0, 1, 1, 1, 0],
@@ -487,15 +573,15 @@ mod tests {
         };
         let r = run(&[Some(1), Some(1), Some(0), None, Some(2), Some(0), Some(1), Some(1)]);
         let tops = group_tops(&g, &r);
-        assert_eq!(tops[0], GroupTop { size: 5, top: Some((1, 3)) });
+        assert_eq!((tops[0].size, tops[0].top), (5, Some((1, 3))));
         // A three-way tie goes to the lowest class number.
-        assert_eq!(tops[1], GroupTop { size: 3, top: Some((0, 1)) });
+        assert_eq!((tops[1].size, tops[1].top), (3, Some((0, 1))));
         let name = |c: u16| crate::classifier::strips::display_name(&r.labels[c as usize]);
         assert_eq!(hint(&tops[0], name), "mostly Bravo");
         assert_eq!(hint(&tops[1], name), "mixed");
         // Exactly half is enough.
-        assert_eq!(hint(&GroupTop { size: 4, top: Some((2, 2)) }, name), "mostly Charlie");
-        assert_eq!(hint(&GroupTop { size: 4, top: None }, name), "mixed");
+        assert_eq!(hint(&GroupTop { size: 4, top: Some((2, 2)), ..Default::default() }, name), "mostly Charlie");
+        assert_eq!(hint(&GroupTop { size: 4, top: None, ..Default::default() }, name), "mixed");
     }
 
     #[test]

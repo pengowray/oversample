@@ -126,8 +126,8 @@ fn class_name(run: &ClassifierRun, class: u16) -> String {
         .map_or_else(|| "Unknown".to_string(), display_name)
 }
 
-fn hint(run: &ClassifierRun, top: &GroupTop) -> String {
-    sg::hint(top, |c| class_name(run, c))
+fn hints(run: &ClassifierRun, tops: &[GroupTop]) -> Vec<String> {
+    sg::hints(tops, |c| class_name(run, c))
 }
 
 /// The "Sound groups" row for `run`, and each group's hover name ("Group 2:
@@ -139,10 +139,10 @@ pub fn row(
     run: &ClassifierRun,
 ) -> Option<(ScoreRow, Vec<String>)> {
     let g = grouping(state, file, method)?;
-    let names = sg::group_tops(&g, run)
+    let names = hints(run, &sg::group_tops(&g, run))
         .iter()
         .enumerate()
-        .map(|(i, top)| format!("Group {}: {}", i + 1, hint(run, top)))
+        .map(|(i, hint)| format!("Group {}: {hint}", i + 1))
         .collect();
     let cells = (0..run.windows.len())
         .map(|i| g.of_window.get(i).map(|&x| f32::from(x)))
@@ -294,13 +294,18 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                 .into_any()
             });
         };
-        let rows = sg::group_tops(&g, run)
+        let tops = sg::group_tops(&g, run);
+        let rows = tops
             .iter()
+            .zip(hints(run, &tops))
             .enumerate()
-            .map(|(i, top)| {
+            .map(|(i, (top, hint))| {
                 let detail = top.top.map(|(class, count)| {
+                    let second = top.second.map_or_else(String::new, |c| {
+                        format!("\nMost often second: {}", class_name(run, c))
+                    });
                     format!(
-                        "Top class in {count} of {} windows: {}",
+                        "Top class in {count} of {} windows: {}{second}",
                         top.size,
                         class_name(run, class)
                     )
@@ -313,7 +318,7 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                                 style:background=GROUP_COLOURS[i.min(GROUP_COLOURS.len() - 1)]
                             ></span>
                             {format!("Group {}", i + 1)}
-                            <div class="sound-groups-hint">{hint(run, top)}</div>
+                            <div class="sound-groups-hint">{hint}</div>
                         </td>
                         <td class="detection-col-num">{windows_text(top.size)}</td>
                     </tr>
