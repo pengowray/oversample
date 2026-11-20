@@ -190,8 +190,7 @@ pub fn column_centre(
 ) -> Vec<Option<f32>> {
     (0..width)
         .map(|x| {
-            window_at(windows, t_of(x as f64 + 0.5))
-                .and_then(|i| cells.get(i).copied().flatten())
+            window_at(windows, t_of(x as f64 + 0.5)).and_then(|i| cells.get(i).copied().flatten())
         })
         .collect()
 }
@@ -607,12 +606,16 @@ mod tests {
 
     #[test]
     fn picks_saved_before_sound_groups_load() {
-        let old = r#"{"species":[{"method":"birdnet","scientific":"Turdus merula"}],"components":[0,2]}"#;
+        let old =
+            r#"{"species":[{"method":"birdnet","scientific":"Turdus merula"}],"components":[0,2]}"#;
         let picks = from_stored(old);
         assert_eq!(picks.species.len(), 1);
         assert_eq!(picks.components, vec![0, 2]);
         assert!(!picks.sound_groups);
-        assert_eq!(picks.groups, crate::classifier::sound_groups::DEFAULT_GROUPS);
+        assert_eq!(
+            picks.groups,
+            crate::classifier::sound_groups::DEFAULT_GROUPS
+        );
         // A number of groups not offered, or not a number: the default.
         for raw in [
             r#"{"sound_groups":true,"groups":7}"#,
@@ -622,7 +625,11 @@ mod tests {
         ] {
             let p = from_stored(raw);
             assert!(p.sound_groups, "{raw}");
-            assert_eq!(p.groups, crate::classifier::sound_groups::DEFAULT_GROUPS, "{raw}");
+            assert_eq!(
+                p.groups,
+                crate::classifier::sound_groups::DEFAULT_GROUPS,
+                "{raw}"
+            );
         }
         assert!(!from_stored(r#"{"sound_groups":"yes"}"#).sound_groups);
     }
@@ -680,10 +687,22 @@ mod tests {
         // (window 1), column 1 at 1.5 s (window 3).
         let w = [(0.0, 0.5), (0.5, 1.0), (1.0, 1.5), (1.5, 2.0)];
         let cells = [Some(0.0), Some(1.0), Some(2.0), None];
-        assert_eq!(column_centre(&w, &cells, |x| x, 3), vec![Some(1.0), None, None]);
+        assert_eq!(
+            column_centre(&w, &cells, |x| x, 3),
+            vec![Some(1.0), None, None]
+        );
         assert_eq!(
             column_centre(&w, &cells, |x| x * 0.25, 8),
-            vec![Some(0.0), Some(0.0), Some(1.0), Some(1.0), Some(2.0), Some(2.0), None, None]
+            vec![
+                Some(0.0),
+                Some(0.0),
+                Some(1.0),
+                Some(1.0),
+                Some(2.0),
+                Some(2.0),
+                None,
+                None
+            ]
         );
     }
 

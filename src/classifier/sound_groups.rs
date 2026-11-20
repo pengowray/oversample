@@ -117,9 +117,7 @@ impl Reducer {
         Reduced {
             n: self.n,
             dims: self.dims,
-            points: self
-                .projection
-                .map_or_else(Vec::new, TopProjection::finish),
+            points: self.projection.map_or_else(Vec::new, TopProjection::finish),
         }
     }
 }
@@ -318,7 +316,9 @@ pub fn group_tops(g: &Grouping, run: &ClassifierRun) -> Vec<GroupTop> {
     let mut seconds: Vec<HashMap<u16, usize>> = vec![HashMap::new(); n];
     for (w, &grp) in run.windows.iter().zip(&g.of_window) {
         let grp = grp as usize;
-        let Some((class, _)) = tops[grp] else { continue };
+        let Some((class, _)) = tops[grp] else {
+            continue;
+        };
         if w.top.first().is_some_and(|s| s.class == class) {
             sums[grp] += w.top[0].confidence;
         }
@@ -571,7 +571,16 @@ mod tests {
             of_window: vec![0, 0, 0, 0, 1, 1, 1, 0],
             sizes: vec![5, 3],
         };
-        let r = run(&[Some(1), Some(1), Some(0), None, Some(2), Some(0), Some(1), Some(1)]);
+        let r = run(&[
+            Some(1),
+            Some(1),
+            Some(0),
+            None,
+            Some(2),
+            Some(0),
+            Some(1),
+            Some(1),
+        ]);
         let tops = group_tops(&g, &r);
         assert_eq!((tops[0].size, tops[0].top), (5, Some((1, 3))));
         // A three-way tie goes to the lowest class number.
@@ -580,8 +589,28 @@ mod tests {
         assert_eq!(hint(&tops[0], name), "mostly Bravo");
         assert_eq!(hint(&tops[1], name), "mixed");
         // Exactly half is enough.
-        assert_eq!(hint(&GroupTop { size: 4, top: Some((2, 2)), ..Default::default() }, name), "mostly Charlie");
-        assert_eq!(hint(&GroupTop { size: 4, top: None, ..Default::default() }, name), "mixed");
+        assert_eq!(
+            hint(
+                &GroupTop {
+                    size: 4,
+                    top: Some((2, 2)),
+                    ..Default::default()
+                },
+                name
+            ),
+            "mostly Charlie"
+        );
+        assert_eq!(
+            hint(
+                &GroupTop {
+                    size: 4,
+                    top: None,
+                    ..Default::default()
+                },
+                name
+            ),
+            "mixed"
+        );
     }
 
     #[test]
