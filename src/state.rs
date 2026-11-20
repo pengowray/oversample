@@ -1837,7 +1837,8 @@ pub struct CallDetectionState {
     /// focus. The spectrogram outlines the regions it would add.
     pub preview: Option<crate::call_annotations::AnnotatePreview>,
     /// Score strips above the spectrogram (`crate::classifier::strips`): the
-    /// species picked, each with its method, in the order picked.
+    /// species picked, each with its method, in the order picked. Saved in
+    /// localStorage (`settings::keys::SCORE_STRIPS`) with `strip_components`.
     pub strip_species: Vec<crate::classifier::strips::StripSpecies>,
     /// The BirdNET principal components picked for strips, 0 for PC1.
     pub strip_components: Vec<usize>,
@@ -2775,6 +2776,7 @@ impl AppState {
     }
 
     pub fn new() -> Self {
+        let saved_strips = crate::settings::get_score_strips();
         let s = Self {
             spect: Store::new(SpectState {
                 display: SpectrogramDisplay::FlowOptical,
@@ -3083,8 +3085,8 @@ impl AppState {
                 mark_unexpected: true,
                 selected_window: None,
                 preview: None,
-                strip_species: Vec::new(),
-                strip_components: Vec::new(),
+                strip_species: saved_strips.0,
+                strip_components: saved_strips.1,
             }),
 
             classifier: Store::new(ClassifierState::default()),

@@ -6,6 +6,8 @@
 //!
 //! Pure functions; the canvas drawing is `crate::canvas::overlays::
 //! draw_score_strips` and the component is `crate::components::score_strips`.
+//! Also here: the saved form of the picks (`to_stored`, `from_stored`) and
+//! the name matching behind the species search (`find_classes`).
 //!
 //! A run keeps only each window's top [`super::TOP_K`] scores, so a picked
 //! species outside a window's top 10 has no score there: its cell is `None`
@@ -207,6 +209,154 @@ pub fn toggle<T: PartialEq>(picked: &mut Vec<T>, item: T) {
     }
 }
 
+// ── Saved picks ─────────────────────────────────────────────────────────────
+
+/// Most species rows and components kept from a saved value, so a damaged
+/// value cannot fill the screen with rows.
+const MAX_SAVED_SPECIES: usize = 50;
+const MAX_SAVED_COMPONENT: usize = 255;
+
+/// The name a method is saved under. Fixed strings, so renaming the enum's
+/// variants does not lose saved picks.
+fn method_key(method: Method) -> &'static str {
+    match method {
+        Method::BirdNet => "birdnet",
+        Method::Bats => "bats",
+        Method::Perch => "perch",
+    }
+}
+
+fn method_from_key(key: &str) -> Option<Method> {
+    match key {
+        "birdnet" => Some(Method::BirdNet),
+        "bats" => Some(Method::Bats),
+        "perch" => Some(Method::Perch),
+        _ => None,
+    }
+}
+
+/// The picks as saved in `settings::keys::SCORE_STRIPS`:
+/// `{"species":[{"method":"birdnet","scientific":"Turdus merula"}],"components":[0,2]}`.
+pub fn to_stored(species: &[StripSpecies], components: &[usize]) -> String {
+    let species: Vec<serde_json::Value> = species
+        .iter()
+        .map(|s| serde_json::json!({ "method": method_key(s.method), "scientific": s.scientific }))
+        .collect();
+    serde_json::json!({ "species": species, "components": components }).to_string()
+}
+
+/// The picks from a saved value. Anything unreadable is skipped: a value that
+/// is not JSON gives no picks, and an entry with an unknown method, a missing
+/// name or a component that is not a small whole number is dropped while the
+/// rest are kept. Repeats are dropped too.
+pub fn from_stored(raw: &str) -> (Vec<StripSpecies>, Vec<usize>) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut species: Vec<StripSpecies> = Vec::new();
+    for entry in value["species"].as_array().into_iter().flatten() {
+        let method = entry["method"].as_str().and_then(method_from_key);
+        let scientific = entry["scientific"].as_str().map(str::trim).unwrap_or("");
+        let (Some(method), false) = (method, scientific.is_empty()) else {
+            continue;
+        };
+        let s = StripSpecies {
+            method,
+            scientific: scientific.to_string(),
+        };
+        if !species.contains(&s) && species.len() < MAX_SAVED_SPECIES {
+            species.push(s);
+        }
+    }
+    let mut components: Vec<usize> = Vec::new();
+    for k in value["components"].as_array().into_iter().flatten() {
+        let Some(k) = k.as_u64().and_then(|k| usize::try_from(k).ok()) else {
+            continue;
+        };
+        if k <= MAX_SAVED_COMPONENT && !components.contains(&k) {
+            components.push(k);
+        }
+    }
+    (species, components)
+}
+
+// ── Species search ──────────────────────────────────────────────────────────
+
+/// A name made ready for matching: lower case, accents removed, hyphens as
+/// spaces and apostrophes dropped, so "bewicks wren" finds "Bewick's Wren"
+/// and "black capped" finds "Black-capped Chickadee".
+pub fn fold_name(name: &str) -> String {
+    xc_lib::group_words::fold(name)
+        .chars()
+        // Combining accents, for text typed in decomposed form.
+        .filter(|c| !('\u{300}'..='\u{36f}').contains(c))
+        .filter(|c| !matches!(c, '\'' | '\u{2019}'))
+        .map(|c| if c == '-' { ' ' } else { c })
+        .collect()
+}
+
+/// Each label's common and scientific name, folded with [`fold_name`]. Built
+/// once per label list and passed to [`find_classes`].
+pub fn fold_labels(labels: &[super::SpeciesLabel]) -> Vec<(String, String)> {
+    labels
+        .iter()
+        .map(|l| (fold_name(&l.common), fold_name(&l.scientific)))
+        .collect()
+}
+
+/// How well a folded name matches the folded query: 0 when the name starts
+/// with it, 1 when each word of the query starts a word of the name, 2 when
+/// the name contains it, `None` otherwise.
+fn match_rank(name: &str, query: &str, words: &[&str]) -> Option<u8> {
+    if name.starts_with(query) {
+        return Some(0);
+    }
+    let name_words: Vec<&str> = name.split_whitespace().collect();
+    if words
+        .iter()
+        .all(|q| name_words.iter().any(|w| w.starts_with(q)))
+    {
+        return Some(1);
+    }
+    name.contains(query).then_some(2)
+}
+
+/// The classes whose common or scientific name matches `query`, best matches
+/// first and then in label order, at most `limit` of them. Labels that are not
+/// a species (BattyBirdNET's "noise") are left out. `folded` is
+/// [`fold_labels`] of `labels`.
+pub fn find_classes(
+    labels: &[super::SpeciesLabel],
+    folded: &[(String, String)],
+    query: &str,
+    limit: usize,
+) -> Vec<u16> {
+    let query = fold_name(query);
+    let query = query.split_whitespace().collect::<Vec<_>>().join(" ");
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let words: Vec<&str> = query.split(' ').collect();
+    let mut hits: Vec<(u8, usize)> = labels
+        .iter()
+        .zip(folded)
+        .enumerate()
+        .filter(|(_, (l, _))| l.is_species)
+        .filter_map(|(i, (_, (common, scientific)))| {
+            let rank = [common, scientific]
+                .iter()
+                .filter_map(|n| match_rank(n, &query, &words))
+                .min()?;
+            Some((rank, i))
+        })
+        .collect();
+    hits.sort_unstable();
+    hits.into_iter()
+        .take(limit)
+        .filter_map(|(_, i)| u16::try_from(i).ok())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,6 +498,128 @@ mod tests {
         assert_eq!(ordinal(12), "12th");
         assert_eq!(ordinal(73), "73rd");
         assert_eq!(ordinal(100), "100th");
+    }
+
+    #[test]
+    fn saved_picks_round_trip() {
+        let species = vec![
+            StripSpecies {
+                method: Method::BirdNet,
+                scientific: "Turdus philomelos".into(),
+            },
+            StripSpecies {
+                method: Method::Bats,
+                scientific: "Pipistrellus pipistrellus".into(),
+            },
+            StripSpecies {
+                method: Method::Perch,
+                scientific: "Erithacus rubecula".into(),
+            },
+        ];
+        let components = vec![2, 0];
+        let raw = to_stored(&species, &components);
+        assert_eq!(from_stored(&raw), (species, components));
+        assert_eq!(from_stored(&to_stored(&[], &[])), (vec![], vec![]));
+    }
+
+    #[test]
+    fn bad_saved_picks_are_skipped() {
+        for raw in ["", "not json", "null", "[]", "42", r#"{"species":"x"}"#] {
+            assert_eq!(from_stored(raw), (vec![], vec![]), "{raw}");
+        }
+        let raw = r#"{
+            "species": [
+                {"method": "birdnet", "scientific": "Turdus merula"},
+                {"method": "BirdNet", "scientific": "Apus apus"},
+                {"method": "perch"},
+                {"method": "perch", "scientific": "  "},
+                {"method": "bats", "scientific": 3},
+                "Turdus merula",
+                {"method": "birdnet", "scientific": "Turdus merula"},
+                {"method": "perch", "scientific": "Turdus merula", "extra": true}
+            ],
+            "components": [1, -1, 1.5, "2", 1, 9999, 3]
+        }"#;
+        let (species, components) = from_stored(raw);
+        assert_eq!(
+            species,
+            vec![
+                StripSpecies {
+                    method: Method::BirdNet,
+                    scientific: "Turdus merula".into()
+                },
+                StripSpecies {
+                    method: Method::Perch,
+                    scientific: "Turdus merula".into()
+                },
+            ]
+        );
+        assert_eq!(components, vec![1, 3]);
+        // Only one of the two parts present.
+        assert_eq!(from_stored(r#"{"components":[4]}"#), (vec![], vec![4]));
+    }
+
+    fn labels(lines: &[&str]) -> Vec<SpeciesLabel> {
+        lines.iter().map(|l| SpeciesLabel::parse(l)).collect()
+    }
+
+    fn find(labels: &[SpeciesLabel], query: &str) -> Vec<u16> {
+        find_classes(labels, &fold_labels(labels), query, 8)
+    }
+
+    #[test]
+    fn names_fold_for_matching() {
+        assert_eq!(fold_name("Bewick's Wren"), "bewicks wren");
+        assert_eq!(fold_name("Bewick\u{2019}s Wren"), "bewicks wren");
+        assert_eq!(
+            fold_name("Black-capped Chickadee"),
+            "black capped chickadee"
+        );
+        assert_eq!(fold_name("Pouillot fitis \u{e9}"), "pouillot fitis e");
+        // "e" and a combining acute accent.
+        assert_eq!(fold_name("Me\u{301}sange"), "mesange");
+    }
+
+    #[test]
+    fn search_both_names_ignoring_case_and_accents() {
+        let l = labels(&[
+            "Turdus merula_Eurasian Blackbird",
+            "Turdus philomelos_Song Thrush",
+            "Erithacus rubecula_European Robin",
+            "Poecile atricapillus_Black-capped Chickadee",
+            "Thryomanes bewickii_Bewick's Wren",
+            "Cyanistes caeruleus_Mésange bleue",
+        ]);
+        assert_eq!(find(&l, "song"), vec![1]);
+        assert_eq!(find(&l, "SONG THRUSH"), vec![1]);
+        assert_eq!(find(&l, "turdus"), vec![0, 1]);
+        assert_eq!(find(&l, "erithacus rub"), vec![2]);
+        assert_eq!(find(&l, "black capped"), vec![3]);
+        assert_eq!(find(&l, "bewicks"), vec![4]);
+        assert_eq!(find(&l, "mesange"), vec![5]);
+        assert_eq!(find(&l, "MÉSANGE"), vec![5]);
+        // Word starts in any order, across the common name.
+        assert_eq!(find(&l, "rob eur"), vec![2]);
+        assert!(find(&l, "").is_empty());
+        assert!(find(&l, "   ").is_empty());
+        assert!(find(&l, "zebra").is_empty());
+    }
+
+    #[test]
+    fn search_ranks_and_caps() {
+        let l = labels(&[
+            "Turdus migratorius_American Robin",
+            "Erithacus rubecula_European Robin",
+            "Robinia x_Robin Hood",
+            "Aaa bbb_Mr Probin",
+            "noise",
+        ]);
+        // Name starts with the query, then a word starts with it, then the
+        // name contains it.
+        assert_eq!(find(&l, "robin"), vec![2, 0, 1, 3]);
+        // Non-species labels are never offered.
+        assert!(find(&l, "noise").is_empty());
+        assert_eq!(find_classes(&l, &fold_labels(&l), "robin", 2), vec![2, 0]);
     }
 
     #[test]

@@ -1167,6 +1167,86 @@ body.sidebar-resizing {
     color: #eee;
 }
 
+/* Species search in "Rows above the spectrogram" (classifier_section.rs,
+   strip_search). The matches are listed in the panel under the field, not in
+   a popup: the sidebar is about 200 px wide and scrolls, and a popup would be
+   clipped. Field colours follow .setting-select; the highlighted match uses
+   the Explore Xeno-canto country list's colours (.xc-combobox-option). */
+.strip-search {
+    padding: 4px 16px;
+}
+
+.strip-search-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 24px;
+    background: #222;
+    color: #ccc;
+    border: 1px solid #444;
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 12px;
+    outline: none;
+}
+
+.strip-search-input:hover {
+    border-color: #666;
+}
+
+.strip-search-input:focus {
+    border-color: #6ea8fe;
+}
+
+.strip-search-list {
+    border: 1px solid #444;
+    border-top: none;
+    border-radius: 0 0 3px 3px;
+    background: #1a1a24;
+}
+
+/* 24 px rows or taller: each is a click target. */
+.strip-search-option {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-height: 24px;
+    padding: 4px 6px;
+    box-sizing: border-box;
+    font-size: 11px;
+    line-height: 14px;
+    color: #ccc;
+    cursor: pointer;
+}
+
+.strip-search-option.highlight {
+    background: #3a3a5a;
+    color: #fff;
+}
+
+.strip-search-names {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.strip-search-added {
+    flex: none;
+    color: #888;
+}
+
+.strip-search-option.highlight .strip-search-added,
+.strip-search-option.highlight .detection-scientific {
+    color: #bbb;
+}
+
+.strip-search-empty {
+    padding: 4px 6px;
+    font-size: 11px;
+    color: #888;
+}
+
 /* Settings panel */
 .sidebar-panel {
     flex: 1;

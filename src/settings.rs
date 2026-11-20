@@ -60,6 +60,10 @@ pub mod keys {
     /// English only, or a language code such as "de". Unset means the
     /// browser's languages.
     pub const XC_NAMES_LANGUAGE: &str = "oversample_xc_names_language";
+    /// The rows above the spectrogram picked in the Call detection tab: the
+    /// species (with their method) and BirdNET's principal components, as
+    /// JSON (`classifier::strips::to_stored`).
+    pub const SCORE_STRIPS: &str = "oversample_score_strips";
     /// Developer override for the proxy base URL (e.g. `http://localhost:8080`).
     /// No UI; set it from the browser console. Unset means the build default.
     pub const XC_API_BASE_OVERRIDE: &str = "oversample_xc_api_base";
@@ -152,6 +156,21 @@ pub fn get_bool(key: &str, default: bool) -> bool {
 /// Write a bool setting as `"true"`/`"false"`.
 pub fn set_bool(key: &str, value: bool) {
     set_raw(key, if value { "true" } else { "false" });
+}
+
+/// The saved rows above the spectrogram: species and principal components.
+/// Empty when unset or unreadable.
+pub fn get_score_strips() -> (Vec<crate::classifier::strips::StripSpecies>, Vec<usize>) {
+    get_raw(keys::SCORE_STRIPS)
+        .map(|raw| crate::classifier::strips::from_stored(&raw))
+        .unwrap_or_default()
+}
+
+pub fn set_score_strips(species: &[crate::classifier::strips::StripSpecies], components: &[usize]) {
+    set_raw(
+        keys::SCORE_STRIPS,
+        &crate::classifier::strips::to_stored(species, components),
+    );
 }
 
 /// The saved "Lowest bat frequency" in Hz, or the default.

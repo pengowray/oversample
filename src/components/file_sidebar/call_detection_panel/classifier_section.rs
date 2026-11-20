@@ -107,6 +107,14 @@ fn toggle_strip(state: AppState, method: Method, scientific: String) {
     state.call_detection.strip_species().update(|v| {
         classifier::strips::toggle(v, classifier::strips::StripSpecies { method, scientific })
     });
+    save_strips(state);
+}
+
+/// Save the picked rows (species and components) for the next session.
+fn save_strips(state: AppState) {
+    let species = state.call_detection.strip_species().get_untracked();
+    let components = state.call_detection.strip_components().get_untracked();
+    crate::settings::set_score_strips(&species, &components);
 }
 
 /// The cell with a species' "Show" checkbox: adds or removes its row above
@@ -1311,12 +1319,7 @@ fn strips_group(state: AppState, method: Method, current_file: Memo<Option<u64>>
                 .collect()
         });
         if list.is_empty() {
-            return view! {
-                <div class="detection-status-note detection-annotate-row">
-                    "Tick a species in \u{201c}By species\u{201d} to add its row."
-                </div>
-            }
-            .into_any();
+            return ().into_any();
         }
         let rows = list
             .into_iter()
@@ -1389,7 +1392,8 @@ fn strips_group(state: AppState, method: Method, current_file: Memo<Option<u64>>
                             state
                                 .call_detection
                                 .strip_components()
-                                .update(|v| classifier::strips::toggle(v, k))
+                                .update(|v| classifier::strips::toggle(v, k));
+                            save_strips(state);
                         }
                     >{name}</button>
                 }
@@ -1406,7 +1410,221 @@ fn strips_group(state: AppState, method: Method, current_file: Memo<Option<u64>>
         <div class="setting-group">
             <div class="setting-group-title">"Rows above the spectrogram"</div>
             {picked}
+            {strip_search(state, method, current_file)}
             {components}
         </div>
+    }
+}
+
+/// Most matches the species search lists at once.
+const SEARCH_MATCHES: usize = 8;
+
+/// A run's label list, compared by identity: a memo of it changes only when
+/// another run's labels come in, not each time a window's scores do.
+#[derive(Clone)]
+struct LabelList(std::sync::Arc<Vec<classifier::SpeciesLabel>>);
+
+impl LabelList {
+    fn key(&self) -> usize {
+        std::sync::Arc::as_ptr(&self.0) as usize
+    }
+}
+
+/// Each label's common and scientific name, folded for matching
+/// (`classifier::strips::fold_labels`).
+type FoldedNames = std::sync::Arc<Vec<(String, String)>>;
+
+/// One species the search offers.
+#[derive(Clone, PartialEq)]
+struct SearchMatch {
+    name: String,
+    scientific: String,
+    added: bool,
+}
+
+/// The species search in "Rows above the spectrogram": type part of a
+/// common or scientific name, then pick a match (or press Enter for the
+/// highlighted one) to add its row. Searches every class of the current
+/// file's run for this method, so a species the run never scored highly can
+/// be added. Matches are listed in the panel under the field rather than in
+/// a popup, which the narrow sidebar would clip.
+fn strip_search(state: AppState, method: Method, current_file: Memo<Option<u64>>) -> impl IntoView {
+    let query = RwSignal::new(String::new());
+    let focused = RwSignal::new(false);
+    let highlight = RwSignal::new(0usize);
+    let labels = Memo::new_with_compare(
+        move |_| {
+            let file = current_file.get()?;
+            state
+                .classifier
+                .results()
+                .with(|m| m.get(&(file, method)).map(|r| LabelList(r.labels.clone())))
+        },
+        |a, b| {
+            a.map(|a| a.as_ref().map(LabelList::key)) != b.map(|b| b.as_ref().map(LabelList::key))
+        },
+    );
+    // Folded names of the label list, built on the first search of each list
+    // (Perch has 14,795 classes): (list key, names).
+    let folded: StoredValue<Option<(usize, FoldedNames)>> = StoredValue::new(None);
+    let matches = Memo::new(move |_| -> Vec<SearchMatch> {
+        let q = query.get();
+        if q.trim().is_empty() {
+            return Vec::new();
+        }
+        let Some(list) = labels.get() else {
+            return Vec::new();
+        };
+        let cached = folded.with_value(|f| {
+            f.as_ref()
+                .filter(|(k, _)| *k == list.key())
+                .map(|(_, n)| n.clone())
+        });
+        let names = cached.unwrap_or_else(|| {
+            let n = std::sync::Arc::new(classifier::strips::fold_labels(&list.0));
+            folded.set_value(Some((list.key(), n.clone())));
+            n
+        });
+        classifier::strips::find_classes(&list.0, &names, &q, SEARCH_MATCHES)
+            .into_iter()
+            .filter_map(|c| list.0.get(c as usize))
+            .map(|l| SearchMatch {
+                name: classifier::strips::display_name(l),
+                scientific: l.scientific.clone(),
+                added: strip_picked(state, method, &l.scientific),
+            })
+            .collect()
+    });
+    let open = move || focused.get() && !query.with(|q| q.trim().is_empty());
+    let choose = move |m: &SearchMatch| {
+        if !m.added {
+            toggle_strip(state, method, m.scientific.clone());
+        }
+        query.set(String::new());
+        highlight.set(0);
+    };
+    let list_id = format!("strip-search-list-{method:?}");
+    let option_id = move |i: usize| format!("strip-search-{method:?}-{i}");
+    let on_keydown = move |ev: web_sys::KeyboardEvent| {
+        let n = matches.with_untracked(Vec::len);
+        match ev.key().as_str() {
+            "ArrowDown" => {
+                ev.prevent_default();
+                highlight.update(|h| *h = (*h + 1).min(n.saturating_sub(1)));
+            }
+            "ArrowUp" => {
+                ev.prevent_default();
+                highlight.update(|h| *h = h.saturating_sub(1));
+            }
+            "Enter" => {
+                ev.prevent_default();
+                let m = matches.with_untracked(|v| v.get(highlight.get_untracked()).cloned());
+                if let Some(m) = m {
+                    choose(&m);
+                }
+            }
+            "Escape" if !query.with_untracked(String::is_empty) => {
+                ev.prevent_default();
+                ev.stop_propagation();
+                query.set(String::new());
+                highlight.set(0);
+            }
+            _ => {}
+        }
+    };
+    let list_view = {
+        let list_id = list_id.clone();
+        move || {
+            if !open() {
+                return None;
+            }
+            let found = matches.get();
+            if found.is_empty() {
+                return Some(
+                    view! { <div class="strip-search-empty">"No species found"</div> }.into_any(),
+                );
+            }
+            let rows = found
+                .into_iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    let name = m.name.clone();
+                    let scientific = (m.scientific != m.name).then(|| m.scientific.clone());
+                    let added = m.added;
+                    let class = move || {
+                        if highlight.get() == i {
+                            "strip-search-option highlight"
+                        } else {
+                            "strip-search-option"
+                        }
+                    };
+                    view! {
+                        <div
+                            id=option_id(i)
+                            role="option"
+                            class=class
+                            aria-selected=move || (highlight.get() == i).to_string()
+                            on:mousedown=move |ev: web_sys::MouseEvent| {
+                                // Keeps the focus in the field, for another search.
+                                ev.prevent_default();
+                                choose(&m);
+                            }
+                            on:mousemove=move |_| {
+                                if highlight.get_untracked() != i {
+                                    highlight.set(i);
+                                }
+                            }
+                        >
+                            <span class="strip-search-names">
+                                <span>{name}</span>
+                                {scientific.map(|s| view! { <span class="detection-scientific">{s}</span> })}
+                            </span>
+                            {added.then(|| view! { <span class="strip-search-added">"Added"</span> })}
+                        </div>
+                    }
+                })
+                .collect::<Vec<_>>();
+            Some(
+                view! { <div id=list_id.clone() role="listbox" class="strip-search-list">{rows}</div> }
+                    .into_any(),
+            )
+        }
+    };
+    move || {
+        labels
+            .with(|l| l.as_ref().is_some_and(|l| !l.0.is_empty()))
+            .then(|| {
+                let list_id = list_id.clone();
+                let list_view = list_view.clone();
+                view! {
+                    <div class="strip-search">
+                        <input
+                            type="text"
+                            class="strip-search-input"
+                            placeholder="Add a species"
+                            aria-label="Add a species row above the spectrogram"
+                            role="combobox"
+                            aria-autocomplete="list"
+                            aria-controls=list_id
+                            aria-expanded=move || open().to_string()
+                            aria-activedescendant=move || {
+                                (open() && matches.with(|v| !v.is_empty()))
+                                    .then(|| option_id(highlight.get()))
+                            }
+                            autocomplete="off"
+                            spellcheck="false"
+                            prop:value=move || query.get()
+                            on:input=move |ev| {
+                                query.set(event_target_value(&ev));
+                                highlight.set(0);
+                            }
+                            on:focus=move |_| focused.set(true)
+                            on:blur=move |_| focused.set(false)
+                            on:keydown=on_keydown
+                        />
+                        {list_view}
+                    </div>
+                }
+            })
     }
 }
