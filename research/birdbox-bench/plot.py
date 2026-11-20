@@ -1,5 +1,5 @@
-"""One PNG per recording: a linear-frequency spectrogram (0 to 16 kHz, grey, louder is
-darker) in rows of 15 s, with the reference boxes (BirdBox's CLI, solid blue) and the
+"""One PNG per recording: a linear-frequency spectrogram (0 to 16 kHz, grey: white at each
+frequency's median level, darker above it) in rows of 15 s, with the reference boxes (BirdBox's CLI, solid blue) and the
 Rust boxes (dashed orange) on top.
 
   python -I plot.py AUDIO_DIR REF.tsv RUST.tsv OUT_DIR NAME [NAME ...] [--max-seconds 120]
@@ -16,11 +16,13 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
+import warnings  # noqa: E402
 import soundfile as sf  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
 from scipy.signal import stft  # noqa: E402
 
+warnings.filterwarnings("ignore", message="loadtxt: input contained no data")
 REF, OURS = "#2a78d6", "#eb6834"
 ROW_S = 15.0
 
@@ -49,14 +51,16 @@ for name in a.names:
     x = x[: int(dur * sr)]
     f, t, z = stft(x, sr, nperseg=1024, noverlap=1024 - 256)
     db = 20 * np.log10(np.abs(z) + 1e-9)
-    vmax = np.percentile(db, 99.7)
+    # White below each frequency's median level (the background), black at the loudest
+    db = db - np.median(db, axis=1, keepdims=True)
+    vmax = max(np.percentile(db, 99.8), 12.0)
     ref, ours = boxes(a.ref.format(name=name)), boxes(a.ours.format(name=name))
     rows = int(np.ceil(dur / ROW_S))
     fig, axes = plt.subplots(rows, 1, figsize=(14, 2.3 * rows + 0.6), squeeze=False)
     for r, ax in enumerate(axes[:, 0]):
         t0, t1 = r * ROW_S, (r + 1) * ROW_S
         sel = (t >= t0 - 0.1) & (t <= t1 + 0.1)
-        ax.pcolormesh(t[sel], f / 1000, db[:, sel], cmap="gray_r", vmin=vmax - 70, vmax=vmax,
+        ax.pcolormesh(t[sel], f / 1000, db[:, sel], cmap="gray_r", vmin=3.0, vmax=vmax,
                       shading="nearest", rasterized=True)
         for bx, colour, style, width in ((ref, REF, "-", 1.6), (ours, OURS, (0, (3, 2)), 1.4)):
             for b in bx:
@@ -78,6 +82,6 @@ for name in a.names:
                  Line2D([], [], color=OURS, lw=1.4, ls=(0, (3, 2)), label="Rust + tract")],
         loc="upper right", fontsize=8, framealpha=0.9)
     fig.tight_layout()
-    fig.savefig(os.path.join(a.out, f"{name}.png"), dpi=80)
+    fig.savefig(os.path.join(a.out, f"{name}.png"), dpi=72)
     plt.close(fig)
     print(name)
