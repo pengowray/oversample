@@ -76,6 +76,9 @@ pub mod keys {
     /// Developer override for the proxy base URL (e.g. `http://localhost:8080`).
     /// No UI; set it from the browser console. Unset means the build default.
     pub const XC_API_BASE_OVERRIDE: &str = "oversample_xc_api_base";
+    /// How much audio "Add before" and "Add after" fetch for an A2O clip, in
+    /// seconds: one of `a2o::ADD_CHOICES_SECS`.
+    pub const A2O_ADD_SECS: &str = "oversample_a2o_add_secs";
 }
 
 /// Load the persisted per-device effective-bit-depth map (device name -> bits).

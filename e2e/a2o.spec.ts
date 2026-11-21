@@ -2,9 +2,9 @@ import { test, expect, type Page } from "@playwright/test";
 
 /**
  * Australian Acoustic Observatory links. Both A2O servers are mocked: no
- * request leaves the machine. An event link opens the event's clip; "Add 30 s
- * after" and "Add 30 s before" fetch the audio beside it and put it on one
- * timeline, in recording order.
+ * request leaves the machine. An event link opens the event's clip and makes
+ * a project of it; "Add after" and "Add before" fetch the audio beside it and
+ * put it on one timeline, in recording order.
  */
 
 const SEARCH = "https://api.search.acousticobservatory.org/api/v1/a2o";
@@ -166,8 +166,8 @@ test.describe("A2O links", () => {
       .toBe(clipName(1506, 1516));
     expect(clips).toEqual(["1506-1516"]);
 
-    const after = page.getByRole("button", { name: "Add 30 s after" });
-    const before = page.getByRole("button", { name: "Add 30 s before" });
+    const after = page.getByRole("button", { name: "Add after" });
+    const before = page.getByRole("button", { name: "Add before" });
     await expect(after).toBeVisible();
     await expect(before).toBeVisible();
 
@@ -219,6 +219,19 @@ test.describe("A2O links", () => {
       clipName(1546, 1576),
     ]);
     await page.keyboard.press("Space");
+
+    // The length menu between the buttons sets how much one press adds, and
+    // the choice is kept for the next visit.
+    const length = page.getByLabel("How much audio to add");
+    await expect(length).toHaveValue("30");
+    await length.selectOption({ label: "1\u00a0min" });
+    await after.click();
+    await expect.poll(() => clips.length, { timeout: 60_000 }).toBe(5);
+    expect(clips[4]).toBe("1576-1636");
+    await expect
+      .poll(async () => (await snapshot(page)).timelineStarts, { timeout: 60_000 })
+      .toEqual([0, 31, 42, 73, 104]);
+    expect(await page.evaluate(() => localStorage.getItem("oversample_a2o_add_secs"))).toBe("60");
     if (process.env.A2O_OUT) await page.screenshot({ path: `${process.env.A2O_OUT}/a2o-timeline.png` });
     expect(errors).toEqual([]);
   });
@@ -231,12 +244,13 @@ test.describe("A2O links", () => {
       .poll(async () => (await snapshot(page)).currentFile, { timeout: 60_000 })
       .toBe(clipName(1506, 1516));
 
-    // Make a project of the clip, then add the 30 s after it. The new clip
-    // joins the project, and the project gets the timeline.
+    // The link made a project of the clip, named after the site. Add the
+    // 30 s after it: the new clip joins the project, and the project gets
+    // the timeline.
     await page.getByRole("button", { name: /^Project/ }).first().click();
-    await page.getByRole("button", { name: "Create project" }).click();
     await expect(page.locator(".project-file-item")).toHaveCount(1, { timeout: 30_000 });
-    await page.getByRole("button", { name: "Add 30\u00a0s after" }).click();
+    await expect(page.locator(".project-name-input")).toHaveValue("A2O Tarcutta Hills Wet A");
+    await page.getByRole("button", { name: "Add after" }).click();
     await expect
       .poll(async () => (await snapshot(page)).timelineStarts, { timeout: 60_000 })
       .toEqual([0, 10]);
@@ -276,7 +290,7 @@ test.describe("A2O links", () => {
 
     // Adding more audio keeps the project at one entry per clip, and the
     // saved timeline lists all three.
-    await page.getByRole("button", { name: "Add 30\u00a0s before" }).click();
+    await page.getByRole("button", { name: "Add before" }).click();
     await expect
       .poll(async () => (await snapshot(page)).timelineStarts, { timeout: 60_000 })
       .toEqual([0, 30, 40]);
@@ -313,7 +327,7 @@ test.describe("A2O links", () => {
     // Phone width: both Add buttons are whole and inside the screen.
     await page.setViewportSize({ width: 375, height: 812 });
     await page.waitForTimeout(1500);
-    for (const name of ["Add 30\u00a0s before", "Add 30\u00a0s after"]) {
+    for (const name of ["Add before", "Add after"]) {
       const box = (await page.getByRole("button", { name }).boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(375);

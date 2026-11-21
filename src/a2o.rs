@@ -37,6 +37,34 @@ pub const MAX_CLIP_SECS: f64 = 300.0;
 /// The clip opened for a link that names a recording and no time, and the
 /// amount of audio "Add before" and "Add after" fetch, in seconds.
 pub const ADD_SECS: f64 = 30.0;
+/// The amounts of audio "Add before" and "Add after" can fetch, in seconds.
+/// The longest is the most A2O serves in one request.
+pub const ADD_CHOICES_SECS: [f64; 4] = [10.0, 30.0, 60.0, MAX_CLIP_SECS];
+
+/// An amount of audio as the length menu writes it: "10 s", "1 min".
+pub fn length_text(secs: f64) -> String {
+    let whole = secs.round() as u32;
+    if whole >= 60 && whole % 60 == 0 {
+        format!("{}\u{a0}min", whole / 60)
+    } else {
+        format!("{whole}\u{a0}s")
+    }
+}
+
+/// The amount "Add before" and "Add after" fetch: the user's choice from the
+/// length menu, kept between sessions, or [`ADD_SECS`].
+pub fn add_secs() -> f64 {
+    crate::settings::get_raw(crate::settings::keys::A2O_ADD_SECS)
+        .and_then(|s| s.parse::<f64>().ok())
+        .filter(|secs| ADD_CHOICES_SECS.contains(secs))
+        .unwrap_or(ADD_SECS)
+}
+
+pub fn set_add_secs(secs: f64) {
+    if ADD_CHOICES_SECS.contains(&secs) {
+        crate::settings::set_raw(crate::settings::keys::A2O_ADD_SECS, &secs.to_string());
+    }
+}
 
 /// What an A2O link names.
 #[derive(Clone, Debug, PartialEq)]
@@ -183,18 +211,21 @@ pub fn clip_range(
 }
 
 /// The audio just before (`before`) or just after a stretch of a recording
-/// that is already open, `(start, end)` in seconds: up to [`ADD_SECS`] of
-/// it. `None` at the start or the end of the recording.
+/// that is already open, `(start, end)` in seconds: up to `add_secs` of it
+/// (and never more than A2O serves in one request). `None` at the start or
+/// the end of the recording.
 pub fn adjacent_range(
     open_start: f64,
     open_end: f64,
     recording_secs: f64,
     before: bool,
+    add_secs: f64,
 ) -> Option<(f64, f64)> {
+    let add_secs = add_secs.clamp(1.0, MAX_CLIP_SECS);
     let (start, end) = if before {
-        ((open_start - ADD_SECS).max(0.0), open_start)
+        ((open_start - add_secs).max(0.0), open_start)
     } else {
-        (open_end, (open_end + ADD_SECS).min(recording_secs))
+        (open_end, (open_end + add_secs).min(recording_secs))
     };
     // Under a tenth of a second is the rounding left at an end, not audio.
     (end - start > 0.1).then_some((start, end))
@@ -557,8 +588,47 @@ async fn wait_for_identity(state: AppState, file_id: u64) {
     }
 }
 
-/// Open what an A2O link names. Returns the new file's id.
+/// Open what an A2O link names, and put the clip in a project, so that
+/// audio added before and after it is saved with it (see
+/// `put_a2o_clip_in_project` for which project). Returns the file's id.
 pub async fn load_link(state: AppState, link: &A2oLink) -> Result<u64, String> {
+    let open_before: Vec<u64> = state
+        .library
+        .files()
+        .with_untracked(|files| files.iter().map(|f| f.id).collect());
+    let id = open_link(state, link).await?;
+    // A clip that was open already keeps the project it is in, if any.
+    if !open_before.contains(&id) {
+        wait_for_identity(state, id).await;
+        let name = state.library.files().with_untracked(|files| {
+            let file = files.iter().find(|f| f.id == id)?;
+            let site = file
+                .site_metadata
+                .as_ref()?
+                .fields
+                .iter()
+                .find(|(key, _)| key == "Site")
+                .map(|(_, value)| value.clone());
+            let recording = file.origin_clip.as_ref()?.recording_id;
+            Some(project_name(site.as_deref(), recording))
+        });
+        if let Some(name) = name {
+            crate::components::file_sidebar::put_a2o_clip_in_project(state, id, name);
+        }
+    }
+    Ok(id)
+}
+
+/// The name of the project made for an A2O link: the site's name, or the
+/// recording's number when the site is not known.
+pub fn project_name(site: Option<&str>, recording_id: u64) -> String {
+    match site.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(site) => format!("A2O {site}"),
+        None => format!("A2O recording {recording_id}"),
+    }
+}
+
+async fn open_link(state: AppState, link: &A2oLink) -> Result<u64, String> {
     match *link {
         A2oLink::Event {
             recording_id,
@@ -621,7 +691,15 @@ pub struct OpenStretch {
 
 impl OpenStretch {
     pub fn can_add(&self, before: bool) -> bool {
-        adjacent_range(self.start_secs, self.end_secs, self.recording_secs, before).is_some()
+        // Whether any audio is left on that side: the amount does not matter.
+        adjacent_range(
+            self.start_secs,
+            self.end_secs,
+            self.recording_secs,
+            before,
+            ADD_SECS,
+        )
+        .is_some()
     }
 }
 
@@ -662,13 +740,14 @@ pub fn open_stretch(state: &AppState) -> Option<OpenStretch> {
 
 /// Fetch the audio just before or just after what is open, and put it on
 /// the timeline beside it. One open file and the new clip become a timeline.
-pub async fn add_adjacent(state: AppState, before: bool) -> Result<(), String> {
+pub async fn add_adjacent(state: AppState, before: bool, add_secs: f64) -> Result<(), String> {
     let stretch = open_stretch_untracked(&state).ok_or("The open audio is not an A2O clip")?;
     let (start, end) = adjacent_range(
         stretch.start_secs,
         stretch.end_secs,
         stretch.recording_secs,
         before,
+        add_secs,
     )
     .ok_or(if before {
         "This is the start of the recording"
@@ -839,23 +918,58 @@ mod tests {
     #[test]
     fn audio_before_and_after_stops_at_the_ends_of_the_recording() {
         assert_eq!(
-            adjacent_range(1506.0, 1516.0, 14389.685, true),
+            adjacent_range(1506.0, 1516.0, 14389.685, true, 30.0),
             Some((1476.0, 1506.0))
         );
         assert_eq!(
-            adjacent_range(1506.0, 1516.0, 14389.685, false),
+            adjacent_range(1506.0, 1516.0, 14389.685, false, 30.0),
             Some((1516.0, 1546.0))
         );
         assert_eq!(
-            adjacent_range(10.0, 20.0, 14389.685, true),
+            adjacent_range(10.0, 20.0, 14389.685, true, 30.0),
             Some((0.0, 10.0))
         );
-        assert_eq!(adjacent_range(0.0, 10.0, 14389.685, true), None);
+        assert_eq!(adjacent_range(0.0, 10.0, 14389.685, true, 30.0), None);
         assert_eq!(
-            adjacent_range(14370.0, 14380.0, 14389.685, false),
+            adjacent_range(14370.0, 14380.0, 14389.685, false, 30.0),
             Some((14380.0, 14389.685))
         );
-        assert_eq!(adjacent_range(14380.0, 14389.685, 14389.685, false), None);
+        assert_eq!(
+            adjacent_range(14380.0, 14389.685, 14389.685, false, 30.0),
+            None
+        );
+        // A longer step, and a step longer than A2O serves in one request.
+        assert_eq!(
+            adjacent_range(1506.0, 1516.0, 14389.685, false, 60.0),
+            Some((1516.0, 1576.0))
+        );
+        assert_eq!(
+            adjacent_range(1506.0, 1516.0, 14389.685, true, 300.0),
+            Some((1206.0, 1506.0))
+        );
+        assert_eq!(
+            adjacent_range(1506.0, 1516.0, 14389.685, false, 900.0),
+            Some((1516.0, 1816.0))
+        );
+    }
+
+    #[test]
+    fn a_link_project_is_named_after_the_site() {
+        assert_eq!(
+            project_name(Some("Tarcutta Hills Wet A"), 55743),
+            "A2O Tarcutta Hills Wet A"
+        );
+        assert_eq!(project_name(Some("  "), 55743), "A2O recording 55743");
+        assert_eq!(project_name(None, 55743), "A2O recording 55743");
+    }
+
+    #[test]
+    fn lengths_read_as_seconds_or_minutes() {
+        assert_eq!(length_text(10.0), "10\u{a0}s");
+        assert_eq!(length_text(30.0), "30\u{a0}s");
+        assert_eq!(length_text(60.0), "1\u{a0}min");
+        assert_eq!(length_text(300.0), "5\u{a0}min");
+        assert_eq!(length_text(90.0), "90\u{a0}s");
     }
 
     #[test]

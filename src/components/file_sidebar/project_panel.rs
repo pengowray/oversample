@@ -47,7 +47,9 @@ pub(crate) fn add_open_files_to_project(state: AppState, only: Option<u64>) -> u
     state.project.current().update(|p| {
         let Some(proj) = p else { return };
         for f in loaded.iter().filter(|f| only.is_none_or(|id| f.id == id)) {
-            let Some(identity) = &f.identity else { continue };
+            let Some(identity) = &f.identity else {
+                continue;
+            };
             if proj
                 .find_open_file(Some(identity), f.origin_clip.as_ref())
                 .is_some()
@@ -63,6 +65,34 @@ pub(crate) fn add_open_files_to_project(state: AppState, only: Option<u64>) -> u
         state.project.dirty().set(true);
     }
     added
+}
+
+/// Put the open A2O clip with id `file_id` in a project, and save it:
+///
+/// - with no project open, a new project named `name` that holds the clip;
+/// - with a project open that already has an A2O clip, that project;
+/// - with any other project open, nothing. That project is the user's own,
+///   and the panel's "Add to project" banner offers the clip instead.
+///
+/// The clip's identity must be worked out already.
+pub(crate) fn put_a2o_clip_in_project(state: AppState, file_id: u64, name: String) {
+    let open = state.project.current().with_untracked(|p| {
+        p.as_ref()
+            .map(|proj| proj.files.iter().any(|f| f.origin_clip.is_some()))
+    });
+    match open {
+        None => {
+            let mut proj = BatProject::new();
+            proj.name = Some(name);
+            state.project.current().set(Some(proj));
+        }
+        Some(true) => {}
+        Some(false) => return,
+    }
+    if add_open_files_to_project(state, Some(file_id)) > 0 || open.is_none() {
+        state.project.dirty().set(true);
+        save_project_async(state);
+    }
 }
 
 /// Save the current project to OPFS (fire-and-forget).

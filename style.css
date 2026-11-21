@@ -2864,8 +2864,7 @@ a.open-link-btn {
     color: #111;
 }
 
-/* "Add 30 s before" and "Add 30 s after" for an A2O clip, in the transport
-   bar. Plain outlined buttons: adding audio is a secondary action there,
+/* "Add before" and "Add after" for an A2O clip, in the transport bar. Plain outlined buttons: adding audio is a secondary action there,
    beside Play. Both wait (dimmed) while a clip is being fetched. */
 .a2o-add {
     display: flex;
@@ -2881,6 +2880,18 @@ a.open-link-btn {
     border-radius: 4px;
     font-size: 12px;
     white-space: nowrap;
+    cursor: pointer;
+}
+
+/* How much audio one press adds: between the two buttons it applies to. */
+.a2o-add-length {
+    min-height: 32px;
+    padding: 4px 6px;
+    background: #1a1a1a;
+    color: #ddd;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font-size: 12px;
     cursor: pointer;
 }
 
@@ -5132,6 +5143,10 @@ a.open-link-btn {
 
 .bottom-toolbar.mobile .a2o-add-btn {
     flex: 1;
+    min-height: 44px;
+}
+
+.bottom-toolbar.mobile .a2o-add-length {
     min-height: 44px;
 }
 
