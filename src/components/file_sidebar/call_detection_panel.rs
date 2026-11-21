@@ -174,6 +174,7 @@ fn start_search(state: AppState, file_id: u64, params: CallScanParams) {
         state.call_detection.detected().set(Vec::new());
         state.call_detection.trains().set(Vec::new());
         state.call_detection.selected_index().set(None);
+        state.call_detection.hovered_index().set(None);
         state.call_detection.progress().set(0.0);
         let is_latest =
             move || state.call_detection.scan_generation().get_untracked() == generation;
@@ -435,14 +436,26 @@ fn InbuiltDetection() -> impl IntoView {
         })
     });
 
-    // Click a row: select it and scroll the spectrogram to it.
+    // Click a row: pick it, make its box the selection on the spectrogram
+    // (so it can be played, annotated or zoomed to like one drawn by hand)
+    // and scroll the spectrogram to it.
     let on_row_click = move |i: usize| {
         state.call_detection.selected_index().set(Some(i));
-        let mid = state
-            .call_detection
-            .detected()
-            .with_untracked(|d| d.get(i).map(|c| 0.5 * (c.start_s + c.end_s)));
-        let Some(mid) = mid else { return };
+        let found = state.call_detection.detected().with_untracked(|d| {
+            d.get(i).map(|c| crate::state::Selection {
+                time_start: c.start_s,
+                time_end: c.end_s,
+                freq_low: Some(c.event.min_freq_hz as f64),
+                freq_high: Some(c.event.max_freq_hz as f64),
+            })
+        });
+        let Some(sel) = found else { return };
+        let mid = 0.5 * (sel.time_start + sel.time_end);
+        state.interaction.selection().set(Some(sel));
+        state
+            .interaction
+            .active_focus()
+            .set(Some(crate::state::ActiveFocus::TransientSelection));
         let files = state.library.files().get_untracked();
         let idx = state.library.current_index().get_untracked();
         if let Some(file) = idx.and_then(|i| files.get(i)) {
@@ -784,7 +797,21 @@ fn InbuiltDetection() -> impl IntoView {
                         class
                     };
                     view! {
-                        <tr class=row_class title=tooltip on:click=move |_| on_row_click(i)>
+                        <tr
+                            class=row_class
+                            title=tooltip
+                            on:click=move |_| on_row_click(i)
+                            on:pointerenter=move |ev: web_sys::PointerEvent| {
+                                if ev.pointer_type() == "mouse" {
+                                    state.call_detection.hovered_index().set(Some(i));
+                                }
+                            }
+                            on:pointerleave=move |_| {
+                                if state.call_detection.hovered_index().get_untracked() == Some(i) {
+                                    state.call_detection.hovered_index().set(None);
+                                }
+                            }
+                        >
                             <td class="detection-col-num">{i + 1}</td>
                             <td>{crate::format_time::format_time_display(c.start_s, 3)}</td>
                             <td class="detection-col-kind" title=kind_title>{kind_label(c.kind)}</td>

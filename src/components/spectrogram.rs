@@ -388,6 +388,7 @@ pub fn Spectrogram() -> impl IntoView {
             state.call_detection.detected().with(|_| ());
             state.call_detection.trains().with(|_| ());
             let selected_detection = state.call_detection.selected_index().get();
+            let hovered_detection = state.call_detection.hovered_index().get();
             // The method picked in the Call detection tab decides which
             // results the overlay shows.
             let detection_method = state.call_detection.method().get();
@@ -1391,7 +1392,9 @@ pub fn Spectrogram() -> impl IntoView {
                 // (BattyBirdNET), so each call box sits under the species
                 // label of its window; BirdNET and Perch (mostly not bats)
                 // hide them.
-                if detection_overlay
+                // The call hovered in the list is drawn also with the boxes
+                // switched off.
+                if (detection_overlay || hovered_detection.is_some())
                     && detection_method.classifier().is_none_or(|m| {
                         use crate::classifier::MethodFacts;
                         m.info().call_boxes
@@ -1407,6 +1410,8 @@ pub fn Spectrogram() -> impl IntoView {
                                 trains,
                                 species_strip.as_ref().map(|s| &s.windows[..]),
                                 selected_detection,
+                                hovered_detection,
+                                !detection_overlay,
                                 min_freq,
                                 max_freq,
                                 scroll,

@@ -1813,6 +1813,9 @@ pub struct CallDetectionState {
     pub classifier_boxes: bool,
     /// Index into `detected`.
     pub selected_index: Option<usize>,
+    /// Index into `detected` of the row under the pointer in the Call
+    /// detection tab's list: its box is outlined on the spectrogram.
+    pub hovered_index: Option<usize>,
     /// The file and settings being searched now, if a search is running.
     pub scanning: Option<(u64, crate::dsp::call_detect::CallScanParams)>,
     /// Bumped by each new search; a running search stops when it changes.
@@ -3117,6 +3120,7 @@ impl AppState {
                 overlay_enabled: false,
                 classifier_boxes: true,
                 selected_index: None,
+                hovered_index: None,
                 scanning: None,
                 scan_generation: 0,
                 progress: 0.0,

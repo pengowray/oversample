@@ -1139,12 +1139,18 @@ pub struct SpeciesWindow {
 /// call whose middle falls in one of those windows is drawn in that species'
 /// colour, and other bat calls are drawn grey rather than green, since the
 /// green is too close to the sky blue species colour to tell apart.
+///
+/// `hovered_index` is the call under the pointer in the Call detection tab's
+/// list, outlined in white. With `only_hovered` (the boxes are switched off)
+/// it is the only thing drawn.
 pub fn draw_calls(
     ctx: &CanvasRenderingContext2d,
     calls: &[crate::dsp::call_detect::DetectedCall],
     trains: &[crate::dsp::call_detect::CallTrain],
     species_windows: Option<&[SpeciesWindow]>,
     selected_index: Option<usize>,
+    hovered_index: Option<usize>,
+    only_hovered: bool,
     min_freq: f64,
     max_freq: f64,
     scroll_offset: f64,
@@ -1170,7 +1176,7 @@ pub fn draw_calls(
     ctx.set_stroke_style_str("rgba(80, 220, 150, 0.6)");
     ctx.set_line_width(2.0);
     for train in trains {
-        if train.end_s < start_time || train.start_s > end_time {
+        if only_hovered || train.end_s < start_time || train.start_s > end_time {
             continue;
         }
         let x0 = x_of(train.start_s).max(0.0);
@@ -1187,6 +1193,10 @@ pub fn draw_calls(
     ctx.set_text_baseline("bottom");
     for (i, call) in calls.iter().enumerate() {
         if call.end_s < start_time || call.start_s > end_time {
+            continue;
+        }
+        let is_hovered = hovered_index == Some(i);
+        if only_hovered && !is_hovered {
             continue;
         }
         let x0 = x_of(call.start_s).max(0.0);
@@ -1253,6 +1263,19 @@ pub fn draw_calls(
             ctx.restore();
         }
         ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
+        if is_hovered {
+            // A white line round the box, with a dark one under it so it
+            // shows on every colour map. Outside the box's own line, so a
+            // selected box keeps its amber.
+            let _ = ctx.set_line_dash(&no_dashes);
+            let (hx, hy, hw, hh) = (x0 - 2.5, y0 - 2.5, x1 - x0 + 5.0, y1 - y0 + 5.0);
+            ctx.set_stroke_style_str("rgba(0, 0, 0, 0.7)");
+            ctx.set_line_width(3.5);
+            ctx.stroke_rect(hx, hy, hw, hh);
+            ctx.set_stroke_style_str("rgba(255, 255, 255, 0.95)");
+            ctx.set_line_width(1.5);
+            ctx.stroke_rect(hx, hy, hw, hh);
+        }
 
         // The detection's number in the list, above the box when there is room.
         if x1 - x0 > 14.0 && y0 > 12.0 {

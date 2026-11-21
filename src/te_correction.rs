@@ -454,6 +454,7 @@ pub fn set_user_time_expansion(state: AppState, file_id: u64, factor: Option<f64
         state.call_detection.detected().set(Vec::new());
         state.call_detection.trains().set(Vec::new());
         state.call_detection.selected_index().set(None);
+        state.call_detection.hovered_index().set(None);
         state.call_detection.progress().set(0.0);
     }
 
