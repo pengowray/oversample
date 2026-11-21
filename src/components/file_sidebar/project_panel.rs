@@ -540,7 +540,42 @@ fn ProjectView(project: BatProject) -> impl IntoView {
 
     // ── Build file items ──
 
-    let file_items: Vec<_> = file_statuses.iter().enumerate().map(|(pi, (pf, is_loaded))| {
+    // The list is rebuilt when the open timeline or its order changes: while
+    // a timeline is open and its files have an order, they are listed first,
+    // in that order, each with buttons that move it (as in the Files tab).
+    let file_statuses_sv = StoredValue::new(file_statuses.clone());
+    let file_items = move || {
+        let arrangement = state.timeline.arrangement().get();
+        let tl_runtime: Vec<usize> = if state.timeline.active().with(|t| t.is_some())
+            && !matches!(arrangement, crate::project::Arrangement::RecordingTime)
+        {
+            state.timeline.clip_file_indices().get()
+        } else {
+            Vec::new()
+        };
+        let runtime_of =
+            move |pi: usize| proj_to_runtime.with_value(|p| p.get(pi).copied().flatten());
+        let statuses = file_statuses_sv.get_value();
+        let first: Vec<usize> = tl_runtime
+            .iter()
+            .filter_map(|&ri| (0..statuses.len()).find(|&pi| runtime_of(pi) == Some(ri)))
+            .collect();
+        let shown: Vec<usize> = first
+            .iter()
+            .copied()
+            .chain((0..statuses.len()).filter(|pi| !first.contains(pi)))
+            .collect();
+        let (move_up_tip, move_down_tip) =
+            if matches!(arrangement, crate::project::Arrangement::Together) {
+                ("Move up", "Move down")
+            } else {
+                ("Play earlier", "Play later")
+            };
+        let tl_last = tl_runtime.len().saturating_sub(1);
+        shown.into_iter().map(|pi| {
+        let (pf, is_loaded) = &statuses[pi];
+        // This file's place on the open timeline.
+        let tl_pos = runtime_of(pi).and_then(|ri| tl_runtime.iter().position(|&x| x == ri));
         let filename = pf.identity.filename.clone();
         let duration = pf.audio_metadata.as_ref().map(|m| m.duration_secs);
         let sample_rate = pf.audio_metadata.as_ref().map(|m| m.sample_rate);
@@ -588,7 +623,26 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                     } else {
                         Some(view! { <span class="project-file-status loaded" title="Loaded">{"\u{25CF} "}</span> })
                     }}
-                    {filename}
+                    <span class="project-file-name-text">{filename}</span>
+                    {tl_pos.map(|pos| view! {
+                        <span class="timeline-order-num" title="Place on the timeline">{pos + 1}</span>
+                        <button class="timeline-order-btn" title=move_up_tip
+                            aria-label=move_up_tip
+                            disabled={pos == 0}
+                            on:click=move |ev: web_sys::MouseEvent| {
+                                ev.stop_propagation();
+                                crate::timeline::move_clip(&state, pos, pos.saturating_sub(1));
+                            }
+                        ><Icon kind=Icon::ArrowUp /></button>
+                        <button class="timeline-order-btn" title=move_down_tip
+                            aria-label=move_down_tip
+                            disabled={pos == tl_last}
+                            on:click=move |ev: web_sys::MouseEvent| {
+                                ev.stop_propagation();
+                                crate::timeline::move_clip(&state, pos, pos + 1);
+                            }
+                        ><Icon kind=Icon::ArrowDown /></button>
+                    })}
                     {if from_tauri {
                         Some(view! { <span class="file-badge badge-fact file-badge-tauri" title="Metadata from desktop">"T"</span> })
                     } else {
@@ -604,7 +658,8 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 </div>
             </div>
         }
-    }).collect();
+        }).collect::<Vec<_>>()
+    };
 
     let created_short = created.get(..10).unwrap_or(&created).to_string();
 

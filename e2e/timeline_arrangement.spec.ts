@@ -180,6 +180,41 @@ async function expectTones(
     .toBe("ok");
 }
 
+/**
+ * For each of `rows` equal rows of the frequency strip: whether it has light
+ * pixels, which are the kHz labels and tick marks.
+ */
+function gutterLabelPixels(page: Page, rows: number): Promise<boolean[]> {
+  return page
+    .locator(".band-gutter canvas")
+    .first()
+    .evaluate((c: HTMLCanvasElement, n: number) => {
+      const ctx = c.getContext("2d")!;
+      const rowH = c.height / n;
+      const out: boolean[] = [];
+      for (let r = 0; r < n; r++) {
+        const top = Math.round(r * rowH) + 2;
+        const d = ctx.getImageData(0, top, c.width, Math.floor(rowH) - 4).data;
+        let light = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 380) light++;
+        out.push(light > 20);
+      }
+      return out;
+    }, rows);
+}
+
+const NAMES = ["alpha.wav", "bravo.wav", "charlie.wav"];
+const card = (page: Page, name: string) => page.locator(".file-item", { hasText: name });
+/** The test files named in the rows matching `selector`, top to bottom. */
+function cardNames(page: Page, selector: string): Promise<(string | undefined)[]> {
+  return page
+    .locator(selector)
+    .evaluateAll(
+      (els, names) => els.map((e) => names.find((n) => (e.textContent ?? "").includes(n))),
+      NAMES,
+    );
+}
+
 const SAME_DATE: Clip[] = [
   { name: "alpha.wav", sr: 192_000, secs: 2, hz: 20_000 },
   { name: "bravo.wav", sr: 192_000, secs: 3, hz: 40_000 },
@@ -200,6 +235,8 @@ test.describe("timeline arrangement", () => {
     expect(snap.timelineStarts).toEqual([0, 2, 5]);
     expect(snap.timelineDuration).toBeCloseTo(6.5, 3);
     await expect(chip(page).locator(".layer-btn-value")).toHaveText("One after another");
+    // The frequency strip has its kHz labels on a timeline.
+    await expect.poll(() => gutterLabelPixels(page, 1), { timeout: 15_000 }).toEqual([true]);
     // Each file is drawn in its own place.
     await expectTones(page, 6.5, 96_000, [
       { at: 1, hz: 20_000 },
@@ -310,21 +347,19 @@ test.describe("timeline arrangement", () => {
       .toEqual(["alpha.wav", "bravo.wav", "charlie.wav"]);
     expect((await snapshot(page)).timelineStarts).toEqual([0, 2, 5]);
 
-    // The play order is listed. Move alpha one place later.
-    const rows = page.locator(".timeline-order-row");
-    await expect(rows).toHaveCount(3);
-    await expect(rows.nth(0).getByRole("button", { name: "Play earlier" })).toBeDisabled();
-    await expect(rows.nth(2).getByRole("button", { name: "Play later" })).toBeDisabled();
-    await rows.nth(0).getByRole("button", { name: "Play later" }).click();
+    // The timeline's files are listed first, in play order, and each card
+    // has buttons that move it. Move alpha one place later.
+    await expect.poll(() => cardNames(page, ".file-item")).toEqual(NAMES);
+    await expect(card(page, "alpha.wav").getByRole("button", { name: "Play earlier" })).toBeDisabled();
+    await expect(card(page, "charlie.wav").getByRole("button", { name: "Play later" })).toBeDisabled();
+    await card(page, "alpha.wav").getByRole("button", { name: "Play later" }).click();
     await expect
       .poll(async () => (await snapshot(page)).timelineFiles)
       .toEqual(["bravo.wav", "alpha.wav", "charlie.wav"]);
     expect((await snapshot(page)).timelineStarts).toEqual([0, 3, 5]);
-    await expect(page.locator(".timeline-order-name")).toHaveText([
-      "bravo.wav",
-      "alpha.wav",
-      "charlie.wav",
-    ]);
+    await expect
+      .poll(() => cardNames(page, ".file-item"))
+      .toEqual(["bravo.wav", "alpha.wav", "charlie.wav"]);
     await expectTones(page, 6.5, 96_000, [
       { at: 1.5, hz: 40_000 },
       { at: 4, hz: 20_000 },
@@ -340,11 +375,12 @@ test.describe("timeline arrangement", () => {
     ]);
     await page.keyboard.press("Space");
 
-    // Placed at their recorded times, the order list is not shown.
+    // Placed at their recorded times, the files have no order to change.
+    const moveButtons = page.locator(".file-item .timeline-order-btn");
     await choose(page, "At their recorded times");
-    await expect(rows).toHaveCount(0);
+    await expect(moveButtons).toHaveCount(0);
     await choose(page, "One after another, 0.5\u00a0s pause");
-    await expect(rows).toHaveCount(3);
+    await expect(moveButtons).toHaveCount(6);
 
     // Screenshots and the UI audit, at desktop and phone width.
     const out = process.env.ARRANGE_OUT;
@@ -398,6 +434,9 @@ test.describe("timeline arrangement", () => {
       "charlie.wav",
     ]);
 
+    // The frequency strip beside the spectrogram has kHz labels in every row.
+    await expect.poll(() => gutterLabelPixels(page, 3), { timeout: 15_000 }).toEqual([true, true, true]);
+
     // A selection dragged inside the middle row gets that row's frequencies:
     // from 3/4 of the way up the row (72 kHz) to 1/4 of the way up (24 kHz).
     await page.locator(".tool-combo-btn").click();
@@ -443,21 +482,21 @@ test.describe("timeline arrangement", () => {
     if (out) await page.screenshot({ path: `${out}/rows-3-wave.png` });
     await page.getByRole("button", { name: "Spec", exact: true }).click();
 
-    // The Files tab lists the rows from the top. Move alpha down one row.
-    await page.locator(".sidebar-header-label", { hasText: "Files" }).click();
-    const order = page.locator(".timeline-order-row");
-    await expect(order).toHaveCount(3);
-    await expect(order.nth(0).getByRole("button", { name: "Move up" })).toBeDisabled();
-    await order.nth(0).getByRole("button", { name: "Move down" }).click();
-    await expect
-      .poll(async () => (await snapshot(page)).timelineFiles)
-      .toEqual(["bravo.wav", "alpha.wav", "charlie.wav"]);
+    // The Project tab lists the rows from the top. Move alpha down one row.
+    await expect.poll(() => cardNames(page, ".project-file-item")).toEqual(NAMES);
+    const projRow = (name: string) => page.locator(".project-file-item", { hasText: name });
+    await expect(projRow("alpha.wav").getByRole("button", { name: "Move up" })).toBeDisabled();
+    await projRow("alpha.wav").getByRole("button", { name: "Move down" }).click();
+    const moved = ["bravo.wav", "alpha.wav", "charlie.wav"];
+    await expect.poll(async () => (await snapshot(page)).timelineFiles).toEqual(moved);
     expect((await snapshot(page)).timelineRows).toEqual([0, 1, 2]);
-    await expect(page.locator(".timeline-row-name:visible")).toHaveText([
-      "bravo.wav",
-      "alpha.wav",
-      "charlie.wav",
-    ]);
+    await expect(page.locator(".timeline-row-name:visible")).toHaveText(moved);
+    await expect.poll(() => cardNames(page, ".project-file-item")).toEqual(moved);
+    if (out) await page.screenshot({ path: `${out}/rows-3-project-tab.png` });
+    // The Files tab shows the same order, with the same buttons.
+    await page.locator(".sidebar-header-label", { hasText: "Files" }).click();
+    await expect.poll(() => cardNames(page, ".file-item")).toEqual(moved);
+    await expect(card(page, "bravo.wav").getByRole("button", { name: "Move up" })).toBeDisabled();
     if (out) {
       await page.screenshot({ path: `${out}/rows-3-files-tab.png` });
       await page.setViewportSize({ width: 375, height: 812 });

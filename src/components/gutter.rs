@@ -40,7 +40,15 @@ fn gutter_nyquist(state: AppState) -> f64 {
         crate::canvas::live_waterfall::max_freq()
     } else {
         let files = state.library.files().get_untracked();
-        let idx = state.library.current_index().get_untracked();
+        // On a timeline: the file with the highest sample rate.
+        let idx = state
+            .timeline
+            .active()
+            .with_untracked(|t| {
+                t.as_ref()
+                    .and_then(|tl| tl.primary_segment().map(|s| s.file_index))
+            })
+            .or_else(|| state.library.current_index().get_untracked());
         idx.and_then(|i| files.get(i))
             .map(|f| f.spectrogram.max_freq)
             .unwrap_or(96_000.0)
@@ -111,7 +119,16 @@ pub fn BandGutter() -> impl IntoView {
     // labels line up with what is drawn.
     let display_range = move || -> (f64, f64) {
         let files = state.library.files().get();
-        let idx = state.library.current_index().get();
+        // On a timeline the strip covers the range of the file with the
+        // highest sample rate, as the spectrogram does.
+        let idx = state
+            .timeline
+            .active()
+            .with(|t| {
+                t.as_ref()
+                    .and_then(|tl| tl.primary_segment().map(|s| s.file_index))
+            })
+            .or_else(|| state.library.current_index().get());
         let decim = state.display.decimate_effective().get();
         let nyquist = idx
             .and_then(|i| files.get(i))
@@ -191,19 +208,35 @@ pub fn BandGutter() -> impl IntoView {
             return;
         };
 
-        gutter_renderer::draw_band_gutter(
-            &ctx,
-            display_w as f64,
-            display_h as f64,
-            min_freq * axis_scale,
-            max_freq * axis_scale,
-            band_lo * axis_scale,
-            band_hi * axis_scale,
-            hfr_on,
-            shield_style,
-            drag_range.map(|(s, c)| (s * axis_scale, c * axis_scale)),
-            heard.is_some(),
-        );
+        // A timeline whose clips are on several rows gets the scale once
+        // per row, beside each row of the spectrogram. One row is the whole
+        // strip.
+        let row_count = state
+            .timeline
+            .active()
+            .with(|t| t.as_ref().map_or(1, |tl| tl.row_count));
+        for row in 0..row_count {
+            let (row_top, row_h) = crate::timeline::row_rect(row, row_count, display_h as f64);
+            ctx.save();
+            ctx.begin_path();
+            ctx.rect(0.0, row_top, display_w as f64, row_h);
+            ctx.clip();
+            let _ = ctx.translate(0.0, row_top);
+            gutter_renderer::draw_band_gutter(
+                &ctx,
+                display_w as f64,
+                row_h,
+                min_freq * axis_scale,
+                max_freq * axis_scale,
+                band_lo * axis_scale,
+                band_hi * axis_scale,
+                hfr_on,
+                shield_style,
+                drag_range.map(|(s, c)| (s * axis_scale, c * axis_scale)),
+                heard.is_some(),
+            );
+            ctx.restore();
+        }
     });
 
     // ResizeObserver: observe the parent .band-gutter (not the canvas), so
@@ -232,6 +265,10 @@ pub fn BandGutter() -> impl IntoView {
         cb.forget();
     });
 
+    // The timeline row the pointer was last over while no band was being
+    // dragged.
+    let pointer_row: StoredValue<usize> = StoredValue::new(0);
+
     // Resolve (local_y, canvas_height, min_freq, max_freq) for a pointer
     // event — frequency bounds reflect the host view's current display
     // range so drag math uses the same mapping the gutter renders with.
@@ -248,6 +285,29 @@ pub fn BandGutter() -> impl IntoView {
         if max_freq <= min_freq {
             return None;
         }
+        // With several rows, y and the height are those of the pointer's
+        // row. A drag stays in the row it started in.
+        let row_count = state
+            .timeline
+            .active()
+            .with_untracked(|t| t.as_ref().map_or(1, |tl| tl.row_count));
+        if row_count > 1 {
+            let (here, _, row_h) = crate::timeline::row_at(y, row_count, h);
+            let dragging = state
+                .interaction
+                .axis_drag_start_freq()
+                .get_untracked()
+                .is_some();
+            let row = if dragging {
+                pointer_row.get_value().min(row_count - 1)
+            } else {
+                pointer_row.set_value(here);
+                here
+            };
+            let (top, _) = crate::timeline::row_rect(row, row_count, h);
+            return Some(((y - top).clamp(0.0, row_h), row_h, min_freq, max_freq));
+        }
+        pointer_row.set_value(0);
         Some((y, h, min_freq, max_freq))
     };
 
@@ -309,7 +369,7 @@ pub fn BandGutter() -> impl IntoView {
         drag_anchor.set_value(Some(raw_start));
         drag_start_y.set_value(Some(y));
         drag_active.set_value(false);
-        tooltip_y.set(Some(y));
+        tooltip_y.set(Some(y + pointer_row.get_value() as f64 * h));
         // Flag the drag so heavy consumers (waveform band-split) can cache.
         state.filter.band_ff_dragging().set(true);
 
@@ -355,7 +415,7 @@ pub fn BandGutter() -> impl IntoView {
         let Some((y, h, min_freq, max_freq)) = pointer_context(&ev) else {
             return;
         };
-        tooltip_y.set(Some(y.clamp(0.0, h)));
+        tooltip_y.set(Some(y.clamp(0.0, h) + pointer_row.get_value() as f64 * h));
 
         // Tap-zone gate: don't promote a press into a drag (which would
         // snap a 1 kHz range and auto-enable HFR) until the pointer has

@@ -321,6 +321,35 @@ pub(super) fn FilesPanel() -> impl IntoView {
                 let sort_mode = state.library.sort_mode().get();
                 let sorted_indices = compute_sorted_indices(&file_vec, sort_mode, &names, &group_infos);
 
+                // While a timeline is open and its files have an order (one
+                // after another, or one row each), its files are listed
+                // first, in that order, and each card has buttons that move
+                // it. Placed at their recorded times, the order changes
+                // nothing, so the list stays as sorted.
+                let tl_arrangement = state.timeline.arrangement().get();
+                let tl_order: Vec<usize> = if state.timeline.active().with(|t| t.is_some())
+                    && !matches!(tl_arrangement, crate::project::Arrangement::RecordingTime)
+                {
+                    state.timeline.clip_file_indices().get()
+                } else {
+                    Vec::new()
+                };
+                let sorted_indices: Vec<usize> = tl_order
+                    .iter()
+                    .copied()
+                    .filter(|i| sorted_indices.contains(i))
+                    .chain(sorted_indices.iter().copied().filter(|i| !tl_order.contains(i)))
+                    .collect();
+                // Tooltips say what the move does: along the timeline, or up
+                // and down the rows. The arrows point up and down, the way
+                // the card moves in this list.
+                let (move_up_tip, move_down_tip) =
+                    if matches!(tl_arrangement, crate::project::Arrangement::Together) {
+                        ("Move up", "Move down")
+                    } else {
+                        ("Play earlier", "Play later")
+                    };
+
                 let mut items: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
                 for (_pos, &i) in sorted_indices.iter().enumerate() {
                     {
@@ -336,6 +365,10 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         let seq_badge = gi.sequence.clone();
                         let is_streaming = streaming_source::is_streaming(f.audio.source.as_ref());
                         let file_loading_id = f.loading_id;
+                        // This file's place on the open timeline, when its
+                        // files have an order.
+                        let tl_pos = tl_order.iter().position(|&x| x == i);
+                        let tl_last = tl_order.len().saturating_sub(1);
                         let is_active = move || current_idx.get() == Some(i);
                         let is_selected = move || state.timeline.selected_file_indices().with(|sel| sel.contains(&i));
 
@@ -543,6 +576,27 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                         }}
                                         {name}
                                     </div>
+                                    {tl_pos.map(|pos| view! {
+                                        <span class="timeline-order-num"
+                                            title="Place on the timeline"
+                                        >{pos + 1}</span>
+                                        <button class="timeline-order-btn" title=move_up_tip
+                                            aria-label=move_up_tip
+                                            disabled={pos == 0}
+                                            on:click=move |ev: MouseEvent| {
+                                                ev.stop_propagation();
+                                                crate::timeline::move_clip(&state, pos, pos.saturating_sub(1));
+                                            }
+                                        ><Icon kind=Icon::ArrowUp /></button>
+                                        <button class="timeline-order-btn" title=move_down_tip
+                                            aria-label=move_down_tip
+                                            disabled={pos == tl_last}
+                                            on:click=move |ev: MouseEvent| {
+                                                ev.stop_propagation();
+                                                crate::timeline::move_clip(&state, pos, pos + 1);
+                                            }
+                                        ><Icon kind=Icon::ArrowDown /></button>
+                                    })}
                                     <button class="file-item-close" on:click=on_close>"×"</button>
                                 </div>
                                 <div class="file-item-info">
@@ -645,46 +699,6 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     t.as_ref().map(|tv| (tv.segments.len(), tv.total_duration_secs))
                                         .unwrap_or((0, 0.0))
                                 });
-                                // The files in order: play order when they are
-                                // placed one after another, top to bottom
-                                // when each has a row. Not shown at their
-                                // recorded times, where the order changes
-                                // nothing.
-                                let arrangement = state.timeline.arrangement().get();
-                                let in_turn = !matches!(arrangement, crate::project::Arrangement::RecordingTime);
-                                // The arrows point up and down, the way a
-                                // row moves in this list. A fresh reviewer
-                                // found left and right arrows on a vertical
-                                // list confusing.
-                                let (earlier, later) =
-                                    if matches!(arrangement, crate::project::Arrangement::Together) {
-                                        ("Move up", "Move down")
-                                    } else {
-                                        ("Play earlier", "Play later")
-                                    };
-                                let (earlier_icon, later_icon) = (Icon::ArrowUp, Icon::ArrowDown);
-                                let order = state.timeline.clip_file_indices().get();
-                                let last = order.len().saturating_sub(1);
-                                let rows: Vec<_> = order.iter().enumerate().map(|(pos, &fi)| {
-                                    let name = file_vec.get(fi).map(|f| f.name.clone()).unwrap_or_default();
-                                    let title = name.clone();
-                                    view! {
-                                        <li class="timeline-order-row">
-                                            <span class="timeline-order-num">{pos + 1}</span>
-                                            <span class="timeline-order-name" title=title>{name}</span>
-                                            <button class="timeline-order-btn" title=earlier
-                                                aria-label=earlier
-                                                disabled={pos == 0}
-                                                on:click=move |_| crate::timeline::move_clip(&state, pos, pos.saturating_sub(1))
-                                            ><Icon kind=earlier_icon /></button>
-                                            <button class="timeline-order-btn" title=later
-                                                aria-label=later
-                                                disabled={pos == last}
-                                                on:click=move |_| crate::timeline::move_clip(&state, pos, pos + 1)
-                                            ><Icon kind=later_icon /></button>
-                                        </li>
-                                    }
-                                }).collect();
                                 view! {
                                     <div class="timeline-banner">
                                         <span class="timeline-banner-label">
@@ -694,9 +708,6 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                             title="Exit timeline view"
                                         >"\u{00D7}"</button>
                                     </div>
-                                    {in_turn.then(|| view! {
-                                        <ol class="timeline-order">{rows}</ol>
-                                    })}
                                 }
                             })}
                             {(!no_files).then(|| view! {

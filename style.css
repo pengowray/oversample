@@ -2703,35 +2703,35 @@ a.open-link-btn {
     color: #f88;
 }
 
-/* The open timeline's files in order, under the banner. Each row has two
-   buttons that move the file one place up or down the list. */
-.timeline-order {
-    list-style: none;
-    margin: 0 0 6px;
-    padding: 0;
-    font-size: 11px;
-}
-
-.timeline-order-row {
-    display: grid;
-    grid-template-columns: 18px minmax(0, 1fr) 24px 24px;
+/* A file card of the open timeline shows its place on the timeline and two
+   buttons that move it one place up or down the list. */
+/* In the Project tab the name takes the free width, so the place number
+   and the move buttons sit at the right of the row. */
+.project-file-name {
+    display: flex;
     align-items: center;
     gap: 2px;
-    padding: 1px 8px;
 }
 
-.timeline-order-num {
-    color: #888;
-    font-variant-numeric: tabular-nums;
-}
-
-.timeline-order-name {
+.project-file-name-text {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
+.timeline-order-num {
+    flex-shrink: 0;
+    min-width: 14px;
+    text-align: right;
+    font-size: 11px;
+    color: #9a9a9a;
+    font-variant-numeric: tabular-nums;
+}
+
 .timeline-order-btn {
+    flex-shrink: 0;
     width: 24px;
     height: 24px;
     padding: 0;
