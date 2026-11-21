@@ -222,7 +222,7 @@ fn strip_window_at(state: AppState, px_y: f64, t: f64, reach: f64) -> Option<f64
 /// The bird sound box drawn at `t` seconds and `freq` Hz, while the boxes
 /// are on the spectrogram.
 fn bird_box_at(state: AppState, t: f64, freq: f64) -> Option<(f64, f64)> {
-    if !state.call_detection.overlay_enabled().get_untracked() {
+    if !state.call_detection.classifier_boxes().get_untracked() {
         return None;
     }
     crate::classifier::boxes::box_at(t, freq)
