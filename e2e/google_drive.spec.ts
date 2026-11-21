@@ -297,12 +297,14 @@ test.describe("Google Drive copies", () => {
     await page.waitForTimeout(7_000);
     expect(drive.uploads).toEqual([]);
     expect(inStore(await savedFiles(page), ACCOUNT)).toHaveLength(0);
-    // The line says where they are, with no Drive row.
+    // The line says where they are, and that they are not in Google Drive.
     const show = page.locator('button[title="Show info panel"]');
     if (await show.isVisible()) await show.click();
     await page.locator(".sidebar-tab-dropdown").click();
     await page.locator(".sidebar-tab-option", { hasText: "Annotations" }).dispatchEvent("mousedown");
-    await expect(page.locator(".right-sidebar .annotation-storage")).toHaveText("Saved in this browser");
+    const line = page.locator(".right-sidebar .annotation-storage");
+    await expect(line.locator(".annotation-storage-row")).toHaveText("Saved in this browser");
+    await expect(line.locator(".annotation-storage-drive")).toHaveText("Not in Google Drive");
   });
 
   test("first sign-in with two files in the account's cache makes one set of folders", async ({ page }) => {
