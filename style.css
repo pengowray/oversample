@@ -4,6 +4,31 @@
     box-sizing: border-box;
 }
 
+/* The app is dark only: the browser's own parts (scrollbars, the open list
+   of a dropdown) are drawn dark too. */
+html {
+    color-scheme: dark;
+}
+
+/* Dropdowns are drawn by the page, with an arrow of our own. The Linux
+   desktop app's web view (WebKitGTK) otherwise draws its own white box and
+   keeps our light text, which cannot be read. The selector includes :not()
+   so the arrow's space wins over each class's own padding. */
+select:not([multiple]) {
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23bbb' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    padding-right: 20px;
+}
+/* The open list, where the web view lets the page colour it. */
+select option,
+select optgroup {
+    background: #222;
+    color: #ddd;
+}
+
 html, body {
     height: 100%;
     height: 100dvh;
@@ -9419,7 +9444,7 @@ button.canvas-overflow-action-btn.disabled {
 .xc-names-menu .xc-select {
     max-width: 220px;
     min-height: 24px;   /* WCAG 2.2 minimum target size */
-    padding: 2px 6px;
+    padding: 2px 20px 2px 6px; /* room for the arrow (select:not([multiple])) */
     font-size: 11px;
 }
 

@@ -31,20 +31,3 @@ pub fn http_client() -> reqwest::Client {
 /// The User-Agent of every request from [`http_client`].
 #[cfg(feature = "http")]
 pub const USER_AGENT: &str = "Oversample";
-
-#[cfg(all(test, feature = "http"))]
-mod zz_tmp {
-    #[test]
-    fn zenodo() {
-        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(go());
-    }
-    async fn go() {
-        let r = super::http_client()
-            .get("https://zenodo.org/api/records/24362980/files/BirdNET%2B_V3.0_Global_12K_FP16_pruned.onnx/content")
-            .header("Range", "bytes=0-99")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(r.status().as_u16(), 206);
-    }
-}
