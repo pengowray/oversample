@@ -325,3 +325,47 @@ impl BatProject {
         idx
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn definition(arrangement: Option<Arrangement>) -> TimelineDefinition {
+        TimelineDefinition {
+            id: "t1".into(),
+            entries: vec![TimelineEntry {
+                file_index: 0,
+                start_epoch_ms: 0.0,
+                duration_secs: 2.0,
+                multitrack_group_id: None,
+            }],
+            arrangement,
+            label: None,
+        }
+    }
+
+    #[test]
+    fn a_timeline_keeps_its_arrangement_when_saved_and_loaded() {
+        for arrangement in [
+            Arrangement::RecordingTime,
+            Arrangement::InTurn { gap_secs: 0.0 },
+            Arrangement::InTurn { gap_secs: 1.5 },
+        ] {
+            let yaml = yaml_serde::to_string(&definition(Some(arrangement))).unwrap();
+            let loaded: TimelineDefinition = yaml_serde::from_str(&yaml).unwrap();
+            assert_eq!(loaded.arrangement, Some(arrangement), "{yaml}");
+        }
+    }
+
+    #[test]
+    fn a_timeline_saved_before_arrangements_existed_loads_without_one() {
+        let yaml =
+            "id: t1\nentries:\n- file_index: 0\n  start_epoch_ms: 0.0\n  duration_secs: 2.0\n";
+        let loaded: TimelineDefinition = yaml_serde::from_str(yaml).unwrap();
+        assert_eq!(loaded.arrangement, None);
+        assert_eq!(loaded.entries.len(), 1);
+        // And a definition without one writes no arrangement key.
+        let written = yaml_serde::to_string(&definition(None)).unwrap();
+        assert!(!written.contains("arrangement"), "{written}");
+    }
+}

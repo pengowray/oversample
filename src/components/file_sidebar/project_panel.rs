@@ -536,7 +536,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
             return;
         };
         // Save to the project, in the order the timeline plays the files.
-        let order = state.timeline.selected_file_indices().get_untracked();
+        let order = state.timeline.clip_file_indices().get_untracked();
         let files = state.library.files().get_untracked();
         let id = crate::annotations::generate_uuid();
         let mut saved = false;

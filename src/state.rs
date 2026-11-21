@@ -2083,6 +2083,10 @@ pub struct TimelineState {
     pub active: Option<crate::timeline::TimelineView>,
     /// Currently selected multitrack track label (None = primary/default).
     pub active_track: Option<String>,
+    /// The files on the open timeline (indices into the loaded files).
+    /// Placed one after another, they play in this order. Separate from
+    /// `selected_file_indices`, which a Ctrl-click in the Files list changes.
+    pub clip_file_indices: Vec<usize>,
     /// How the open timeline's clips are placed.
     pub arrangement: crate::project::Arrangement,
     /// `TimelineDefinition::id` of the open timeline in the project.
@@ -3184,6 +3188,7 @@ impl AppState {
                 selected_file_indices: Vec::new(),
                 active: None,
                 active_track: None,
+                clip_file_indices: Vec::new(),
                 arrangement: crate::project::Arrangement::RecordingTime,
                 active_definition_id: None,
                 show_clock_time: false,

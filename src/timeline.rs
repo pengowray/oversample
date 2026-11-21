@@ -618,7 +618,7 @@ pub fn track_short_name(label: &str) -> String {
 /// and the arrangement. Call after the file list changes. Clears the chosen
 /// channel when the timeline no longer offers it.
 pub fn rebuild_active(state: &AppState) {
-    let sel = state.timeline.selected_file_indices().get_untracked();
+    let sel = state.timeline.clip_file_indices().get_untracked();
     let track = state.timeline.active_track().get_untracked();
     let arrangement = state.timeline.arrangement().get_untracked();
     let rebuilt = state.library.files().with_untracked(|files| {
@@ -651,7 +651,12 @@ pub fn open(
         TimelineView::suggested_arrangement(&file_indices, &files)
     });
     let tv = TimelineView::from_files(&file_indices, &files, None, arrangement)?;
-    state.timeline.selected_file_indices().set(file_indices);
+    // The Files list marks the timeline's files as selected.
+    state
+        .timeline
+        .selected_file_indices()
+        .set(file_indices.clone());
+    state.timeline.clip_file_indices().set(file_indices);
     state.timeline.arrangement().set(arrangement);
     state.timeline.active_definition_id().set(definition_id);
     state.timeline.active_track().set(None);
@@ -668,6 +673,7 @@ pub fn close(state: &AppState) {
     state.timeline.active_track().set(None);
     state.timeline.active_definition_id().set(None);
     state.timeline.selected_file_indices().set(Vec::new());
+    state.timeline.clip_file_indices().set(Vec::new());
 }
 
 /// Zoom and scroll so the whole timeline fits the spectrogram.

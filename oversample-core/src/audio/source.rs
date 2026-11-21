@@ -38,19 +38,23 @@ impl std::fmt::Debug for TimelineAudioSource {
 }
 
 impl TimelineAudioSource {
-    /// A timeline of `(source, start in seconds, duration in seconds)` clips
-    /// at the highest sample rate among them. A clip with a lower rate is
-    /// resampled up to it, so clips with different rates play on one
-    /// timeline. `None` when there are no clips.
-    pub fn at_highest_rate(segments: Vec<(Arc<dyn AudioSource>, f64, f64)>) -> Option<Self> {
-        let sample_rate = segments.iter().map(|s| s.0.sample_rate()).max()?;
+    /// A timeline of `(source, sample rate, start in seconds, duration in
+    /// seconds)` clips at the highest sample rate among them. A clip with a
+    /// lower rate is resampled up to it, so clips with different rates play
+    /// on one timeline. `None` when there are no clips.
+    ///
+    /// Each clip's rate is passed in, not read from its source: a file read
+    /// at a corrected rate (time expansion) keeps the stored rate in its
+    /// source.
+    pub fn at_highest_rate(segments: Vec<(Arc<dyn AudioSource>, u32, f64, f64)>) -> Option<Self> {
+        let sample_rate = segments.iter().map(|s| s.1).max()?;
         let segments = segments
             .into_iter()
-            .map(|(source, start, duration)| {
-                let source: Arc<dyn AudioSource> = if source.sample_rate() == sample_rate {
+            .map(|(source, rate, start, duration)| {
+                let source: Arc<dyn AudioSource> = if rate == sample_rate {
                     source
                 } else {
-                    Arc::new(ResampledSource::new(source, sample_rate))
+                    Arc::new(ResampledSource::new(source, rate, sample_rate))
                 };
                 (source, start, duration)
             })
@@ -153,17 +157,23 @@ const RESAMPLE_HALF_TAPS: i64 = 12;
 /// interpolation), so nothing is stored.
 pub struct ResampledSource {
     inner: Arc<dyn AudioSource>,
+    /// The rate `inner`'s samples are played at. It can differ from
+    /// `inner.sample_rate()`: see [`TimelineAudioSource::at_highest_rate`].
+    from_rate: u32,
     sample_rate: u32,
     total_samples: u64,
 }
 
 impl ResampledSource {
-    pub fn new(inner: Arc<dyn AudioSource>, sample_rate: u32) -> Self {
+    /// `inner`, whose samples are played at `from_rate`, read at `sample_rate`.
+    pub fn new(inner: Arc<dyn AudioSource>, from_rate: u32, sample_rate: u32) -> Self {
+        let from_rate = from_rate.max(1);
         let total_samples = (inner.total_samples() as f64 * f64::from(sample_rate)
-            / f64::from(inner.sample_rate().max(1)))
+            / f64::from(from_rate))
         .round() as u64;
         Self {
             inner,
+            from_rate,
             sample_rate,
             total_samples,
         }
@@ -189,7 +199,7 @@ impl AudioSource for ResampledSource {
         }
         let n = buf.len().min((self.total_samples - start) as usize);
         // Input samples per output sample.
-        let step = f64::from(self.inner.sample_rate()) / f64::from(self.sample_rate.max(1));
+        let step = f64::from(self.from_rate) / f64::from(self.sample_rate.max(1));
         // Reading at a lower rate needs a lower cutoff, and so a wider filter.
         let cutoff = (1.0 / step).min(1.0);
         let half = (RESAMPLE_HALF_TAPS as f64 / cutoff).ceil() as i64;

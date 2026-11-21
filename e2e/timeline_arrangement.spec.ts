@@ -83,7 +83,7 @@ function drawnTone(page: Page, atSecs: number, totalSecs: number, nyquist: numbe
     );
 }
 
-async function openTimeline(page: Page, clips: Clip[]) {
+async function openTimeline(page: Page, clips: Clip[]): Promise<string[]> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oversample-arrange-"));
   const paths = clips.map((f, i) => {
     const p = path.join(dir, f.name);
@@ -107,6 +107,7 @@ async function openTimeline(page: Page, clips: Clip[]) {
   for (const f of reversed.slice(1)) await row(f.name).click({ modifiers: ["Control"] });
   await page.getByRole("button", { name: "Create Timeline" }).click();
   await expect.poll(async () => (await snapshot(page)).timelineFiles?.length).toBe(clips.length);
+  return paths;
 }
 
 const chip = (page: Page) =>
@@ -210,6 +211,40 @@ test.describe("timeline arrangement", () => {
       .toBeLessThan(6);
 
     expect(errors).toEqual([]);
+  });
+
+  test("a saved project opens its timeline with the same arrangement after a reload", async ({
+    page,
+  }) => {
+    test.setTimeout(240_000);
+    const paths = await openTimeline(page, SAME_DATE);
+    await choose(page, "One after another, 2\u00a0s pause");
+    await expect.poll(async () => (await snapshot(page)).timelineStarts).toEqual([0, 4, 9]);
+    // Save the project with the timeline in it. The project panel is open.
+    const save = page.getByRole("button", { name: "Save", exact: true });
+    if (await save.isEnabled()) await save.click();
+    await expect(save).toBeDisabled({ timeout: 20_000 });
+    await expect(page.locator(".project-unsaved")).toHaveCount(0);
+    await page.waitForTimeout(1500);
+
+    await page.reload();
+    // The project is loaded before its files are opened.
+    await page.getByRole("button", { name: /^Project/ }).first().click();
+    await page.getByRole("button", { name: "Load project" }).click();
+    await page.locator(".project-list-item").first().click();
+    await expect(page.locator(".project-file-item.missing")).toHaveCount(3);
+    await page.locator(".sidebar-header-label", { hasText: "Files" }).click();
+    await page.locator('input[type="file"][accept*=".wav"]').first().setInputFiles(paths);
+    await expect(page.locator(".file-item:not(.loading)")).toHaveCount(3, { timeout: 60_000 });
+    await page.getByRole("button", { name: /^Project/ }).first().click();
+    await expect(page.locator(".project-file-item.missing")).toHaveCount(0, { timeout: 30_000 });
+
+    await page.locator(".project-timeline-item").click();
+    await expect
+      .poll(async () => (await snapshot(page)).timelineFiles)
+      .toEqual(["alpha.wav", "bravo.wav", "charlie.wav"]);
+    expect((await snapshot(page)).timelineStarts).toEqual([0, 4, 9]);
+    await expect(chip(page).locator(".layer-btn-value")).toHaveText("2\u00a0s pause");
   });
 
   test("files recorded days apart play one after another", async ({ page }) => {

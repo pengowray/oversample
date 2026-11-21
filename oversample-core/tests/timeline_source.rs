@@ -41,9 +41,9 @@ fn clips_play_one_after_another_with_a_pause_between() {
     let rate = 48_000;
     // 1 s at 0.2, then 0.5 s of silence, then 1 s at 0.6, then 1 s at 0.4.
     let timeline = TimelineAudioSource::at_highest_rate(vec![
-        (tone(rate, 1.0, 1000.0, 0.2), 0.0, 1.0),
-        (tone(rate, 1.0, 1000.0, 0.6), 1.5, 1.0),
-        (tone(rate, 1.0, 1000.0, 0.4), 2.5, 1.0),
+        (tone(rate, 1.0, 1000.0, 0.2), rate, 0.0, 1.0),
+        (tone(rate, 1.0, 1000.0, 0.6), rate, 1.5, 1.0),
+        (tone(rate, 1.0, 1000.0, 0.4), rate, 2.5, 1.0),
     ])
     .unwrap();
     assert_eq!(timeline.sample_rate(), rate);
@@ -68,8 +68,8 @@ fn clips_play_one_after_another_with_a_pause_between() {
 fn a_clip_with_a_lower_rate_is_resampled_to_the_highest_rate() {
     // A 5 kHz tone at 44.1 kHz after a 20 kHz tone at 192 kHz.
     let timeline = TimelineAudioSource::at_highest_rate(vec![
-        (tone(192_000, 1.0, 20_000.0, 0.5), 0.0, 1.0),
-        (tone(44_100, 1.0, 5_000.0, 0.5), 1.0, 1.0),
+        (tone(192_000, 1.0, 20_000.0, 0.5), 192_000, 0.0, 1.0),
+        (tone(44_100, 1.0, 5_000.0, 0.5), 44_100, 1.0, 1.0),
     ])
     .unwrap();
     assert_eq!(timeline.sample_rate(), 192_000);
@@ -89,7 +89,7 @@ fn a_clip_with_a_lower_rate_is_resampled_to_the_highest_rate() {
 
 #[test]
 fn resampled_reads_in_pieces_match_one_read() {
-    let source = ResampledSource::new(tone(44_100, 0.5, 3_000.0, 0.8), 192_000);
+    let source = ResampledSource::new(tone(44_100, 0.5, 3_000.0, 0.8), 44_100, 192_000);
     let whole = source.read_region(ChannelView::MonoMix, 0, source.total_samples() as usize);
     assert_eq!(whole.len() as u64, source.total_samples());
     let mut pieces = Vec::new();
@@ -113,4 +113,21 @@ fn resampled_reads_in_pieces_match_one_read() {
             .len(),
         0
     );
+}
+
+#[test]
+fn a_clip_read_at_a_corrected_rate_plays_at_that_rate() {
+    // A x10 time-expanded recording: stored at 38.4 kHz, read at 384 kHz.
+    // Its 2 kHz stored tone is a 20 kHz tone, and its 1 s is 0.1 s.
+    let timeline = TimelineAudioSource::at_highest_rate(vec![
+        (tone(38_400, 1.0, 2_000.0, 0.5), 384_000, 0.0, 0.1),
+        (tone(192_000, 1.0, 30_000.0, 0.5), 192_000, 0.1, 1.0),
+    ])
+    .unwrap();
+    assert_eq!(timeline.sample_rate(), 384_000);
+    assert_eq!(timeline.total_samples(), 38_400 + 384_000);
+    let first = timeline.read_region(ChannelView::MonoMix, 0, 38_400);
+    assert!((tone_level(&first, 384_000, 20_000.0) - 0.5).abs() < 0.01);
+    let second = timeline.read_region(ChannelView::MonoMix, 38_400 + 96_000, 96_000);
+    assert!((tone_level(&second, 384_000, 30_000.0) - 0.5).abs() < 0.01);
 }

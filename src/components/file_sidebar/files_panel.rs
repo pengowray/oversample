@@ -50,14 +50,18 @@ pub(crate) fn reconcile_after_file_removed(state: &AppState, removed: usize) {
         .library
         .per_file_view()
         .update(|m| m.retain(|id, _| loaded.contains(id)));
-    state.timeline.selected_file_indices().update(|sel| {
+    // The selection and the open timeline's files both hold file indices.
+    // The order of the timeline's files is kept: it is their play order.
+    let renumber = |sel: &mut Vec<usize>| {
         sel.retain(|&x| x != removed);
         for x in sel.iter_mut() {
             if *x > removed {
                 *x -= 1;
             }
         }
-    });
+    };
+    state.timeline.selected_file_indices().update(renumber);
+    state.timeline.clip_file_indices().update(renumber);
     if state.timeline.active().get_untracked().is_some() {
         crate::timeline::rebuild_active(state);
     }

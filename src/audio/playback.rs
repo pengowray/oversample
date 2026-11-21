@@ -66,6 +66,9 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
             timeline_file_ids.push(file.id);
             segments.push((
                 file.audio.source.clone(),
+                // The rate the file is read at, which a time-expansion
+                // correction changes. The source keeps the stored rate.
+                file.audio.sample_rate,
                 seg.timeline_offset_secs,
                 seg.duration_secs,
             ));
