@@ -195,7 +195,7 @@ test.describe("timeline channel switch", () => {
     fs.writeFileSync(late, toneWav(TONE[2], 2000));
     const end = Date.UTC(2026, 3, 1, 20, 0, 0) / 1000 + 10 + SECS;
     fs.utimesSync(late, end, end);
-    await page.getByRole("button", { name: /^Files/ }).first().click();
+    await page.locator(".sidebar-header-label", { hasText: "Files" }).click();
     await page.locator('input[type="file"][accept*=".wav"]').first().setInputFiles(late);
 
     await expect.poll(() => drawn(page), { timeout: 30_000 }).toEqual([2, 2, 2]);

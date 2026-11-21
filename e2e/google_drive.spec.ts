@@ -51,7 +51,7 @@ const snap = (page: Page): Promise<Snap> =>
 
 async function open(page: Page, name: string, wav: Buffer) {
   // The file input is in the Files tab.
-  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await page.locator(".sidebar-header-label", { hasText: "Files" }).click();
   const files = page.locator(".file-item", { hasText: name });
   await page
     .locator('input[type="file"][accept*=".wav"]')

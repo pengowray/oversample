@@ -53,7 +53,7 @@ async function openSettings(page: Page) {
 }
 
 async function openFileAndAnnotate(page: Page, name: string) {
-  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await page.locator(".sidebar-header-label", { hasText: "Files" }).click();
   await page
     .locator('input[type="file"][accept*=".wav"]')
     .first()
