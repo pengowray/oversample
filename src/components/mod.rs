@@ -42,6 +42,7 @@ pub mod slider_row;
 pub mod species_panel;
 pub mod spectrogram;
 pub mod spectrogram_events;
+pub mod spectrogram_timeline;
 pub mod surface_3d;
 pub mod switch_button;
 pub mod tool_button;
