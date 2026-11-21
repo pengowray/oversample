@@ -400,7 +400,11 @@ pub(super) fn FilesPanel() -> impl IntoView {
                         };
 
                         let on_click = move |ev: MouseEvent| {
-                            let ctrl = ev.ctrl_key() || ev.meta_key();
+                            // In Select mode every press selects, as a
+                            // Ctrl-click does.
+                            let ctrl = ev.ctrl_key()
+                                || ev.meta_key()
+                                || state.timeline.selecting().get_untracked();
                             let shift = ev.shift_key();
 
                             if ctrl {
@@ -647,21 +651,30 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             } else {
                                 None
                             }}
-                            // Two or more files selected and no timeline
-                            // open: one press makes a timeline of them.
+                            // Files are being selected and no timeline is
+                            // open: say how many, and with two or more, one
+                            // press makes a timeline of them.
                             {move || {
                                 let count = state.timeline.selected_file_indices().with(|s| s.len());
                                 let open = state.timeline.active().with(|t| t.is_some());
-                                (count >= 2 && !open).then(|| view! {
+                                let selecting = state.timeline.selecting().get();
+                                (!open && (count >= 2 || selecting)).then(|| view! {
                                     <div class="timeline-create-bar">
-                                        <span>{format!("{count} files selected")}</span>
-                                        <button class="timeline-create-btn"
-                                            title="Put the selected files on one timeline"
-                                            on:click=move |_| {
-                                                let sel = state.timeline.selected_file_indices().get_untracked();
-                                                crate::timeline::create(&state, sel);
-                                            }
-                                        >"Create Timeline"</button>
+                                        <span>{match count {
+                                            0 => "Select 2 or more files".to_string(),
+                                            1 => "1 file selected".to_string(),
+                                            n => format!("{n} files selected"),
+                                        }}</span>
+                                        {(count >= 2).then(|| view! {
+                                            <button class="timeline-create-btn"
+                                                title="Put the selected files on one timeline"
+                                                on:click=move |_| {
+                                                    let sel = state.timeline.selected_file_indices().get_untracked();
+                                                    state.timeline.selecting().set(false);
+                                                    crate::timeline::create(&state, sel);
+                                                }
+                                            >"Create Timeline"</button>
+                                        })}
                                     </div>
                                 })
                             }}
@@ -880,6 +893,7 @@ fn SortBar(sort_mode: FileSortMode) -> impl IntoView {
         sort_signal.set(mode);
     };
 
+    let selecting = state.timeline.selecting();
     let show_previews = state.library.show_previews();
     let on_toggle_previews = move |_: web_sys::MouseEvent| {
         show_previews.update(|v| *v = !*v);
@@ -891,6 +905,21 @@ fn SortBar(sort_mode: FileSortMode) -> impl IntoView {
             <select class="file-sort-select" on:change=on_change>
                 {options}
             </select>
+            // Select mode: a press on a file card selects it. Turning the
+            // mode off clears the selection, unless a timeline was made
+            // from it.
+            <button
+                class=move || if selecting.get() { "file-select-toggle active" } else { "file-select-toggle" }
+                title="Select several files, to put them on one timeline"
+                aria-pressed=move || if selecting.get() { "true" } else { "false" }
+                on:click=move |_| {
+                    let on = !selecting.get_untracked();
+                    selecting.set(on);
+                    if !on && state.timeline.active().with_untracked(|t| t.is_none()) {
+                        state.timeline.selected_file_indices().set(Vec::new());
+                    }
+                }
+            >"Select"</button>
             <button
                 class=move || if show_previews.get() { "file-preview-toggle active" } else { "file-preview-toggle" }
                 title=move || if show_previews.get() { "Hide previews" } else { "Show previews" }

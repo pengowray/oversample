@@ -338,10 +338,26 @@ test.describe("timeline arrangement", () => {
     await page.goto("/");
     await page.locator('input[type="file"][accept*=".wav"]').first().setInputFiles(paths);
     await expect(page.locator(".file-item:not(.loading)")).toHaveCount(3, { timeout: 60_000 });
-    for (const f of SAME_DATE) {
-      await page.locator(".file-item", { hasText: f.name }).click({ modifiers: ["Control"] });
+    // Select mode: a plain press on a card selects it, so this works on a
+    // phone too.
+    const select = page.getByRole("button", { name: "Select", exact: true });
+    await select.click();
+    await expect(select).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".timeline-create-bar")).toHaveText("Select 2 or more files");
+    await card(page, "alpha.wav").click();
+    await expect(page.locator(".timeline-create-bar")).toContainText("1 file selected");
+    await card(page, "bravo.wav").click();
+    await card(page, "charlie.wav").click();
+    await expect(page.locator(".timeline-create-bar")).toContainText("3 files selected");
+    // A second press on a card takes it out again.
+    await card(page, "charlie.wav").click();
+    await expect(page.locator(".timeline-create-bar")).toContainText("2 files selected");
+    await card(page, "charlie.wav").click();
+    if (process.env.ARRANGE_OUT) {
+      await page.screenshot({ path: `${process.env.ARRANGE_OUT}/select-mode.png` });
     }
     await page.getByRole("button", { name: "Create Timeline" }).click();
+    await expect(select).toHaveAttribute("aria-pressed", "false");
     await expect
       .poll(async () => (await snapshot(page)).timelineFiles)
       .toEqual(["alpha.wav", "bravo.wav", "charlie.wav"]);
@@ -528,6 +544,8 @@ test.describe("timeline arrangement", () => {
       .poll(async () => (await snapshot(page)).timelineRows)
       .toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     await expect(page.locator(".timeline-row-label")).toHaveCount(8);
+    // Eight rows are short, so their labels are the see-through kind.
+    await expect(page.locator(".timeline-row-label.compact")).toHaveCount(8);
     await page.waitForTimeout(3000);
     const out = process.env.ARRANGE_OUT;
     if (out) {

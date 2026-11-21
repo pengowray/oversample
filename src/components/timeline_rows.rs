@@ -27,6 +27,15 @@ pub fn TimelineRowLabels() -> impl IntoView {
             return None;
         }
         let row_count = tl.row_count;
+        // With five or more rows a row is short, and its label would cover
+        // the start of the strip: those rows get the see-through label
+        // (see style.css).
+        let compact = row_count >= 5;
+        let label_class = if compact {
+            "timeline-row-label compact"
+        } else {
+            "timeline-row-label"
+        };
         let labels: Vec<_> = (0..row_count)
             .map(|row| {
                 let names: Vec<String> = state.library.files().with(|files| {
@@ -41,7 +50,7 @@ pub fn TimelineRowLabels() -> impl IntoView {
                 let top = format!("{}%", row as f64 * 100.0 / row_count as f64);
                 let is_only = move || state.timeline.only_row().get() == Some(row);
                 view! {
-                    <div class="timeline-row-label" style:top=top>
+                    <div class=label_class style:top=top>
                         <span class="timeline-row-name" title=title>{name}</span>
                         <button
                             class=move || if is_only() { "timeline-row-solo on" } else { "timeline-row-solo" }

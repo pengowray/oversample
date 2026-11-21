@@ -2333,6 +2333,36 @@ a.open-link-btn {
     border-color: #557;
 }
 
+/* Select mode toggle in the sort bar. Filled while the mode is on, like
+   the preview toggle beside it. It takes the free space's right end, so the
+   preview toggle follows it with no auto margin of its own. */
+.file-select-toggle {
+    margin-left: auto;
+    min-height: 24px;
+    padding: 2px 8px;
+    background: none;
+    border: 1px solid #444;
+    border-radius: 3px;
+    color: #aaa;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.file-select-toggle:hover {
+    border-color: #666;
+    color: #ddd;
+}
+
+.file-select-toggle.active {
+    background: #2a5a8a;
+    border-color: #2a5a8a;
+    color: #fff;
+}
+
+.file-select-toggle + .file-preview-toggle {
+    margin-left: 0;
+}
+
 .file-preview-toggle {
     margin-left: auto;
     background: none;
@@ -2765,6 +2795,25 @@ a.open-link-btn {
     inset: 0;
     pointer-events: none;
     z-index: 3;
+}
+
+/* With five or more rows a label would cover the start of its strip, so
+   those rows get a see-through label that turns solid when the pointer is
+   on it or a button in it has focus (`.compact`, set from the row count). */
+.timeline-row-label.compact {
+    margin-top: 1px;
+    background: rgba(0, 0, 0, 0.35);
+    opacity: 0.75;
+}
+
+.timeline-row-label.compact .timeline-row-solo:not(.on) {
+    background: rgba(42, 42, 42, 0.6);
+}
+
+.timeline-row-label.compact:hover,
+.timeline-row-label.compact:focus-within {
+    background: rgba(0, 0, 0, 0.85);
+    opacity: 1;
 }
 
 .timeline-row-label {

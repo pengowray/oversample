@@ -2083,6 +2083,10 @@ pub struct TimelineState {
     pub active: Option<crate::timeline::TimelineView>,
     /// Currently selected multitrack track label (None = primary/default).
     pub active_track: Option<String>,
+    /// The Files tab's Select mode: a press on a file card selects it
+    /// instead of opening it, as a Ctrl-click does. For phones and for
+    /// anyone who does not know the Ctrl-click.
+    pub selecting: bool,
     /// The files on the open timeline (indices into the loaded files).
     /// Placed one after another, they play in this order. Separate from
     /// `selected_file_indices`, which a Ctrl-click in the Files list changes.
@@ -3191,6 +3195,7 @@ impl AppState {
                 selected_file_indices: Vec::new(),
                 active: None,
                 active_track: None,
+                selecting: false,
                 clip_file_indices: Vec::new(),
                 only_row: None,
                 arrangement: crate::project::Arrangement::RecordingTime,
