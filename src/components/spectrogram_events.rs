@@ -205,7 +205,7 @@ const TAP_SLOP_TOUCH: f64 = 8.0;
 /// start, which is how the selection names it.
 fn strip_window_at(state: AppState, px_y: f64, t: f64, reach: f64) -> Option<f64> {
     use crate::classifier::summary::{window_kind, WindowKind};
-    if !(0.0..reach).contains(&px_y) || !state.call_detection.overlay_enabled().get_untracked() {
+    if !(0.0..reach).contains(&px_y) || !state.call_detection.classifier_boxes().get_untracked() {
         return None;
     }
     let method = state.call_detection.method().get_untracked().classifier()?;

@@ -850,11 +850,11 @@ pub fn OverviewToolbar() -> impl IntoView {
 }
 
 /// What the method picked in the Call detection tab found in the current
-/// file, as marks for the overview, while that tab's "Show overlay" is on.
+/// file, as marks for the overview, while that method's "Boxes on the spectrogram" is on.
 /// Reactive: call in a `Memo`.
 fn detection_marks(state: AppState) -> Option<crate::canvas::overview_marks::OverviewMarks> {
     use crate::canvas::overview_marks::{classifier_marks, inbuilt_marks};
-    if !state.call_detection.overlay_enabled().get() {
+    if !state.boxes_on() {
         return None;
     }
     let file = state.current_file_id_tracked()?;

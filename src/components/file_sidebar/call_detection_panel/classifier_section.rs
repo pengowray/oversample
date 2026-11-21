@@ -251,7 +251,6 @@ pub(super) fn show_window(state: AppState, start_s: f64, end_s: f64) {
 /// all 11 are 1.1 MB),
 /// then analyse the current file with `step_secs` between window starts.
 fn analyse(state: AppState, file_id: u64, choice: ModelChoice, step_secs: f64) {
-    state.call_detection.overlay_enabled().set(true);
     state.call_detection.selected_window().set(None);
     if classifier::is_ready(state, choice) {
         classifier::run(state, file_id, choice, step_secs);
@@ -738,8 +737,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             ));
         }
         f.push(format!("Min confidence {:.2}", min_conf()));
-        // Before a run there are no boxes to show, and Analyse turns them on.
-        if !state.call_detection.overlay_enabled().get() && analysed.get() {
+        if !state.call_detection.classifier_boxes().get() {
             f.push("Boxes off".to_string());
         }
         if let Some(p) = place_fact(state, method, current_file.get()) {
@@ -781,8 +779,8 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                         <label class="setting-label">
                             <input
                                 type="checkbox"
-                                prop:checked=move || state.call_detection.overlay_enabled().get()
-                                on:change=move |ev| state.call_detection.overlay_enabled().set(event_target_checked(&ev))
+                                prop:checked=move || state.call_detection.classifier_boxes().get()
+                                on:change=move |ev| state.call_detection.classifier_boxes().set(event_target_checked(&ev))
                             />
                             " Boxes on the spectrogram"
                         </label>

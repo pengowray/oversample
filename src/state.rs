@@ -1805,7 +1805,11 @@ pub struct CallDetectionState {
     pub detected: Vec<crate::dsp::call_detect::DetectedCall>,
     /// Bat calls grouped into trains; indices point into `detected`.
     pub trains: Vec<crate::dsp::call_detect::CallTrain>,
+    /// "Boxes on the spectrogram" for the in-built detector.
     pub overlay_enabled: bool,
+    /// "Boxes on the spectrogram" for the classifiers (BirdNET, Perch,
+    /// BattyBirdNET). On from the start; session only.
+    pub classifier_boxes: bool,
     /// Index into `detected`.
     pub selected_index: Option<usize>,
     /// The file and settings being searched now, if a search is running.
@@ -3091,6 +3095,7 @@ impl AppState {
                 detected: Vec::new(),
                 trains: Vec::new(),
                 overlay_enabled: false,
+                classifier_boxes: true,
                 selected_index: None,
                 scanning: None,
                 scan_generation: 0,
@@ -3710,6 +3715,17 @@ impl AppState {
     pub fn current_file_id(&self) -> Option<u64> {
         let idx = self.library.current_index().get_untracked()?;
         self.file_id_at(idx)
+    }
+
+    /// True when "Boxes on the spectrogram" is on for the method picked in
+    /// the Call detection tab. The in-built detector and the classifiers
+    /// each have their own switch. Reactive.
+    pub fn boxes_on(&self) -> bool {
+        if self.call_detection.method().get().classifier().is_some() {
+            self.call_detection.classifier_boxes().get()
+        } else {
+            self.call_detection.overlay_enabled().get()
+        }
     }
 
     /// Reactive variant of [`current_file_id`] — tracks `files` and

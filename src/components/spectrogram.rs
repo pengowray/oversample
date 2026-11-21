@@ -384,11 +384,11 @@ pub fn Spectrogram() -> impl IntoView {
             // Detected calls are drawn by reference below; only subscribe here.
             state.call_detection.detected().with(|_| ());
             state.call_detection.trains().with(|_| ());
-            let detection_overlay = state.call_detection.overlay_enabled().get();
             let selected_detection = state.call_detection.selected_index().get();
             // The method picked in the Call detection tab decides which
             // results the overlay shows.
             let detection_method = state.call_detection.method().get();
+            let detection_overlay = state.boxes_on();
             let species_strip = species_strip(state, detection_method);
             let detection_file = state
                 .call_detection
