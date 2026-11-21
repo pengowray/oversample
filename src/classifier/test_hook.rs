@@ -271,7 +271,10 @@ fn seed_boxes(state: AppState, json: &str) -> String {
         raw,
         samples: v["samples"].as_u64(),
     };
-    state.classifier.boxes().update(|m| drop(m.insert(file_id, run)));
+    state
+        .classifier
+        .boxes()
+        .update(|m| drop(m.insert(file_id, run)));
     String::new()
 }
 

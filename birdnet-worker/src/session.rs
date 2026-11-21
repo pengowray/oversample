@@ -201,9 +201,7 @@ impl Session {
                 }
                 // Boxes come with the windows end to end of BirdNET+ V3.0, whose
                 // audio is the box detector's: 32 kHz, in the same order.
-                let boxes = boxes
-                    && method == Method::BirdNetV3
-                    && offsets.iter().all(|&o| o == 0);
+                let boxes = boxes && method == Method::BirdNetV3 && offsets.iter().all(|&o| o == 0);
                 if boxes && self.boxer.is_none() {
                     out.send(
                         inference_error(run, "the bird box model is not loaded".into()),

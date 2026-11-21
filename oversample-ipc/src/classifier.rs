@@ -779,7 +779,11 @@ pub enum FromWorker {
     /// The bird box detector has done its last window: `windows` windows
     /// over `samples` samples of 32 kHz audio (a float, as a 64-bit integer
     /// does not cross to JavaScript as a number).
-    BoxesDone { run: u32, windows: u32, samples: f64 },
+    BoxesDone {
+        run: u32,
+        windows: u32,
+        samples: f64,
+    },
     /// The run is complete with `windows` windows.
     Done { run: u32, windows: u32 },
     /// New scores for every stored window, in window order.
@@ -972,9 +976,7 @@ mod tests {
         let msg: ToWorker =
             serde_json::from_str(r#"{"cmd":"Start","run":1,"method":"Perch","source_rate":48000}"#)
                 .unwrap();
-        assert!(
-            matches!(msg, ToWorker::Start { offsets, boxes: false, .. } if offsets.is_empty())
-        );
+        assert!(matches!(msg, ToWorker::Start { offsets, boxes: false, .. } if offsets.is_empty()));
     }
 
     #[test]

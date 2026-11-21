@@ -74,7 +74,10 @@ pub fn is_demo_graph(proto: &tract_onnx::pb::ModelProto) -> bool {
 /// weights and casts.
 pub fn cut_demo_graph(proto: &mut tract_onnx::pb::ModelProto) -> TractResult<()> {
     use tract_onnx::pb::{AttributeProto, GraphProto, NodeProto, ValueInfoProto};
-    let main = proto.graph.as_ref().ok_or_else(|| TractError::msg("no graph"))?;
+    let main = proto
+        .graph
+        .as_ref()
+        .ok_or_else(|| TractError::msg("no graph"))?;
     let loop_node = main
         .node
         .iter()
@@ -99,7 +102,10 @@ pub fn cut_demo_graph(proto: &mut tract_onnx::pb::ModelProto) -> TractResult<()>
         }
     }
     let is_cast_to = |n: &NodeProto, to: i32| {
-        n.op_type == "Cast" && n.attribute.iter().any(|a| a.name == "to" && a.i == to as i64)
+        n.op_type == "Cast"
+            && n.attribute
+                .iter()
+                .any(|a| a.name == "to" && a.i == to as i64)
     };
     // Every node downstream of the network's input, up to the Cast back to
     // float32.
@@ -107,7 +113,11 @@ pub fn cut_demo_graph(proto: &mut tract_onnx::pb::ModelProto) -> TractResult<()>
     let mut out_val = None;
     let mut frontier = vec![x_in.clone()];
     while let Some(v) = frontier.pop() {
-        for &k in consumers.get(v.as_str()).map(|v| v.as_slice()).unwrap_or(&[]) {
+        for &k in consumers
+            .get(v.as_str())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+        {
             if keep[k] {
                 continue;
             }
@@ -142,7 +152,8 @@ pub fn cut_demo_graph(proto: &mut tract_onnx::pb::ModelProto) -> TractResult<()>
     };
     let mut nodes = vec![cast("images", &x_in, ONNX_FLOAT16)];
     for (n, &k) in body.node.iter().zip(&keep) {
-        let is_const = n.op_type == "Constant" && n.output.iter().any(|o| used.contains(o.as_str()));
+        let is_const =
+            n.op_type == "Constant" && n.output.iter().any(|o| used.contains(o.as_str()));
         if k || is_const {
             let mut n = n.clone();
             for a in n.attribute.iter_mut() {

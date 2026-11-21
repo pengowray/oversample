@@ -89,7 +89,11 @@ impl BoxRun {
         match self.samples {
             Some(n) => {
                 let end = padded_end_s(n);
-                let raw = limit_to_content(self.raw.iter().filter(keep).copied().collect(), n as f64 / RATE, end);
+                let raw = limit_to_content(
+                    self.raw.iter().filter(keep).copied().collect(),
+                    n as f64 / RATE,
+                    end,
+                );
                 fuse(&raw, end, phrase_gap)
             }
             None => {
@@ -147,7 +151,10 @@ pub fn box_species<'a>(
 
 /// The bird a box is named after: its highest, from [`NAME_FROM`] on.
 pub fn named(species: &[Score]) -> Option<Score> {
-    species.first().copied().filter(|s| s.confidence >= NAME_FROM)
+    species
+        .first()
+        .copied()
+        .filter(|s| s.confidence >= NAME_FROM)
 }
 
 /// The scores of `run`'s windows on the grid that name a box from `t0` to
@@ -191,7 +198,10 @@ pub fn bird_test(labels: &Arc<Vec<SpeciesLabel>>) -> impl Fn(u16) -> bool {
             .filter(|(l, _)| Arc::ptr_eq(l, labels))
             .map(|(_, m)| m.clone())
     });
-    move |c| mask.as_ref().is_none_or(|m| m.get(c as usize).copied().unwrap_or(false))
+    move |c| {
+        mask.as_ref()
+            .is_none_or(|m| m.get(c as usize).copied().unwrap_or(false))
+    }
 }
 
 /// One box as the spectrogram draws it.
@@ -326,9 +336,7 @@ pub fn box_at(t: f64, freq: f64) -> Option<(f64, f64)> {
     boxes
         .iter()
         .filter(|b| b.t0 <= t && t <= b.t1 && b.f0 <= freq && freq <= b.f1)
-        .min_by(|a, b| {
-            ((a.t1 - a.t0) * (a.f1 - a.f0)).total_cmp(&((b.t1 - b.t0) * (b.f1 - b.f0)))
-        })
+        .min_by(|a, b| ((a.t1 - a.t0) * (a.f1 - a.f0)).total_cmp(&((b.t1 - b.t0) * (b.f1 - b.f0))))
         .map(DrawnBox::key)
 }
 
@@ -421,9 +429,19 @@ mod tests {
             merged: 1.0,
         };
         let n = 9 * 32_000;
-        let d = name_boxes(&[mb(2.4, 2.8), mb(0.2, 0.6), mb(3.9, 4.2), mb(6.5, 6.9)], Some(&run), n);
+        let d = name_boxes(
+            &[mb(2.4, 2.8), mb(0.2, 0.6), mb(3.9, 4.2), mb(6.5, 6.9)],
+            Some(&run),
+            n,
+        );
         assert_eq!(d[0].name.as_deref(), Some("European Robin"));
-        assert_eq!(d[0].species, vec![("European Robin".to_string(), 0.5), ("Common Blackbird".to_string(), 0.2)]);
+        assert_eq!(
+            d[0].species,
+            vec![
+                ("European Robin".to_string(), 0.5),
+                ("Common Blackbird".to_string(), 0.2)
+            ]
+        );
         assert_eq!(d[1].name.as_deref(), Some("Common Blackbird"));
         // Window 2 (3 s) scores the blackbird 0.10: listed, not named.
         assert_eq!(d[2].name, None);

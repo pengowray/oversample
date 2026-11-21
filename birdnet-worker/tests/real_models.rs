@@ -1123,7 +1123,12 @@ fn birdbox_boxes_match_birdbox_cli_on_gentoo_penguins() {
             &|| 0.0,
         );
     }
-    s.handle(ToWorker::Finish { run: 1 }, Attached::default(), &mut sink, &|| 0.0);
+    s.handle(
+        ToWorker::Finish { run: 1 },
+        Attached::default(),
+        &mut sink,
+        &|| 0.0,
+    );
     eprintln!(
         "{:.1} s of audio in {:.1} s",
         samples.len() as f64 / rate as f64,
@@ -1142,13 +1147,12 @@ fn birdbox_boxes_match_birdbox_cli_on_gentoo_penguins() {
         .filter(|b| b.conf > boxes::DEFAULT_CONF as f64)
         .collect();
     let got = boxes::fuse(&raw, end, boxes::DEFAULT_PHRASE_GAP);
-    let want: Vec<Vec<f64>> = include_str!(
-        "../../oversample-ipc/src/classifier/boxes_fixtures/gentoo.cli.boxes.tsv"
-    )
-    .lines()
-    .filter(|l| !l.is_empty())
-    .map(|l| l.split('\t').map(|x| x.parse().unwrap()).collect())
-    .collect();
+    let want: Vec<Vec<f64>> =
+        include_str!("../../oversample-ipc/src/classifier/boxes_fixtures/gentoo.cli.boxes.tsv")
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.split('\t').map(|x| x.parse().unwrap()).collect())
+            .collect();
     assert_eq!(raw.len(), 76, "window boxes");
     assert_eq!(got.len(), want.len());
     let iou = |g: &boxes::MergedBox, w: &[f64]| {

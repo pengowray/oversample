@@ -290,7 +290,10 @@ pub fn fuse(raw: &[RawBox], file_end: f64, phrase_gap: f64) -> Vec<MergedBox> {
     }
     // 3. Drop a box that lies at least 80% inside a larger one (equal areas:
     //    the less confident, then the later one, is the inner box).
-    let area: Vec<f64> = fused.iter().map(|s| (s.t1 - s.t0) * (s.f1 - s.f0)).collect();
+    let area: Vec<f64> = fused
+        .iter()
+        .map(|s| (s.t1 - s.t0) * (s.f1 - s.f0))
+        .collect();
     let mut kept: Vec<MergedBox> = vec![];
     for i in 0..fused.len() {
         let inside = (0..fused.len()).any(|j| {

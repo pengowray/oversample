@@ -98,7 +98,11 @@ pub(super) fn fact(state: AppState) -> Option<String> {
     cd.bird_boxes().get().then(|| {
         format!(
             "One box per {}, min {:.2}",
-            if cd.box_calls().get() { "call" } else { "phrase" },
+            if cd.box_calls().get() {
+                "call"
+            } else {
+                "phrase"
+            },
             cd.box_min_confidence().get()
         )
     })
@@ -130,7 +134,9 @@ fn found(state: AppState, file: Option<u64>) -> Option<Found> {
     state.classifier.boxes().with(|m| {
         let run = m.get(&file).filter(|b| b.source_rate == rate)?;
         let merged = run.merged(min, gap);
-        let best = merged.iter().max_by(|a, b| a.max_conf.total_cmp(&b.max_conf));
+        let best = merged
+            .iter()
+            .max_by(|a, b| a.max_conf.total_cmp(&b.max_conf));
         Some(Found {
             count: merged.len(),
             best: best.map_or(0.0, |b| b.max_conf as f32),
@@ -150,10 +156,7 @@ pub(super) fn list_row(
     let found = Memo::new(move |_| found(state, current_file.get()));
     move || {
         let f = found.get()?;
-        let text = format!(
-            "Bird sounds: {}",
-            super::count(f.count, "box", "boxes")
-        );
+        let text = format!("Bird sounds: {}", super::count(f.count, "box", "boxes"));
         let show = move |_| {
             if let Some((t0, t1, f0)) = f.best_box {
                 super::classifier_section::show_window(state, t0, t1);
@@ -195,10 +198,7 @@ pub(super) fn analyse_again_note(state: AppState, file: Option<u64>) -> Option<&
 /// box model: 5 of 21 MB".
 pub(super) fn download_text(state: AppState) -> Option<String> {
     let f = &catalog::JUST_BIRD;
-    let status = state
-        .classifier
-        .downloads()
-        .with(|m| m.get(f.id).cloned());
+    let status = state.classifier.downloads().with(|m| m.get(f.id).cloned());
     match status {
         Some(DownloadStatus::Downloading { fraction }) => Some(format!(
             "Downloading the bird box model: {:.0} of {:.0} MB",

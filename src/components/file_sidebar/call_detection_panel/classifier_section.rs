@@ -632,7 +632,10 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                     naming_boxes: true,
                     ..
                 } => (
-                    format!("Naming bird sound boxes: {:.0}%", (fraction * 100.0).floor()),
+                    format!(
+                        "Naming bird sound boxes: {:.0}%",
+                        (fraction * 100.0).floor()
+                    ),
                     Some(fraction * 100.0),
                 ),
                 // A later pass of a run with a shorter step: the step it

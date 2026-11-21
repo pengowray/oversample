@@ -1016,8 +1016,13 @@ pub fn on_pointerup(
             let picked = strip_tap
                 .is_none()
                 .then(|| {
-                    pointer_to_xtf(ev.client_x() as f64, ev.client_y() as f64, canvas_ref, &state)
-                        .and_then(|(_, _, t, f)| bird_box_at(state, t, f))
+                    pointer_to_xtf(
+                        ev.client_x() as f64,
+                        ev.client_y() as f64,
+                        canvas_ref,
+                        &state,
+                    )
+                    .and_then(|(_, _, t, f)| bird_box_at(state, t, f))
                 })
                 .flatten();
             if state.call_detection.picked_box().get_untracked() != picked {

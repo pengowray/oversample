@@ -92,7 +92,13 @@ fn mel_filterbank() -> (Vec<Vec<f64>>, usize) {
 
 /// scipy.signal.get_window("flattop", 2048, fftbins=True)
 fn flattop() -> Vec<f64> {
-    let a = [0.21557895, 0.41663158, 0.277263158, 0.083578947, 0.006947368];
+    let a = [
+        0.21557895,
+        0.41663158,
+        0.277263158,
+        0.083578947,
+        0.006947368,
+    ];
     (0..N_FFT)
         .map(|i| {
             let x = -std::f64::consts::PI + 2.0 * std::f64::consts::PI * i as f64 / N_FFT as f64;
@@ -282,7 +288,11 @@ impl BoxStream {
             }
             let mut total = 0.0;
             for (first, w) in &self.fe.bands {
-                let mel: f64 = w.iter().zip(&self.power[*first..]).map(|(a, p)| a * p).sum();
+                let mel: f64 = w
+                    .iter()
+                    .zip(&self.power[*first..])
+                    .map(|(a, p)| a * p)
+                    .sum();
                 total += mel;
                 self.db.push((10.0 * mel.max(1e-10).log10()) as f32);
             }
