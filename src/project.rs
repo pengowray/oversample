@@ -242,13 +242,9 @@ impl BatProject {
 
     /// Find the project file entry matching a FileIdentity, returning its index.
     pub fn find_file(&self, identity: &FileIdentity) -> Option<usize> {
-        self.files.iter().position(|pf| {
-            // Match by spot hash first, then fallback to filename+size
-            if let (Some(a), Some(b)) = (&pf.identity.spot_hash_b3, &identity.spot_hash_b3) {
-                return a == b;
-            }
-            pf.identity.filename == identity.filename && pf.identity.file_size == identity.file_size
-        })
+        self.files
+            .iter()
+            .position(|pf| pf.identity.is_same_file(identity))
     }
 
     /// Merge a .batm AnnotationSet into the corresponding project file entry.

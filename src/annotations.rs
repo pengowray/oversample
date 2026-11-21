@@ -70,6 +70,16 @@ pub enum MatchConfidence {
 }
 
 impl FileIdentity {
+    /// True when both identities name the same file, by the rule projects use.
+    /// When both have a spot hash, the spot hashes must be equal.
+    /// Otherwise the file name and the file size must both be equal.
+    pub fn is_same_file(&self, other: &FileIdentity) -> bool {
+        if let (Some(a), Some(b)) = (&self.spot_hash_b3, &other.spot_hash_b3) {
+            return a == b;
+        }
+        self.filename == other.filename && self.file_size == other.file_size
+    }
+
     /// Compare two identities and return the highest confidence match.
     pub fn match_confidence(&self, other: &FileIdentity) -> MatchConfidence {
         // Check from highest confidence downward
@@ -668,6 +678,41 @@ pub fn renumber_children(annotations: &mut [Annotation], parent_id: Option<&Anno
 
 #[cfg(test)]
 mod tests {
+
+    fn identity_with_spot(name: &str, size: u64, spot: Option<&str>) -> FileIdentity {
+        let mut id = crate::file_identity::identity_layer1(name, size);
+        id.spot_hash_b3 = spot.map(str::to_string);
+        id
+    }
+
+    #[test]
+    fn is_same_file_when_both_spot_hashes_match() {
+        let a = identity_with_spot("a.wav", 1000, Some("abc"));
+        let b = identity_with_spot("renamed.wav", 2000, Some("abc"));
+        assert!(a.is_same_file(&b));
+    }
+
+    #[test]
+    fn is_not_same_file_when_spot_hashes_differ_even_with_same_name_and_size() {
+        let a = identity_with_spot("a.wav", 1000, Some("abc"));
+        let b = identity_with_spot("a.wav", 1000, Some("def"));
+        assert!(!a.is_same_file(&b));
+    }
+
+    #[test]
+    fn is_same_file_by_name_and_size_when_one_has_no_spot_hash() {
+        let a = identity_with_spot("a.wav", 1000, Some("abc"));
+        let b = identity_with_spot("a.wav", 1000, None);
+        assert!(a.is_same_file(&b));
+        assert!(b.is_same_file(&a));
+    }
+
+    #[test]
+    fn is_not_same_file_when_name_matches_but_size_differs() {
+        let a = identity_with_spot("a.wav", 1000, None);
+        let b = identity_with_spot("a.wav", 1001, None);
+        assert!(!a.is_same_file(&b));
+    }
 
     #[test]
     fn lowest_bat_hz_is_optional_in_batm_files() {

@@ -21,6 +21,19 @@ fn audio_meta_from_loaded(f: &crate::state::LoadedFile) -> AudioFileMetadata {
     meta
 }
 
+/// Index in `open` of the open file that is the same file as `pf`
+/// ([`crate::annotations::FileIdentity::is_same_file`]), or None when it is not open.
+fn open_file_index(
+    open: &[crate::state::LoadedFile],
+    pf: &crate::project::ProjectFile,
+) -> Option<usize> {
+    open.iter().position(|lf| {
+        lf.identity
+            .as_ref()
+            .is_some_and(|id| pf.identity.is_same_file(id))
+    })
+}
+
 /// Save the current project to OPFS (fire-and-forget).
 pub(crate) fn save_project_async(state: AppState) {
     use std::cell::Cell;
@@ -326,15 +339,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
         .files
         .iter()
         .map(|pf| {
-            let is_loaded = loaded_files.iter().any(|lf| {
-                lf.identity.as_ref().is_some_and(|id| {
-                    if let (Some(a), Some(b)) = (&pf.identity.spot_hash_b3, &id.spot_hash_b3) {
-                        a == b
-                    } else {
-                        pf.identity.filename == id.filename && pf.identity.file_size == id.file_size
-                    }
-                })
-            });
+            let is_loaded = open_file_index(&loaded_files, pf).is_some();
             (pf.clone(), is_loaded)
         })
         .collect();
@@ -509,16 +514,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 if !is_loaded {
                     return None;
                 }
-                loaded_files.iter().position(|lf| {
-                    lf.identity.as_ref().is_some_and(|id| {
-                        if let (Some(a), Some(b)) = (&pf.identity.spot_hash_b3, &id.spot_hash_b3) {
-                            a == b
-                        } else {
-                            pf.identity.filename == id.filename
-                                && pf.identity.file_size == id.file_size
-                        }
-                    })
-                })
+                open_file_index(&loaded_files, pf)
             })
             .collect(),
     );
@@ -775,15 +771,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                         let mut runtime_indices: Vec<usize> = Vec::new();
                         for entry in &tl_entries {
                             if let Some(pf) = proj.files.get(entry.file_index) {
-                                if let Some(ri) = files.iter().position(|lf| {
-                                    lf.identity.as_ref().is_some_and(|id| {
-                                        if let (Some(a), Some(b)) = (&pf.identity.spot_hash_b3, &id.spot_hash_b3) {
-                                            a == b
-                                        } else {
-                                            pf.identity.filename == id.filename && pf.identity.file_size == id.file_size
-                                        }
-                                    })
-                                }) {
+                                if let Some(ri) = open_file_index(&files, pf) {
                                     if !runtime_indices.contains(&ri) {
                                         runtime_indices.push(ri);
                                     }
