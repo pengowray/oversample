@@ -339,16 +339,36 @@ async fn fetch_site_name(site_id: u64) -> Option<String> {
     data_of(&text).ok()?["name"].as_str().map(str::to_string)
 }
 
-/// An event's details. Works on localhost and in the desktop and Android
-/// apps. On another website the browser blocks the reply, because A2O's main
-/// API does not allow that website to read it; the error says so.
-pub async fn fetch_event(recording_id: u64, event_id: u64) -> Result<EventInfo, String> {
+/// Whether this page is one A2O's main API answers: the desktop or
+/// Android app, or a page on this computer. Any other website gets no reply
+/// it can read.
+fn main_api_answers_this_page(state: &AppState) -> bool {
+    if state.is_tauri {
+        return true;
+    }
+    let host = web_sys::window()
+        .and_then(|w| w.location().hostname().ok())
+        .unwrap_or_default();
+    host == "localhost" || host == "127.0.0.1" || host == "[::1]" || host.ends_with(".localhost")
+}
+
+/// An event's details, from the main API. On a website that API does not
+/// answer, the browser blocks the reply and the request fails with no
+/// status; the error then says where the link can be opened. Where the API
+/// does answer, a failed request is a network fault and is reported as one.
+pub async fn fetch_event(
+    state: &AppState,
+    recording_id: u64,
+    event_id: u64,
+) -> Result<EventInfo, String> {
     let url = format!("{MAIN_API}/audio_recordings/{recording_id}/audio_events/{event_id}");
     match fetch_text(&url).await {
         Ok(text) => parse_event(&text),
         Err(e) if e.starts_with("HTTP ") => Err(format!("A2O event {event_id}: {e}")),
-        // A blocked reply shows up as a failed fetch, with no status.
-        Err(_) => Err(EVENT_BLOCKED.to_string()),
+        Err(_) if !main_api_answers_this_page(state) => Err(EVENT_BLOCKED.to_string()),
+        Err(_) => Err(format!(
+            "Could not reach A2O for event {event_id}. Check the internet connection."
+        )),
     }
 }
 
@@ -435,6 +455,20 @@ async fn open_clip(
         recording_start_ms: recording.recorded_ms,
         recording_secs: recording.duration_secs,
     };
+    // The same clip is open already: show that file. A second copy would
+    // sit on top of the first on a timeline.
+    let open_already = state.library.files().with_untracked(|files| {
+        files
+            .iter()
+            .position(|f| f.origin_clip.as_ref() == Some(&clip))
+            .map(|i| (i, files[i].id))
+    });
+    if let Some((index, id)) = open_already {
+        if state.timeline.active().with_untracked(|t| t.is_none()) {
+            state.library.current_index().set(Some(index));
+        }
+        return Ok(id);
+    }
     let name = clip_file_name(&recording.file_name, start_secs, end_secs);
     let load_id = state.loading_start(&name);
     let result = async {
@@ -507,7 +541,7 @@ pub async fn load_link(state: AppState, link: &A2oLink) -> Result<u64, String> {
             recording_id,
             event_id,
         } => {
-            let event = fetch_event(recording_id, event_id).await?;
+            let event = fetch_event(&state, recording_id, event_id).await?;
             let recording = fetch_recording(recording_id).await?;
             let (start, end) = clip_range(
                 Some(event.start_secs),
@@ -641,7 +675,7 @@ pub async fn add_adjacent(state: AppState, before: bool) -> Result<(), String> {
     // the project lists every clip.
     if state.project.current().with_untracked(|p| p.is_some()) {
         wait_for_identity(state, new_id).await;
-        crate::components::file_sidebar::add_open_files_to_project(state);
+        crate::components::file_sidebar::add_open_files_to_project(state, Some(new_id));
     }
 
     let mut ids = open_ids;

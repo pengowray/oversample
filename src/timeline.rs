@@ -937,7 +937,8 @@ fn save_active_to_project(state: &AppState) {
             .iter()
             .filter_map(|&i| {
                 let loaded = files.get(i)?;
-                let file_index = proj.find_file(loaded.identity.as_ref()?)?;
+                let file_index =
+                    proj.find_open_file(loaded.identity.as_ref(), loaded.origin_clip.as_ref())?;
                 let offset = tv
                     .segment_for_file(i)
                     .map_or(0.0, |seg| seg.timeline_offset_secs);

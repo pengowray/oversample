@@ -90,11 +90,13 @@ async function mockA2o(page: Page, eventsOpen = true): Promise<string[]> {
       const start = Number(url.searchParams.get("start_offset"));
       const end = Number(url.searchParams.get("end_offset"));
       clips.push(`${start}-${end}`);
-      // A different tone for each clip, by where it starts.
+      // A different tone for each clip, by where it starts. Every reply is
+      // different bytes, also for a clip asked for a second time: the app
+      // must know a clip by where it came from, not by its bytes.
       return route.fulfill({
         status: 200,
         headers: { ...OPEN, "content-type": "audio/x-flac" },
-        body: toneWav(end - start, 1000 + (start % 100) * 50),
+        body: toneWav(end - start, 1000 + (start % 100) * 50 + clips.length),
       });
     }
     return route.fulfill({ status: 404, headers: OPEN, body: "Not Found" });
@@ -235,7 +237,10 @@ test.describe("A2O links", () => {
     await page.getByRole("button", { name: "Get from A2O" }).click();
     await expect(page.locator(".project-file-item.missing")).toHaveCount(0, { timeout: 60_000 });
     expect([...clips].sort()).toEqual(["1506-1516", "1516-1546"]);
+    // The fetched clips are the project's two files: none is listed as new,
+    // and none is added a second time.
     await expect(page.locator(".project-new-files-banner")).toHaveCount(0);
+    await expect(page.locator(".project-file-item")).toHaveCount(2);
 
     // The saved timeline opens with both clips in place.
     await page.locator(".project-timeline-item").click();
@@ -243,6 +248,17 @@ test.describe("A2O links", () => {
       .poll(async () => (await snapshot(page)).timelineFiles)
       .toEqual([clipName(1506, 1516), clipName(1516, 1546)]);
     expect((await snapshot(page)).timelineStarts).toEqual([0, 10]);
+
+    // Adding more audio keeps the project at one entry per clip, and the
+    // saved timeline lists all three.
+    await page.getByRole("button", { name: "Add 30\u00a0s before" }).click();
+    await expect
+      .poll(async () => (await snapshot(page)).timelineStarts, { timeout: 60_000 })
+      .toEqual([0, 30, 40]);
+    await expect(page.locator(".project-file-item")).toHaveCount(3, { timeout: 30_000 });
+    await expect(page.locator(".project-timeline-item")).toHaveCount(1);
+    await expect(page.locator(".project-timeline-item .project-file-info")).toContainText("3 files");
+    await expect(page.locator(".project-new-files-banner")).toHaveCount(0);
   });
 
   test("a download link with a start and end opens without the main API", async ({ page }) => {
@@ -258,15 +274,39 @@ test.describe("A2O links", () => {
       .poll(async () => (await snapshot(page)).currentFile, { timeout: 60_000 })
       .toBe(clipName(4035, 4040));
     expect(clips).toEqual(["4035-4040"]);
+
+    // The same link again opens nothing new: the clip is already open.
+    await page.getByRole("button", { name: "Find recordings" }).first().click();
+    await page
+      .getByPlaceholder(/A2O link/)
+      .fill(`${SEARCH}/audio_recordings/download/flac/55743?start_offset=4035&end_offset=4040`);
+    await page.getByRole("button", { name: "Load A2O clip" }).click();
+    await expect(page.getByPlaceholder(/A2O link/)).toHaveCount(0, { timeout: 30_000 });
+    expect(clips).toEqual(["4035-4040"]);
+    await expect(page.locator(".file-item")).toHaveCount(1);
+
+    // Phone width: both Add buttons are whole and inside the screen.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.waitForTimeout(1500);
+    for (const name of ["Add 30\u00a0s before", "Add 30\u00a0s after"]) {
+      const box = (await page.getByRole("button", { name }).boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(375);
+      expect(box.height).toBeGreaterThanOrEqual(40);
+    }
+    if (process.env.A2O_OUT) await page.screenshot({ path: `${process.env.A2O_OUT}/a2o-phone.png` });
   });
 
-  test("an event link says why it cannot open when A2O does not let the page read events", async ({
+  test("an event link that cannot reach A2O's main API opens nothing and says so", async ({
     page,
   }) => {
     test.setTimeout(120_000);
     const clips = await mockA2o(page, false);
     await page.goto(`/#${EVENT_LINK}`);
-    await expect(page.getByText("A2O only gives event details to its own site")).toBeVisible({
+    // This page is on localhost, which A2O's main API answers, so a failed
+    // request is reported as a network fault. (On a website the API does
+    // not answer, the message says where the link can be opened instead.)
+    await expect(page.getByText("Could not reach A2O for event 30169")).toBeVisible({
       timeout: 60_000,
     });
     expect(clips).toEqual([]);

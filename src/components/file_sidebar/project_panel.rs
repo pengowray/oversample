@@ -37,17 +37,21 @@ fn open_file_index(
     })
 }
 
-/// Add every open file that is not in the project to it, with where it came
-/// from when it is an A2O clip. Returns how many were added. A file whose
-/// identity is not worked out yet is left for the next call.
-pub(crate) fn add_open_files_to_project(state: AppState) -> usize {
+/// Add open files that are not in the project to it, with where each came
+/// from when it is an A2O clip: every open file, or only the one with id
+/// `only`. Returns how many were added. A file whose identity is not worked
+/// out yet is left for the next call.
+pub(crate) fn add_open_files_to_project(state: AppState, only: Option<u64>) -> usize {
     let loaded = state.library.files().get_untracked();
     let mut added = 0;
     state.project.current().update(|p| {
         let Some(proj) = p else { return };
-        for f in loaded.iter() {
+        for f in loaded.iter().filter(|f| only.is_none_or(|id| f.id == id)) {
             let Some(identity) = &f.identity else { continue };
-            if proj.find_file(identity).is_some() {
+            if proj
+                .find_open_file(Some(identity), f.origin_clip.as_ref())
+                .is_some()
+            {
                 continue;
             }
             let idx = proj.add_file(identity.clone(), Some(audio_meta_from_loaded(f)));
@@ -412,9 +416,10 @@ fn ProjectView(project: BatProject) -> impl IntoView {
         loaded_files
             .iter()
             .filter(|lf| {
-                lf.identity
-                    .as_ref()
-                    .is_some_and(|id| proj_clone.find_file(id).is_none())
+                lf.identity.is_some()
+                    && proj_clone
+                        .find_open_file(lf.identity.as_ref(), lf.origin_clip.as_ref())
+                        .is_none()
             })
             .count()
     };
@@ -549,7 +554,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
 
     // Add new loaded files that aren't in the project yet
     let on_sync_files = move |_: web_sys::MouseEvent| {
-        add_open_files_to_project(state);
+        add_open_files_to_project(state, None);
     };
 
     // ── File selection for timeline creation ──

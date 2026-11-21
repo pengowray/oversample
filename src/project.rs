@@ -253,6 +253,23 @@ impl BatProject {
             .position(|pf| pf.identity.is_same_file(identity))
     }
 
+    /// The project's entry for an open file: the entry with the same
+    /// identity ([`BatProject::find_file`]), or, for an A2O clip, the entry
+    /// saved for the same clip. A clip fetched again can arrive as different
+    /// bytes, so its identity can differ from the saved one.
+    pub fn find_open_file(
+        &self,
+        identity: Option<&FileIdentity>,
+        origin_clip: Option<&crate::a2o::ClipRef>,
+    ) -> Option<usize> {
+        identity.and_then(|id| self.find_file(id)).or_else(|| {
+            let clip = origin_clip?;
+            self.files
+                .iter()
+                .position(|pf| pf.origin_clip.as_ref() == Some(clip))
+        })
+    }
+
     /// Merge a .batm AnnotationSet into the corresponding project file entry.
     /// Returns true if annotations were merged, false if no matching file found.
     pub fn merge_batm(&mut self, set: &crate::annotations::AnnotationSet, batm_key: &str) -> bool {
