@@ -727,7 +727,7 @@ pub fn BottomToolbar() -> impl IntoView {
                         // The same words as the menu's options.
                         <span class="layer-btn-value">{move || {
                             match state.timeline.arrangement().get() {
-                                Arrangement::RecordingTime => "Recorded times".to_string(),
+                                Arrangement::RecordingTime => "At their recorded times".to_string(),
                                 Arrangement::InTurn { gap_secs } if gap_secs > 0.0 => {
                                     format!("One after another, {}\u{a0}s pause", crate::timeline::pause_text(gap_secs))
                                 }
@@ -752,7 +752,7 @@ pub fn BottomToolbar() -> impl IntoView {
                                 <div class="layer-panel" style="bottom: calc(100% + 4px); left: 0; min-width:170px;">
                                     <div class="layer-panel-title">"Order of the files"</div>
                                     <button class=is(Arrangement::RecordingTime) on:click=choose(Arrangement::RecordingTime)
-                                    >"Recorded times"</button>
+                                    >"At their recorded times"</button>
                                     <button class=is(in_turn(0.0)) on:click=choose(in_turn(0.0))
                                     >"One after another"</button>
                                     {crate::timeline::PAUSE_CHOICES_SECS.iter().map(|&gap| view! {

@@ -652,15 +652,17 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 // nothing.
                                 let arrangement = state.timeline.arrangement().get();
                                 let in_turn = !matches!(arrangement, crate::project::Arrangement::RecordingTime);
-                                // The buttons point the way the file moves
-                                // on screen: along the timeline, or up and
-                                // down the rows.
-                                let (earlier, later, earlier_icon, later_icon) =
+                                // The arrows point up and down, the way a
+                                // row moves in this list. A fresh reviewer
+                                // found left and right arrows on a vertical
+                                // list confusing.
+                                let (earlier, later) =
                                     if matches!(arrangement, crate::project::Arrangement::Together) {
-                                        ("Move up", "Move down", Icon::ArrowUp, Icon::ArrowDown)
+                                        ("Move up", "Move down")
                                     } else {
-                                        ("Play earlier", "Play later", Icon::ArrowLeft, Icon::ArrowRight)
+                                        ("Play earlier", "Play later")
                                     };
+                                let (earlier_icon, later_icon) = (Icon::ArrowUp, Icon::ArrowDown);
                                 let order = state.timeline.clip_file_indices().get();
                                 let last = order.len().saturating_sub(1);
                                 let rows: Vec<_> = order.iter().enumerate().map(|(pos, &fi)| {

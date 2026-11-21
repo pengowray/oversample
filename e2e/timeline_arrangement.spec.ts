@@ -244,7 +244,7 @@ test.describe("timeline arrangement", () => {
 
     // Recorded times are still on offer. These files have the same date, so
     // they all start within a few seconds of each other.
-    await choose(page, "Recorded times");
+    await choose(page, "At their recorded times");
     await expect
       .poll(async () => (await snapshot(page)).timelineDuration ?? 99)
       .toBeLessThan(6);
@@ -341,7 +341,7 @@ test.describe("timeline arrangement", () => {
     await page.keyboard.press("Space");
 
     // Placed at their recorded times, the order list is not shown.
-    await choose(page, "Recorded times");
+    await choose(page, "At their recorded times");
     await expect(rows).toHaveCount(0);
     await choose(page, "One after another, 0.5\u00a0s pause");
     await expect(rows).toHaveCount(3);

@@ -2703,9 +2703,8 @@ a.open-link-btn {
     color: #f88;
 }
 
-/* The open timeline's files in play order, under the banner. Each row has
-   two buttons that move the file one place earlier or later. The arrows
-   point left and right because the timeline runs left to right. */
+/* The open timeline's files in order, under the banner. Each row has two
+   buttons that move the file one place up or down the list. */
 .timeline-order {
     list-style: none;
     margin: 0 0 6px;
@@ -2742,7 +2741,7 @@ a.open-link-btn {
     background: none;
     border: none;
     border-radius: 3px;
-    color: #bbb;
+    color: #ddd;
     cursor: pointer;
 }
 
@@ -2751,8 +2750,10 @@ a.open-link-btn {
     color: #fff;
 }
 
+/* A disabled arrow is much dimmer than an enabled one, so the first and
+   last rows read as ends of the list. */
 .timeline-order-btn:disabled {
-    color: #444;
+    color: #3a3a3a;
     cursor: default;
 }
 
