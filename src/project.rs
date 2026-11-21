@@ -128,12 +128,30 @@ pub struct MultitrackGroup {
     pub label: Option<String>,
 }
 
+/// How the files of a timeline are placed on it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Arrangement {
+    /// Each file at the time it was recorded.
+    RecordingTime,
+    /// One file after another, with `gap_secs` of silence between them.
+    InTurn {
+        #[serde(default)]
+        gap_secs: f64,
+    },
+}
+
 /// A timeline positions multiple files on a shared time axis.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TimelineDefinition {
     pub id: String,
-    /// Ordered entries (files positioned on the timeline).
+    /// The files on the timeline. Placed one after another, they play in
+    /// this order.
     pub entries: Vec<TimelineEntry>,
+    /// How the files are placed. `None` in projects saved before this field
+    /// existed: the app then picks an arrangement from the files' times.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub arrangement: Option<Arrangement>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub label: Option<String>,
 }
@@ -144,6 +162,8 @@ pub struct TimelineEntry {
     /// Index into `BatProject::files`.
     pub file_index: usize,
     /// Absolute start time (ms since epoch). From metadata or user override.
+    /// Not used to place the file: the app works the place out again from
+    /// the timeline's arrangement.
     pub start_epoch_ms: f64,
     /// Duration in seconds (from audio metadata).
     pub duration_secs: f64,

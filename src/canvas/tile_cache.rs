@@ -88,8 +88,7 @@ fn visible_window_for_file(state: &AppState, file_idx: usize) -> Option<(f64, f6
     let timeline = state.timeline.active().get_untracked();
     let tl = timeline.as_ref()?;
     let global_time_res = tl
-        .segments
-        .first()
+        .primary_segment()
         .and_then(|s| files.get(s.file_index))
         .map(|f| f.spectrogram.time_resolution)
         .unwrap_or(file_time_res);
@@ -2462,7 +2461,12 @@ fn apply_display_transform(samples: &[f32], sample_rate: u32, state: AppState) -
                 band,
             );
             let cutoff = state.transform.het_cutoff().get_untracked();
-            let mixed = crate::dsp::heterodyne::heterodyne_comb_mix(samples, sample_rate, &carriers, cutoff);
+            let mixed = crate::dsp::heterodyne::heterodyne_comb_mix(
+                samples,
+                sample_rate,
+                &carriers,
+                cutoff,
+            );
             // "Then pitch shift", as playback applies it.
             crate::audio::streaming_playback::het_post_pitch_shift(
                 mixed,

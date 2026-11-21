@@ -394,9 +394,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 return;
                             }
 
-                            state.timeline.selected_file_indices().set(Vec::new());
-                            state.timeline.active().set(None);
-                            state.timeline.active_track().set(None);
+                            crate::timeline::close(&state);
                             // The view history and bookmarks are stored and
                             // brought back per file by the file-switch Effect
                             // in app.rs.
@@ -595,9 +593,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                     let show_sort = file_vec.len() > 1;
 
                     let on_exit_timeline = move |_: web_sys::MouseEvent| {
-                        state.timeline.active().set(None);
-                        state.timeline.active_track().set(None);
-                        state.timeline.selected_file_indices().set(Vec::new());
+                        crate::timeline::close(&state);
                         // Restore to first file if none active
                         if state.library.current_index().get_untracked().is_none() && !state.library.files().with_untracked(|f| f.is_empty()) {
                             state.library.current_index().set(Some(0));

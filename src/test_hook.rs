@@ -234,6 +234,17 @@ pub fn install(state: AppState) {
                 missing.push(&JsValue::from_str(&m.take));
             }
             set(&o, "timelineMissing", missing.into());
+            // Where each clip starts, and how long the timeline is, in seconds.
+            let starts = js_sys::Array::new();
+            for seg in &tl.segments {
+                starts.push(&JsValue::from_f64(seg.timeline_offset_secs));
+            }
+            set(&o, "timelineStarts", starts.into());
+            set(
+                &o,
+                "timelineDuration",
+                JsValue::from_f64(tl.total_duration_secs),
+            );
         }
         set(
             &o,

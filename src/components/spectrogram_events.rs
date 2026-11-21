@@ -396,8 +396,7 @@ pub fn apply_hand_pan(
     let time_res = if waterfall_active {
         crate::canvas::live_waterfall::time_resolution()
     } else if let Some(ref tl) = timeline {
-        tl.segments
-            .first()
+        tl.primary_segment()
             .and_then(|s| files.get(s.file_index))
             .map(|f| f.spectrogram.time_resolution)
             .unwrap_or(1.0)
@@ -1816,8 +1815,7 @@ pub fn on_touchend(
                         let file = idx.and_then(|i| files.get(i));
                         let timeline = state.timeline.active().get_untracked();
                         let time_res = if let Some(ref tl) = timeline {
-                            tl.segments
-                                .first()
+                            tl.primary_segment()
                                 .and_then(|s| files.get(s.file_index))
                                 .map(|f| f.spectrogram.time_resolution)
                                 .unwrap_or(1.0)
@@ -1963,8 +1961,7 @@ pub fn on_wheel(ev: web_sys::WheelEvent, state: AppState) {
             (tr, dur)
         } else if let Some(ref tl) = timeline {
             let tr = tl
-                .segments
-                .first()
+                .primary_segment()
                 .and_then(|s| files.get(s.file_index))
                 .map(|f| f.spectrogram.time_resolution)
                 .unwrap_or(1.0);

@@ -1165,6 +1165,8 @@ pub enum LayerPanel {
     Bandpass,
     /// Mic settings dropdown in the Transport bar (strategy + device + capture format).
     Mic,
+    /// How the files of the open timeline are placed (Transport bar).
+    TimelineFiles,
 }
 
 impl LayerPanel {
@@ -1185,6 +1187,7 @@ impl LayerPanel {
             LayerPanel::PlayMode
             | LayerPanel::RecordMode
             | LayerPanel::Channel
+            | LayerPanel::TimelineFiles
             | LayerPanel::Mic => Bar::Transport,
             // FreqRange floats over the canvas — not anchored to a bar.
             LayerPanel::FreqRange => Bar::Floating,
@@ -2080,6 +2083,10 @@ pub struct TimelineState {
     pub active: Option<crate::timeline::TimelineView>,
     /// Currently selected multitrack track label (None = primary/default).
     pub active_track: Option<String>,
+    /// How the open timeline's clips are placed.
+    pub arrangement: crate::project::Arrangement,
+    /// `TimelineDefinition::id` of the open timeline in the project.
+    pub active_definition_id: Option<String>,
     /// Show wall-clock time instead of file-relative time.
     pub show_clock_time: bool,
 }
@@ -3177,6 +3184,8 @@ impl AppState {
                 selected_file_indices: Vec::new(),
                 active: None,
                 active_track: None,
+                arrangement: crate::project::Arrangement::RecordingTime,
+                active_definition_id: None,
                 show_clock_time: false,
             }),
 

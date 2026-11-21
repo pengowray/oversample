@@ -28,8 +28,7 @@ pub fn Playhead(#[prop(default = 0.0)] x_offset: f64) -> impl IntoView {
         // (unknown → 1.0) so the line renders at x=0 when a view mounts
         // before its data is ready.
         let time_res = if let Some(ref tl) = state.timeline.active().get_untracked() {
-            tl.segments
-                .first()
+            tl.primary_segment()
                 .and_then(|s| files.get(s.file_index))
                 .map(|f| f.spectrogram.time_resolution)
                 .unwrap_or(1.0)

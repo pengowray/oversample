@@ -272,7 +272,7 @@ pub fn Waveform() -> impl IntoView {
 
         if let Some(ref tl) = timeline {
             // ── Timeline mode: render waveform for each visible segment ──
-            let primary_file = tl.segments.first().and_then(|s| files.get(s.file_index));
+            let primary_file = tl.primary_segment().and_then(|s| files.get(s.file_index));
             let time_res = primary_file
                 .map(|f| f.spectrogram.time_resolution)
                 .unwrap_or(1.0);

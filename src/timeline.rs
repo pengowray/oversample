@@ -3,6 +3,184 @@ use crate::state::store_fields::*;
 use crate::state::{AppState, LoadedFile};
 use leptos::prelude::*;
 
+pub use crate::project::Arrangement;
+
+/// Files whose recording times leave more than this many seconds between
+/// them are placed one after another when a timeline is first made.
+const LONGEST_KEPT_GAP_SECS: f64 = 60.0;
+
+/// One file to place on a timeline. See [`place_clips`].
+#[derive(Clone, Debug, PartialEq)]
+struct ClipIn {
+    /// When the recording started, ms since the epoch, if known.
+    start_ms: Option<f64>,
+    duration_secs: f64,
+    /// The take a channel file belongs to ("260401_0010"). Channel files of
+    /// one take were recorded together.
+    take: Option<String>,
+}
+
+/// Where each clip starts, in seconds from the start of the timeline.
+///
+/// Returns `(clip index, start)` pairs in timeline order, and the clock time
+/// of the timeline's start in ms since the epoch (0.0 when the timeline has
+/// no clock time).
+///
+/// `RecordingTime` puts each clip at its recording time. A clip without one
+/// goes after the end of the clips placed before it.
+///
+/// `InTurn` puts the clips one after another in the order given, with
+/// `gap_secs` of silence between them. Channel files of one take start
+/// together and take up one place, as long as the longest of them.
+fn place_clips(clips: &[ClipIn], arrangement: Arrangement) -> (Vec<(usize, f64)>, f64) {
+    match arrangement {
+        Arrangement::RecordingTime => {
+            let mut order: Vec<usize> = (0..clips.len()).collect();
+            order.sort_by(|&a, &b| match (clips[a].start_ms, clips[b].start_ms) {
+                (Some(ta), Some(tb)) => ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            });
+            let origin_ms = order.iter().find_map(|&i| clips[i].start_ms).unwrap_or(0.0);
+            let mut end_secs = 0.0_f64;
+            let placed = order
+                .into_iter()
+                .map(|i| {
+                    let start = match clips[i].start_ms {
+                        Some(ms) => (ms - origin_ms) / 1000.0,
+                        None => end_secs,
+                    };
+                    end_secs = end_secs.max(start + clips[i].duration_secs);
+                    (i, start)
+                })
+                .collect();
+            (placed, origin_ms)
+        }
+        Arrangement::InTurn { gap_secs } => {
+            let gap = if gap_secs.is_finite() {
+                gap_secs.max(0.0)
+            } else {
+                0.0
+            };
+            // One place per take, or per file that is not a channel file.
+            let mut places: Vec<(Option<&str>, f64)> = Vec::new();
+            let mut place_of: Vec<usize> = Vec::with_capacity(clips.len());
+            for clip in clips {
+                let take = clip.take.as_deref();
+                let found = take.and_then(|t| places.iter().position(|p| p.0 == Some(t)));
+                let at = match found {
+                    Some(at) => at,
+                    None => {
+                        places.push((take, 0.0));
+                        places.len() - 1
+                    }
+                };
+                places[at].1 = places[at].1.max(clip.duration_secs);
+                place_of.push(at);
+            }
+            let mut starts = Vec::with_capacity(places.len());
+            let mut next = 0.0;
+            for &(_, length) in &places {
+                starts.push(next);
+                next += length + gap;
+            }
+            let placed = place_of
+                .iter()
+                .enumerate()
+                .map(|(i, &at)| (i, starts[at]))
+                .collect();
+            (placed, 0.0)
+        }
+    }
+}
+
+/// The arrangement a new timeline of these clips starts with: recording
+/// times when they give a timeline that can be listened to, otherwise one
+/// after another.
+///
+/// Recording times are not used when a clip has none, when two clips that
+/// are not channels of one take overlap, or when more than
+/// [`LONGEST_KEPT_GAP_SECS`] lies between two clips. A file without recorder
+/// metadata gets its time from the file's modified date, so files copied or
+/// downloaded together all overlap, and files from different nights are
+/// hours apart.
+fn suggest_arrangement(clips: &[ClipIn]) -> Arrangement {
+    let in_turn = Arrangement::InTurn { gap_secs: 0.0 };
+    if clips.iter().any(|c| c.start_ms.is_none()) {
+        return in_turn;
+    }
+    let (placed, _) = place_clips(clips, Arrangement::RecordingTime);
+    // The stretch of time each take or single file covers.
+    let mut spans: Vec<(Option<&str>, f64, f64)> = Vec::new();
+    for &(i, start) in &placed {
+        let end = start + clips[i].duration_secs;
+        let take = clips[i].take.as_deref();
+        match spans.iter_mut().find(|s| take.is_some() && s.0 == take) {
+            Some(span) => {
+                span.1 = span.1.min(start);
+                span.2 = span.2.max(end);
+            }
+            None => spans.push((take, start, end)),
+        }
+    }
+    spans.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    let mut end = f64::NEG_INFINITY;
+    for &(_, start, span_end) in &spans {
+        if end.is_finite() && (start < end - 0.05 || start - end > LONGEST_KEPT_GAP_SECS) {
+            return in_turn;
+        }
+        end = end.max(span_end);
+    }
+    Arrangement::RecordingTime
+}
+
+/// The pauses the Files menu offers between files placed one after another,
+/// in seconds.
+pub const PAUSE_CHOICES_SECS: [f64; 3] = [0.5, 1.0, 2.0];
+
+/// A pause length as the Files menu writes it: "0.5", "1", "2".
+pub fn pause_text(gap_secs: f64) -> String {
+    let text = format!("{gap_secs:.2}");
+    text.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// Compares file names so that numbers inside them count: "rec_9.wav" comes
+/// before "rec_10.wav". Letters compare without regard to case.
+pub fn natural_name_order(a: &str, b: &str) -> std::cmp::Ordering {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        if a[i].is_ascii_digit() && b[j].is_ascii_digit() {
+            let run = |s: &[u8], from: usize| {
+                let end = from + s[from..].iter().take_while(|c| c.is_ascii_digit()).count();
+                let digits = &s[from..end];
+                let first = digits
+                    .iter()
+                    .position(|&c| c != b'0')
+                    .unwrap_or(digits.len());
+                (end, digits[first..].to_vec())
+            };
+            let (ai, an) = run(a, i);
+            let (bj, bn) = run(b, j);
+            let by_value = an.len().cmp(&bn.len()).then_with(|| an.cmp(&bn));
+            if by_value != std::cmp::Ordering::Equal {
+                return by_value;
+            }
+            i = ai;
+            j = bj;
+        } else {
+            let (ca, cb) = (a[i].to_ascii_lowercase(), b[j].to_ascii_lowercase());
+            if ca != cb {
+                return ca.cmp(&cb);
+            }
+            i += 1;
+            j += 1;
+        }
+    }
+    (a.len() - i).cmp(&(b.len() - j)).then_with(|| a.cmp(b))
+}
+
 /// Runtime view of a timeline — maps timeline-local time to file data.
 /// Built from selected files and their recording timestamps.
 #[derive(Clone, Debug)]
@@ -13,8 +191,15 @@ pub struct TimelineView {
     pub segments: Vec<TimelineSegment>,
     /// Total span in seconds (from origin to end of last segment).
     pub total_duration_secs: f64,
-    /// Epoch ms of the timeline origin (earliest file start).
+    /// Epoch ms of the timeline origin (earliest file start). 0.0 when the
+    /// clips are placed one after another: the timeline then has no clock time.
     pub origin_epoch_ms: f64,
+    /// How the clips are placed.
+    pub arrangement: Arrangement,
+    /// The clip whose file has the highest sample rate (the first of them).
+    /// The frequency axis covers this file's range, and the zoom level is
+    /// counted in this file's spectrogram columns.
+    pub primary_file_index: Option<usize>,
     /// The channels the timeline can be switched to, in menu order. Empty
     /// unless the takes on the timeline have two or more channels loaded.
     pub tracks: Vec<TrackOption>,
@@ -186,10 +371,10 @@ fn plan_tracks(added: &[usize], channels: &[Option<TrackInfo>], track: Option<&s
 }
 
 impl TimelineView {
-    /// Build a timeline from selected file indices.
+    /// Build a timeline from the files added to it.
     ///
-    /// Files are positioned by their `recording_start_epoch_ms`. Files without
-    /// timestamps are placed sequentially after the last positioned file.
+    /// `arrangement` says where the clips go: see [`place_clips`]. Placed one
+    /// after another, they keep the order of `file_indices`.
     ///
     /// `track` is the channel chosen in the Channel menu. Each clip keeps the
     /// place its own file gives it and shows the chosen channel's file of the
@@ -199,63 +384,36 @@ impl TimelineView {
         file_indices: &[usize],
         files: &[LoadedFile],
         track: Option<&str>,
+        arrangement: Arrangement,
     ) -> Option<Self> {
         if file_indices.len() < 2 {
             return None;
         }
 
-        // Collect (file_index, start_epoch_ms_or_none, duration)
-        let mut entries: Vec<(usize, Option<f64>, f64)> = file_indices
-            .iter()
-            .filter_map(|&i| {
-                let f = files.get(i)?;
-                Some((i, f.recording_start_epoch_ms(), f.audio.duration_secs))
-            })
-            .collect();
-
-        if entries.is_empty() {
-            return None;
-        }
-
-        // Sort: files with timestamps first (by timestamp), then files without
-        entries.sort_by(|a, b| match (&a.1, &b.1) {
-            (Some(ta), Some(tb)) => ta.partial_cmp(tb).unwrap_or(std::cmp::Ordering::Equal),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        });
-
-        // Determine the origin (earliest start time)
-        let origin_ms = entries
-            .iter()
-            .filter_map(|(_, start, _)| *start)
-            .next()
-            .unwrap_or(0.0);
-
-        // Place every added file. The places do not depend on the chosen
-        // channel, so the timeline keeps its length and the clips keep their
-        // positions when the channel is switched.
-        let mut placed: Vec<(usize, f64, f64)> = Vec::with_capacity(entries.len());
-        let mut cursor_secs = 0.0; // For files without timestamps
-        for (file_idx, start_ms, duration) in &entries {
-            let offset = if let Some(ms) = start_ms {
-                (ms - origin_ms) / 1000.0
-            } else {
-                // No timestamp: place after the current cursor
-                cursor_secs
-            };
-            placed.push((*file_idx, offset, *duration));
-            let end = offset + duration;
-            if end > cursor_secs {
-                cursor_secs = end;
-            }
-        }
-
-        // Which file each place shows for the chosen channel.
         let channels: Vec<Option<TrackInfo>> = files
             .iter()
             .map(|f| file_groups::channel_of(&f.name))
             .collect();
+        let indices: Vec<usize> = file_indices
+            .iter()
+            .copied()
+            .filter(|&i| i < files.len())
+            .collect();
+        if indices.is_empty() {
+            return None;
+        }
+        let clips = clips_in(&indices, files, &channels);
+        let (order, origin_ms) = place_clips(&clips, arrangement);
+
+        // Place every added file. The places do not depend on the chosen
+        // channel, so the timeline keeps its length and the clips keep their
+        // positions when the channel is switched.
+        let placed: Vec<(usize, f64, f64)> = order
+            .iter()
+            .map(|&(i, start)| (indices[i], start, clips[i].duration_secs))
+            .collect();
+
+        // Which file each place shows for the chosen channel.
         let added: Vec<usize> = placed.iter().map(|p| p.0).collect();
         let plan = plan_tracks(&added, &channels, track);
 
@@ -315,16 +473,52 @@ impl TimelineView {
             )
             .fold(0.0_f64, f64::max);
 
+        // The first clip with the highest sample rate.
+        let mut primary_file_index = None;
+        let mut top_rate = 0;
+        for seg in &segments {
+            let rate = files.get(seg.file_index).map_or(0, |f| f.audio.sample_rate);
+            if rate > top_rate {
+                top_rate = rate;
+                primary_file_index = Some(seg.file_index);
+            }
+        }
+
         Some(TimelineView {
             segments,
             total_duration_secs,
             origin_epoch_ms: origin_ms,
+            arrangement,
+            primary_file_index,
             tracks: plan.tracks,
             take_count: plan.take_count,
             track: plan.track,
             shown_track: plan.shown_track,
             missing,
         })
+    }
+
+    /// The arrangement a new timeline of these files starts with. See
+    /// [`suggest_arrangement`].
+    pub fn suggested_arrangement(file_indices: &[usize], files: &[LoadedFile]) -> Arrangement {
+        let channels: Vec<Option<TrackInfo>> = files
+            .iter()
+            .map(|f| file_groups::channel_of(&f.name))
+            .collect();
+        let indices: Vec<usize> = file_indices
+            .iter()
+            .copied()
+            .filter(|&i| i < files.len())
+            .collect();
+        suggest_arrangement(&clips_in(&indices, files, &channels))
+    }
+
+    /// The clip that sets the frequency range and the zoom unit: see
+    /// `primary_file_index`.
+    pub fn primary_segment(&self) -> Option<&TimelineSegment> {
+        self.primary_file_index
+            .and_then(|i| self.segment_for_file(i))
+            .or_else(|| self.segments.first())
     }
 
     /// Find which file (if any) is at the given timeline-local time.
@@ -381,6 +575,23 @@ impl TimelineView {
     }
 }
 
+/// What [`place_clips`] needs to know about each file. `indices` must all be
+/// inside `files`.
+fn clips_in(
+    indices: &[usize],
+    files: &[LoadedFile],
+    channels: &[Option<TrackInfo>],
+) -> Vec<ClipIn> {
+    indices
+        .iter()
+        .map(|&i| ClipIn {
+            start_ms: files[i].recording_start_epoch_ms(),
+            duration_secs: files[i].audio.duration_secs,
+            take: channels[i].as_ref().map(|c| c.group_key.clone()),
+        })
+        .collect()
+}
+
 /// A channel's name in the Channel menu and in messages: "Channel 2" for the
 /// file-name labels "2" and "Ch2", "Channel 1-2" for "1-2". Other labels
 /// ("MIX") are shown as they are in the file name.
@@ -403,21 +614,131 @@ pub fn track_short_name(label: &str) -> String {
     }
 }
 
-/// Rebuild the open timeline from the files added to it and the chosen
-/// channel. Call after the file list changes. Clears the chosen channel when
-/// the timeline no longer offers it.
+/// Rebuild the open timeline from the files added to it, the chosen channel
+/// and the arrangement. Call after the file list changes. Clears the chosen
+/// channel when the timeline no longer offers it.
 pub fn rebuild_active(state: &AppState) {
     let sel = state.timeline.selected_file_indices().get_untracked();
     let track = state.timeline.active_track().get_untracked();
-    let rebuilt = state
-        .library
-        .files()
-        .with_untracked(|files| TimelineView::from_files(&sel, files, track.as_deref()));
+    let arrangement = state.timeline.arrangement().get_untracked();
+    let rebuilt = state.library.files().with_untracked(|files| {
+        TimelineView::from_files(&sel, files, track.as_deref(), arrangement)
+    });
     let applied = rebuilt.as_ref().and_then(|t| t.track.clone());
     if applied != track {
         state.timeline.active_track().set(applied);
     }
     state.timeline.active().set(rebuilt);
+}
+
+/// Open a timeline of the files at `file_indices` (indices into the loaded
+/// files) and show all of it. Returns the timeline, or `None` when fewer
+/// than two of the files are loaded.
+///
+/// `arrangement`: `None` picks one from the files' recording times, and then
+/// also puts the files in name order. `definition_id` is the timeline's id in
+/// the project, when it is saved there.
+pub fn open(
+    state: &AppState,
+    mut file_indices: Vec<usize>,
+    arrangement: Option<Arrangement>,
+    definition_id: Option<String>,
+) -> Option<TimelineView> {
+    let files = state.library.files().get_untracked();
+    file_indices.retain(|&i| i < files.len());
+    let arrangement = arrangement.unwrap_or_else(|| {
+        file_indices.sort_by(|&a, &b| natural_name_order(&files[a].name, &files[b].name));
+        TimelineView::suggested_arrangement(&file_indices, &files)
+    });
+    let tv = TimelineView::from_files(&file_indices, &files, None, arrangement)?;
+    state.timeline.selected_file_indices().set(file_indices);
+    state.timeline.arrangement().set(arrangement);
+    state.timeline.active_definition_id().set(definition_id);
+    state.timeline.active_track().set(None);
+    state.timeline.active().set(Some(tv.clone()));
+    state.library.current_index().set(None);
+    state.suspend_follow();
+    show_whole_timeline(state, &tv);
+    Some(tv)
+}
+
+/// Close the open timeline.
+pub fn close(state: &AppState) {
+    state.timeline.active().set(None);
+    state.timeline.active_track().set(None);
+    state.timeline.active_definition_id().set(None);
+    state.timeline.selected_file_indices().set(Vec::new());
+}
+
+/// Zoom and scroll so the whole timeline fits the spectrogram.
+fn show_whole_timeline(state: &AppState, tv: &TimelineView) {
+    let duration = tv.total_duration_secs;
+    let time_res = state.library.files().with_untracked(|files| {
+        tv.primary_segment()
+            .and_then(|s| files.get(s.file_index))
+            .map_or(1.0, |f| f.spectrogram.time_resolution)
+    });
+    let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
+    if canvas_w > 0.0 && time_res > 0.0 && duration > 0.0 {
+        let zoom = ((canvas_w * time_res) / duration)
+            .clamp(crate::viewport::MIN_ZOOM, crate::viewport::MAX_ZOOM);
+        state.view.zoom_level().set(zoom);
+        let visible_time = crate::viewport::visible_time(canvas_w, zoom, time_res);
+        let from_here = state.playback.start_mode().get_untracked().uses_from_here();
+        state
+            .view
+            .scroll_offset()
+            .set(crate::viewport::clamp_scroll_for_mode(
+                0.0,
+                duration,
+                visible_time,
+                from_here,
+            ));
+    } else {
+        state.view.scroll_offset().set(0.0);
+    }
+}
+
+/// Place the open timeline's clips another way, and show all of the
+/// timeline again, because its length changes. The choice is saved with the
+/// timeline in the project. Audio that is playing stops: its position would
+/// land in a different clip.
+pub fn set_arrangement(state: &AppState, arrangement: Arrangement) {
+    if state.timeline.arrangement().get_untracked() == arrangement {
+        return;
+    }
+    crate::audio::playback::stop(state);
+    state.timeline.arrangement().set(arrangement);
+    state.interaction.selection().set(None);
+    rebuild_active(state);
+    if let Some(tv) = state.timeline.active().get_untracked() {
+        show_whole_timeline(state, &tv);
+    }
+    state
+        .viewmode
+        .tile_ready_signal()
+        .update(|n| *n = n.wrapping_add(1));
+    if let Some(id) = state.timeline.active_definition_id().get_untracked() {
+        let mut saved = false;
+        state.project.current().update(|p| {
+            let Some(def) = p
+                .as_mut()
+                .and_then(|proj| proj.timelines.iter_mut().find(|t| t.id == id))
+            else {
+                return;
+            };
+            def.arrangement = Some(arrangement);
+            saved = true;
+        });
+        if saved {
+            state.project.current().update(|p| {
+                if let Some(proj) = p {
+                    proj.touch();
+                }
+            });
+            state.project.dirty().set(true);
+        }
+    }
 }
 
 /// Switch the open timeline to a channel (`None`: the files as they were
@@ -450,6 +771,138 @@ mod tests {
         "260401_0012_2.wav", // 4
         "notes.wav",         // 5, not a channel of anything
     ];
+
+    fn clip(start_secs: Option<f64>, duration_secs: f64, take: Option<&str>) -> ClipIn {
+        ClipIn {
+            start_ms: start_secs.map(|s| 1_700_000_000_000.0 + s * 1000.0),
+            duration_secs,
+            take: take.map(str::to_string),
+        }
+    }
+
+    fn starts(clips: &[ClipIn], arrangement: Arrangement) -> Vec<(usize, f64)> {
+        place_clips(clips, arrangement).0
+    }
+
+    #[test]
+    fn in_turn_puts_each_clip_after_the_one_before() {
+        // Three files with the same file date, as after a copy.
+        let clips = [
+            clip(Some(0.0), 2.0, None),
+            clip(Some(0.0), 3.0, None),
+            clip(Some(0.0), 1.5, None),
+        ];
+        assert_eq!(
+            starts(&clips, Arrangement::InTurn { gap_secs: 0.0 }),
+            vec![(0, 0.0), (1, 2.0), (2, 5.0)]
+        );
+        assert_eq!(
+            starts(&clips, Arrangement::InTurn { gap_secs: 0.5 }),
+            vec![(0, 0.0), (1, 2.5), (2, 6.0)]
+        );
+    }
+
+    #[test]
+    fn in_turn_has_no_clock_time() {
+        let clips = [clip(Some(5.0), 2.0, None), clip(Some(9.0), 2.0, None)];
+        assert_eq!(
+            place_clips(&clips, Arrangement::InTurn { gap_secs: 1.0 }).1,
+            0.0
+        );
+        assert!(place_clips(&clips, Arrangement::RecordingTime).1 > 0.0);
+    }
+
+    #[test]
+    fn in_turn_starts_the_channels_of_one_take_together() {
+        let clips = [
+            clip(None, 2.0, Some("a_0010")),
+            clip(None, 2.5, Some("a_0010")),
+            clip(None, 1.0, Some("a_0011")),
+            clip(None, 4.0, None),
+        ];
+        // The take's place is as long as its longest channel file.
+        assert_eq!(
+            starts(&clips, Arrangement::InTurn { gap_secs: 1.0 }),
+            vec![(0, 0.0), (1, 0.0), (2, 3.5), (3, 5.5)]
+        );
+    }
+
+    #[test]
+    fn a_bad_gap_counts_as_no_gap() {
+        let clips = [clip(None, 2.0, None), clip(None, 2.0, None)];
+        for gap_secs in [-3.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                starts(&clips, Arrangement::InTurn { gap_secs }),
+                vec![(0, 0.0), (1, 2.0)]
+            );
+        }
+    }
+
+    #[test]
+    fn recording_time_orders_by_start_and_puts_untimed_clips_last() {
+        let clips = [
+            clip(None, 1.0, None),
+            clip(Some(10.0), 2.0, None),
+            clip(Some(0.0), 2.0, None),
+        ];
+        assert_eq!(
+            starts(&clips, Arrangement::RecordingTime),
+            vec![(2, 0.0), (1, 10.0), (0, 12.0)]
+        );
+    }
+
+    #[test]
+    fn a_new_timeline_keeps_recording_times_that_are_close_and_apart() {
+        let clips = [
+            clip(Some(0.0), 2.0, None),
+            clip(Some(10.0), 2.0, None),
+            clip(Some(20.0), 2.0, None),
+        ];
+        assert_eq!(suggest_arrangement(&clips), Arrangement::RecordingTime);
+        // Two channels of one take start together: that is not an overlap.
+        let takes = [
+            clip(Some(0.0), 2.0, Some("a_0010")),
+            clip(Some(0.0), 2.0, Some("a_0010")),
+            clip(Some(10.0), 2.0, Some("a_0011")),
+        ];
+        assert_eq!(suggest_arrangement(&takes), Arrangement::RecordingTime);
+    }
+
+    #[test]
+    fn a_new_timeline_goes_in_turn_when_recording_times_do_not_work() {
+        let in_turn = Arrangement::InTurn { gap_secs: 0.0 };
+        // Copied together: the same file date.
+        let same = [clip(Some(0.0), 2.0, None), clip(Some(-1.0), 3.0, None)];
+        assert_eq!(suggest_arrangement(&same), in_turn);
+        // Recorded on different nights.
+        let far = [clip(Some(0.0), 2.0, None), clip(Some(86_400.0), 2.0, None)];
+        assert_eq!(suggest_arrangement(&far), in_turn);
+        // One file has no time.
+        let untimed = [clip(Some(0.0), 2.0, None), clip(None, 2.0, None)];
+        assert_eq!(suggest_arrangement(&untimed), in_turn);
+    }
+
+    #[test]
+    fn names_sort_with_their_numbers_counted() {
+        let mut names = vec![
+            "rec_10.wav",
+            "Rec_9.wav",
+            "rec_009b.wav",
+            "alpha.wav",
+            "rec_9.wav",
+        ];
+        names.sort_by(|a, b| natural_name_order(a, b));
+        assert_eq!(
+            names,
+            vec![
+                "alpha.wav",
+                "Rec_9.wav",
+                "rec_9.wav",
+                "rec_009b.wav",
+                "rec_10.wav"
+            ]
+        );
+    }
 
     #[test]
     fn no_channel_chosen_shows_the_files_as_added() {

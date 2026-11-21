@@ -58,21 +58,11 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
     let files = state.library.files().get_untracked();
 
     if let Some(timeline) = state.timeline.active().get_untracked() {
-        let mut sample_rate = None;
         let mut segments = Vec::with_capacity(timeline.segments.len());
         let mut timeline_file_ids = Vec::with_capacity(timeline.segments.len());
 
         for seg in &timeline.segments {
             let file = files.get(seg.file_index)?;
-            let sr = file.audio.sample_rate;
-            if let Some(expected_sr) = sample_rate {
-                if expected_sr != sr {
-                    state.show_error_toast("Timeline playback requires matching sample rates");
-                    return None;
-                }
-            } else {
-                sample_rate = Some(sr);
-            }
             timeline_file_ids.push(file.id);
             segments.push((
                 file.audio.source.clone(),
@@ -81,8 +71,10 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
             ));
         }
 
-        let sr = sample_rate?;
-        let source: Arc<dyn AudioSource> = Arc::new(TimelineAudioSource::new(segments, sr));
+        // Clips with a lower sample rate are resampled to the highest one.
+        let timeline_source = TimelineAudioSource::at_highest_rate(segments)?;
+        let sr = timeline_source.sample_rate();
+        let source: Arc<dyn AudioSource> = Arc::new(timeline_source);
         return Some(PlaybackTarget {
             source,
             sample_rate: sr,
@@ -477,8 +469,7 @@ fn current_play_from_here_time(state: &AppState) -> f64 {
     let scroll = state.view.scroll_offset().get_untracked();
     let time_res = if let Some(ref tl) = state.timeline.active().get_untracked() {
         let files = state.library.files().get_untracked();
-        tl.segments
-            .first()
+        tl.primary_segment()
             .and_then(|s| files.get(s.file_index))
             .map(|f| f.spectrogram.time_resolution)
             .unwrap_or(1.0)

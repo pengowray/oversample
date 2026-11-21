@@ -882,7 +882,10 @@ fn detection_marks(state: AppState) -> Option<crate::canvas::overview_marks::Ove
             let min = crate::classifier::min_confidence(state, m);
             state.classifier.results().with(|results| {
                 let run = results.get(&(file, m))?;
-                Some(classifier_marks(&spans(run, min, true), &colour_order(file, m, run, min)))
+                Some(classifier_marks(
+                    &spans(run, min, true),
+                    &colour_order(file, m, run, min),
+                ))
             })
         }
     }
@@ -1355,7 +1358,7 @@ pub fn OverviewPanel() -> impl IntoView {
             let px_per_sec = cw / total_duration;
 
             let files = state.library.files().get_untracked();
-            let primary_file = tl.segments.first().and_then(|s| files.get(s.file_index));
+            let primary_file = tl.primary_segment().and_then(|s| files.get(s.file_index));
             let max_freq = primary_file
                 .map(|f| f.spectrogram.max_freq)
                 .unwrap_or(96_000.0);

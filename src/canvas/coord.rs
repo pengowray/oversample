@@ -39,7 +39,7 @@ pub fn pointer_to_xtf(
             crate::canvas::live_waterfall::max_freq(),
         )
     } else if let Some(ref tl) = timeline {
-        let primary_file = tl.segments.first().and_then(|s| files.get(s.file_index))?;
+        let primary_file = tl.primary_segment().and_then(|s| files.get(s.file_index))?;
         (
             primary_file.spectrogram.time_resolution,
             primary_file.spectrogram.max_freq,

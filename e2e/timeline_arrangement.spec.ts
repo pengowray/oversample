@@ -1,0 +1,253 @@
+import { test, expect, type Page } from "@playwright/test";
+import fs from "fs";
+import os from "os";
+import path from "path";
+
+/**
+ * Where the files of a timeline go. Files that were copied or downloaded
+ * together have the same file date, and files from different nights are days
+ * apart, so a new timeline of either puts the files one after another. The
+ * Files chip changes that, and adds a pause between files. Files with
+ * different sample rates play on one timeline.
+ */
+
+type Snap = {
+  isPlaying: boolean;
+  playheadTime: number;
+  timelineFiles: string[] | null;
+  timelineStarts: number[] | null;
+  timelineDuration: number | null;
+  timelineStreamFiles: string[] | null;
+};
+
+type Clip = { name: string; sr: number; secs: number; hz: number; mtime?: number };
+
+/** Mono 16-bit WAV: a steady tone over quiet noise. */
+function toneWav(sr: number, secs: number, toneHz: number, seed: number): Buffer {
+  const n = Math.round(sr * secs);
+  const data = Buffer.alloc(n * 2);
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0xffffffff - 0.5;
+  };
+  for (let i = 0; i < n; i++) {
+    const s = rand() * 0.01 + 0.3 * Math.sin((2 * Math.PI * toneHz * i) / sr);
+    data.writeInt16LE(Math.round(s * 32767), i * 2);
+  }
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write("WAVEfmt ", 8);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sr, 24);
+  header.writeUInt32LE(sr * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
+
+function snapshot(page: Page): Promise<Snap> {
+  return page.evaluate(() =>
+    (window as unknown as { __oversample_test: () => Snap }).__oversample_test(),
+  );
+}
+
+/**
+ * The frequency in Hz of the brightest row of the spectrogram at `atSecs` on
+ * a timeline `totalSecs` long that fills the view, with `nyquist` at the top.
+ * 0 when that column has no bright row (a pause, or nothing drawn yet).
+ */
+function drawnTone(page: Page, atSecs: number, totalSecs: number, nyquist: number): Promise<number> {
+  return page
+    .locator(".spectrogram-container .chart-stage canvas")
+    .first()
+    .evaluate(
+      (c: HTMLCanvasElement, a: { frac: number; nyquist: number }) => {
+        const ctx = c.getContext("2d")!;
+        const x = Math.round(c.width * a.frac);
+        const d = ctx.getImageData(x, 0, 1, c.height).data;
+        const sums: number[] = [];
+        for (let y = 0; y < c.height; y++) sums.push(d[y * 4] + d[y * 4 + 1] + d[y * 4 + 2]);
+        const sorted = [...sums].sort((p, q) => p - q);
+        const median = sorted[sorted.length >> 1];
+        let best = 0;
+        for (let y = 1; y < c.height; y++) if (sums[y] > sums[best]) best = y;
+        if (sums[best] < median + 120) return 0;
+        return Math.round(a.nyquist * (1 - best / c.height));
+      },
+      { frac: atSecs / totalSecs, nyquist },
+    );
+}
+
+async function openTimeline(page: Page, clips: Clip[]) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oversample-arrange-"));
+  const paths = clips.map((f, i) => {
+    const p = path.join(dir, f.name);
+    fs.writeFileSync(p, toneWav(f.sr, f.secs, f.hz, 100 + i));
+    if (f.mtime !== undefined) fs.utimesSync(p, f.mtime, f.mtime);
+    return p;
+  });
+  await page.addInitScript(() => localStorage.setItem("oversample_projects_enabled", "true"));
+  await page.goto("/");
+  await page.locator('input[type="file"][accept*=".wav"]').first().setInputFiles(paths);
+  await expect(page.locator(".file-item:not(.loading)")).toHaveCount(clips.length, {
+    timeout: 60_000,
+  });
+  await page.getByRole("button", { name: /^Project/ }).first().click();
+  await page.getByRole("button", { name: "Create project" }).click();
+  const row = (name: string) => page.locator(".project-file-item", { hasText: name });
+  await expect(row(clips[clips.length - 1].name)).toBeVisible({ timeout: 30_000 });
+  // Chosen in reverse, to show that the order comes from the names.
+  const reversed = [...clips].reverse();
+  await row(reversed[0].name).click();
+  for (const f of reversed.slice(1)) await row(f.name).click({ modifiers: ["Control"] });
+  await page.getByRole("button", { name: "Create Timeline" }).click();
+  await expect.poll(async () => (await snapshot(page)).timelineFiles?.length).toBe(clips.length);
+}
+
+const chip = (page: Page) =>
+  page.locator(".layer-btn", { has: page.locator(".layer-btn-category", { hasText: /^Files$/ }) });
+
+async function choose(page: Page, option: string) {
+  await chip(page).click();
+  await page.locator(".layer-panel").getByRole("button", { name: option, exact: true }).click();
+}
+
+const near = (hz: number) => ({ lo: hz - 1500, hi: hz + 1500 });
+async function expectTones(
+  page: Page,
+  total: number,
+  nyquist: number,
+  want: { at: number; hz: number }[],
+) {
+  await expect
+    .poll(
+      async () => {
+        const got = [];
+        for (const w of want) got.push(await drawnTone(page, w.at, total, nyquist));
+        return got.every((g, i) =>
+          want[i].hz === 0 ? g === 0 : g >= near(want[i].hz).lo && g <= near(want[i].hz).hi,
+        )
+          ? "ok"
+          : JSON.stringify(got);
+      },
+      { timeout: 30_000 },
+    )
+    .toBe("ok");
+}
+
+const SAME_DATE: Clip[] = [
+  { name: "alpha.wav", sr: 192_000, secs: 2, hz: 20_000 },
+  { name: "bravo.wav", sr: 192_000, secs: 3, hz: 40_000 },
+  { name: "charlie.wav", sr: 192_000, secs: 1.5, hz: 60_000 },
+];
+
+test.describe("timeline arrangement", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("files with the same date play one after another", async ({ page }) => {
+    test.setTimeout(240_000);
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await openTimeline(page, SAME_DATE);
+
+    const snap = await snapshot(page);
+    expect(snap.timelineFiles).toEqual(["alpha.wav", "bravo.wav", "charlie.wav"]);
+    expect(snap.timelineStarts).toEqual([0, 2, 5]);
+    expect(snap.timelineDuration).toBeCloseTo(6.5, 3);
+    await expect(chip(page).locator(".layer-btn-value")).toHaveText("One after another");
+    // Each file is drawn in its own place.
+    await expectTones(page, 6.5, 96_000, [
+      { at: 1, hz: 20_000 },
+      { at: 3.5, hz: 40_000 },
+      { at: 5.75, hz: 60_000 },
+    ]);
+
+    // Playback runs through all three files to the end of the timeline.
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snapshot(page)).isPlaying).toBe(true);
+    expect((await snapshot(page)).timelineStreamFiles).toEqual([
+      "alpha.wav",
+      "bravo.wav",
+      "charlie.wav",
+    ]);
+    await expect
+      .poll(async () => (await snapshot(page)).playheadTime, { timeout: 20_000 })
+      .toBeGreaterThan(5.5);
+    await expect.poll(async () => (await snapshot(page)).isPlaying, { timeout: 20_000 }).toBe(false);
+
+    // A 1 s pause between the files.
+    await choose(page, "One after another, 1 s pause");
+    await expect.poll(async () => (await snapshot(page)).timelineStarts).toEqual([0, 3, 7]);
+    expect((await snapshot(page)).timelineDuration).toBeCloseTo(8.5, 3);
+    await expect(chip(page).locator(".layer-btn-value")).toHaveText("1 s pause");
+    await expectTones(page, 8.5, 96_000, [
+      { at: 1, hz: 20_000 },
+      { at: 2.5, hz: 0 },
+      { at: 4.5, hz: 40_000 },
+      { at: 6.5, hz: 0 },
+      { at: 7.75, hz: 60_000 },
+    ]);
+
+    // The project keeps the arrangement: close the timeline and open it again.
+    await page.locator(".sidebar-header-label", { hasText: "Files" }).click();
+    await page.locator(".timeline-exit-btn").click();
+    await expect.poll(async () => (await snapshot(page)).timelineFiles ?? null).toBeNull();
+    await page.getByRole("button", { name: /^Project/ }).first().click();
+    await page.locator(".project-timeline-item").click();
+    await expect.poll(async () => (await snapshot(page)).timelineStarts).toEqual([0, 3, 7]);
+    await expect(chip(page).locator(".layer-btn-value")).toHaveText("1 s pause");
+
+    // Recorded times are still on offer. These files have the same date, so
+    // they all start within a few seconds of each other.
+    await choose(page, "At their recorded times");
+    await expect
+      .poll(async () => (await snapshot(page)).timelineDuration ?? 99)
+      .toBeLessThan(6);
+
+    expect(errors).toEqual([]);
+  });
+
+  test("files recorded days apart play one after another", async ({ page }) => {
+    test.setTimeout(180_000);
+    const t0 = Date.UTC(2026, 3, 1, 20, 0, 0) / 1000;
+    await openTimeline(
+      page,
+      SAME_DATE.map((f, i) => ({ ...f, mtime: t0 + i * 86_400 })),
+    );
+    const snap = await snapshot(page);
+    expect(snap.timelineStarts).toEqual([0, 2, 5]);
+    expect(snap.timelineDuration).toBeCloseTo(6.5, 3);
+  });
+
+  test("files with different sample rates play on one timeline", async ({ page }) => {
+    test.setTimeout(240_000);
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await openTimeline(page, [
+      { name: "alpha.wav", sr: 192_000, secs: 2, hz: 20_000 },
+      { name: "bravo.wav", sr: 384_000, secs: 3, hz: 40_000 },
+      { name: "charlie.wav", sr: 44_100, secs: 1.5, hz: 5_000 },
+    ]);
+    expect((await snapshot(page)).timelineStarts).toEqual([0, 2, 5]);
+    // The view reaches the highest file's top frequency (192 kHz), and each
+    // file's tone is drawn at its own frequency.
+    await expectTones(page, 6.5, 192_000, [
+      { at: 1, hz: 20_000 },
+      { at: 3.5, hz: 40_000 },
+      { at: 5.75, hz: 5_000 },
+    ]);
+
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snapshot(page)).isPlaying).toBe(true);
+    await expect
+      .poll(async () => (await snapshot(page)).playheadTime, { timeout: 20_000 })
+      .toBeGreaterThan(5.5);
+    await page.screenshot({ path: process.env.ARRANGE_SHOT ?? "test-results/arrange-mixed.png" });
+    expect(errors).toEqual([]);
+  });
+});

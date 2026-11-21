@@ -657,7 +657,7 @@ pub fn TimeGutter(#[prop(default = 0.0)] data_left_offset: f64) -> impl IntoView
         // Timeline mode has its own time_res/duration/clock.
         if let Some(tl) = state.timeline.active().get() {
             let files = state.library.files().get();
-            let time_res = tl.segments.first()
+            let time_res = tl.primary_segment()
                 .and_then(|s| files.get(s.file_index))
                 .map(|f| f.spectrogram.time_resolution)
                 .unwrap_or(1.0);

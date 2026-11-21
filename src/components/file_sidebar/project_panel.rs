@@ -6,7 +6,6 @@ use crate::project::BatProject;
 use crate::project_store;
 use crate::state::store_fields::*;
 use crate::state::AppState;
-use crate::viewport;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsCast;
@@ -533,71 +532,48 @@ fn ProjectView(project: BatProject) -> impl IntoView {
         if runtime_indices.len() < 2 {
             return;
         }
+        let Some(tv) = crate::timeline::open(&state, runtime_indices, None, None) else {
+            return;
+        };
+        // Save to the project, in the order the timeline plays the files.
+        let order = state.timeline.selected_file_indices().get_untracked();
         let files = state.library.files().get_untracked();
-        if let Some(tv) = crate::timeline::TimelineView::from_files(&runtime_indices, &files, None)
-        {
-            let timeline_duration = tv.total_duration_secs;
-            let primary_time_res = tv
-                .segments
-                .first()
-                .and_then(|s| files.get(s.file_index))
-                .map(|f| f.spectrogram.time_resolution)
-                .unwrap_or(1.0);
-            let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
-            // Save to project
-            state.project.current().update(|p| {
-                let Some(proj) = p else { return };
-                let entries: Vec<_> = tv
-                    .segments
-                    .iter()
-                    .filter_map(|seg| {
-                        let loaded = files.get(seg.file_index)?;
-                        let identity = loaded.identity.as_ref()?;
-                        let proj_idx = proj.find_file(identity)?;
-                        Some(crate::project::TimelineEntry {
-                            file_index: proj_idx,
-                            start_epoch_ms: tv.origin_epoch_ms + seg.timeline_offset_secs * 1000.0,
-                            duration_secs: seg.duration_secs,
-                            multitrack_group_id: None,
-                        })
+        let id = crate::annotations::generate_uuid();
+        let mut saved = false;
+        state.project.current().update(|p| {
+            let Some(proj) = p else { return };
+            let entries: Vec<_> = order
+                .iter()
+                .filter_map(|&i| {
+                    let loaded = files.get(i)?;
+                    let proj_idx = proj.find_file(loaded.identity.as_ref()?)?;
+                    let offset = tv
+                        .segment_for_file(i)
+                        .map_or(0.0, |seg| seg.timeline_offset_secs);
+                    Some(crate::project::TimelineEntry {
+                        file_index: proj_idx,
+                        start_epoch_ms: tv.origin_epoch_ms + offset * 1000.0,
+                        duration_secs: loaded.audio.duration_secs,
+                        multitrack_group_id: None,
                     })
-                    .collect();
-                if !entries.is_empty() {
-                    proj.timelines.push(crate::project::TimelineDefinition {
-                        id: crate::annotations::generate_uuid(),
-                        entries,
-                        label: None,
-                    });
-                    proj.touch();
-                }
-            });
-            state.project.dirty().set(true);
-
-            state.timeline.selected_file_indices().set(runtime_indices);
-            state.timeline.active().set(Some(tv));
-            state.timeline.active_track().set(None);
-            state.library.current_index().set(None);
-            state.suspend_follow();
-            if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
-                let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration)
-                    .clamp(viewport::MIN_ZOOM, viewport::MAX_ZOOM);
-                state.view.zoom_level().set(fit_zoom);
-                let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
-                let from_here_mode = state.playback.start_mode().get_untracked().uses_from_here();
-                state
-                    .view
-                    .scroll_offset()
-                    .set(viewport::clamp_scroll_for_mode(
-                        0.0,
-                        timeline_duration,
-                        visible_time,
-                        from_here_mode,
-                    ));
-            } else {
-                state.view.scroll_offset().set(0.0);
+                })
+                .collect();
+            if !entries.is_empty() {
+                proj.timelines.push(crate::project::TimelineDefinition {
+                    id: id.clone(),
+                    entries,
+                    arrangement: Some(tv.arrangement),
+                    label: None,
+                });
+                proj.touch();
+                saved = true;
             }
-            selected_proj_indices.set(Vec::new());
+        });
+        if saved {
+            state.timeline.active_definition_id().set(Some(id));
+            state.project.dirty().set(true);
         }
+        selected_proj_indices.set(Vec::new());
     };
 
     // ── Build file items ──
@@ -789,6 +765,10 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                     let entry_count = tl.entries.len();
                     let tl_entries = tl.entries.clone();
                     let tl_id = tl.id.clone();
+                    let tl_id_open = tl.id.clone();
+                    // A project saved before arrangements existed has none:
+                    // the app then picks one and puts the files in name order.
+                    let tl_arrangement = tl.arrangement;
 
                     // Activate this saved timeline
                     let on_activate = move |_: web_sys::MouseEvent| {
@@ -817,28 +797,12 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                         }
 
                         if runtime_indices.len() >= 2 {
-                            if let Some(tv) = crate::timeline::TimelineView::from_files(&runtime_indices, &files, None) {
-                                let timeline_duration = tv.total_duration_secs;
-                                let primary_time_res = tv.segments.first()
-                                    .and_then(|s| files.get(s.file_index))
-                                    .map(|f| f.spectrogram.time_resolution)
-                                    .unwrap_or(1.0);
-                                let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
-                                state.timeline.selected_file_indices().set(runtime_indices);
-                                state.timeline.active().set(Some(tv));
-                                state.timeline.active_track().set(None);
-                                state.library.current_index().set(None);
-                                state.suspend_follow();
-                                if canvas_w > 0.0 && primary_time_res > 0.0 && timeline_duration > 0.0 {
-                                    let fit_zoom = ((canvas_w * primary_time_res) / timeline_duration).clamp(viewport::MIN_ZOOM, viewport::MAX_ZOOM);
-                                    state.view.zoom_level().set(fit_zoom);
-                                    let visible_time = viewport::visible_time(canvas_w, fit_zoom, primary_time_res);
-                                    let from_here_mode = state.playback.start_mode().get_untracked() .uses_from_here();
-                                    state.view.scroll_offset().set(viewport::clamp_scroll_for_mode(0.0, timeline_duration, visible_time, from_here_mode));
-                                } else {
-                                    state.view.scroll_offset().set(0.0);
-                                }
-                            }
+                            crate::timeline::open(
+                                &state,
+                                runtime_indices,
+                                tl_arrangement,
+                                Some(tl_id_open.clone()),
+                            );
                         }
                     };
 

@@ -466,8 +466,7 @@ pub fn App() -> impl IntoView {
 
         let (time_res, duration) = if let Some(ref tl) = timeline {
             let time_res = tl
-                .segments
-                .first()
+                .primary_segment()
                 .and_then(|seg| files.get(seg.file_index))
                 .map(|file| file.spectrogram.time_resolution)
                 .unwrap_or(1.0);
@@ -1254,8 +1253,7 @@ pub fn App() -> impl IntoView {
                 let timeline = state_kb.timeline.active().get_untracked();
                 let (time_res, duration) = if let Some(ref tl) = timeline {
                     let tr = tl
-                        .segments
-                        .first()
+                        .primary_segment()
                         .and_then(|s| files.get(s.file_index))
                         .map(|f| f.spectrogram.time_resolution)
                         .unwrap_or(1.0);
@@ -1400,8 +1398,15 @@ pub fn App() -> impl IntoView {
                     // Switching to mobile: collapse sidebars (they become
                     // overlays), but keep Files open while no recording is
                     // open, as at start.
-                    let empty = state_resize.library.current_index().get_untracked().is_none()
-                        && state_resize.timeline.active().with_untracked(|t| t.is_none());
+                    let empty = state_resize
+                        .library
+                        .current_index()
+                        .get_untracked()
+                        .is_none()
+                        && state_resize
+                            .timeline
+                            .active()
+                            .with_untracked(|t| t.is_none());
                     state_resize.panels.left_collapsed().set(!empty);
                     state_resize.panels.right_collapsed().set(true);
                 } else {

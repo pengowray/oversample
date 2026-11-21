@@ -38,6 +38,28 @@ impl std::fmt::Debug for TimelineAudioSource {
 }
 
 impl TimelineAudioSource {
+    /// A timeline of `(source, start in seconds, duration in seconds)` clips
+    /// at the highest sample rate among them. A clip with a lower rate is
+    /// resampled up to it, so clips with different rates play on one
+    /// timeline. `None` when there are no clips.
+    pub fn at_highest_rate(segments: Vec<(Arc<dyn AudioSource>, f64, f64)>) -> Option<Self> {
+        let sample_rate = segments.iter().map(|s| s.0.sample_rate()).max()?;
+        let segments = segments
+            .into_iter()
+            .map(|(source, start, duration)| {
+                let source: Arc<dyn AudioSource> = if source.sample_rate() == sample_rate {
+                    source
+                } else {
+                    Arc::new(ResampledSource::new(source, sample_rate))
+                };
+                (source, start, duration)
+            })
+            .collect();
+        Some(Self::new(segments, sample_rate))
+    }
+
+    /// Every source must already have `sample_rate`: see
+    /// [`TimelineAudioSource::at_highest_rate`].
     pub fn new(segments: Vec<(Arc<dyn AudioSource>, f64, f64)>, sample_rate: u32) -> Self {
         let mut mapped_segments = Vec::with_capacity(segments.len());
         let mut channels = 1u32;
@@ -112,6 +134,114 @@ impl AudioSource for TimelineAudioSource {
 
     fn is_fully_loaded(&self) -> bool {
         self.segments.iter().all(|seg| seg.source.is_fully_loaded())
+    }
+
+    fn as_contiguous(&self) -> Option<&[f32]> {
+        None
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Taps on each side of the windowed-sinc filter in [`ResampledSource`].
+const RESAMPLE_HALF_TAPS: i64 = 12;
+
+/// A source read at another sample rate. Each output sample is worked out
+/// when it is read, from the input samples around it (windowed-sinc
+/// interpolation), so nothing is stored.
+pub struct ResampledSource {
+    inner: Arc<dyn AudioSource>,
+    sample_rate: u32,
+    total_samples: u64,
+}
+
+impl ResampledSource {
+    pub fn new(inner: Arc<dyn AudioSource>, sample_rate: u32) -> Self {
+        let total_samples = (inner.total_samples() as f64 * f64::from(sample_rate)
+            / f64::from(inner.sample_rate().max(1)))
+        .round() as u64;
+        Self {
+            inner,
+            sample_rate,
+            total_samples,
+        }
+    }
+}
+
+impl AudioSource for ResampledSource {
+    fn total_samples(&self) -> u64 {
+        self.total_samples
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn channel_count(&self) -> u32 {
+        self.inner.channel_count()
+    }
+
+    fn read_samples(&self, channel: ChannelView, start: u64, buf: &mut [f32]) -> usize {
+        if start >= self.total_samples || buf.is_empty() {
+            return 0;
+        }
+        let n = buf.len().min((self.total_samples - start) as usize);
+        // Input samples per output sample.
+        let step = f64::from(self.inner.sample_rate()) / f64::from(self.sample_rate.max(1));
+        // Reading at a lower rate needs a lower cutoff, and so a wider filter.
+        let cutoff = (1.0 / step).min(1.0);
+        let half = (RESAMPLE_HALF_TAPS as f64 / cutoff).ceil() as i64;
+
+        // The input samples the filter reaches, with zeros past either end.
+        let first = (start as f64 * step).floor() as i64 - half + 1;
+        let last = ((start + n as u64 - 1) as f64 * step).floor() as i64 + half;
+        let mut input = vec![0.0f32; (last - first + 1) as usize];
+        let read_from = first.max(0);
+        let skip = (read_from - first) as usize;
+        if skip < input.len() {
+            let _ = self
+                .inner
+                .read_samples(channel, read_from as u64, &mut input[skip..]);
+        }
+
+        // The filter's two angles (sinc and window) each grow by a fixed
+        // amount from one tap to the next, so each tap turns the previous
+        // tap's sine and cosine instead of calling sin and cos again.
+        let sinc_step = std::f64::consts::PI * cutoff;
+        let window_step = std::f64::consts::PI / half as f64;
+        let (sinc_step_sin, sinc_step_cos) = sinc_step.sin_cos();
+        let (window_step_sin, window_step_cos) = window_step.sin_cos();
+        for (i, out) in buf[..n].iter_mut().enumerate() {
+            let pos = (start + i as u64) as f64 * step;
+            let centre = pos.floor() as i64;
+            let frac = pos - centre as f64;
+            let t0 = (1 - half) as f64 - frac;
+            let (mut sinc_sin, mut sinc_cos) = (sinc_step * t0).sin_cos();
+            let (mut window_sin, mut window_cos) = (window_step * t0).sin_cos();
+            let base = (centre + 1 - half - first) as usize;
+            let mut sum = 0.0f64;
+            for (tap, &sample) in input[base..base + 2 * half as usize].iter().enumerate() {
+                let x = sinc_step * (t0 + tap as f64);
+                let sinc = if x.abs() < 1e-9 { 1.0 } else { sinc_sin / x };
+                sum += f64::from(sample) * sinc * (0.5 + 0.5 * window_cos);
+                (sinc_sin, sinc_cos) = (
+                    sinc_sin * sinc_step_cos + sinc_cos * sinc_step_sin,
+                    sinc_cos * sinc_step_cos - sinc_sin * sinc_step_sin,
+                );
+                (window_sin, window_cos) = (
+                    window_sin * window_step_cos + window_cos * window_step_sin,
+                    window_cos * window_step_cos - window_sin * window_step_sin,
+                );
+            }
+            *out = (sum * cutoff) as f32;
+        }
+        n
+    }
+
+    fn is_fully_loaded(&self) -> bool {
+        self.inner.is_fully_loaded()
     }
 
     fn as_contiguous(&self) -> Option<&[f32]> {

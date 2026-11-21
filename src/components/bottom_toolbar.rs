@@ -22,6 +22,7 @@ use crate::components::icons::Icon;
 use crate::components::layer_panel::{layer_opt_class, toggle_panel};
 use crate::components::listen_button::ListenButton;
 use crate::components::mode_button::ModeBucket;
+use crate::project::Arrangement;
 use crate::state::store_fields::*;
 use crate::state::{
     AppState, Bar, ChannelMode, LayerPanel, MicStrategy, PlayStartMode, PlaybackMode, RecordMode,
@@ -708,6 +709,60 @@ pub fn BottomToolbar() -> impl IntoView {
                 </div>
                 }
             }
+
+            // ── Files on the timeline: where each file goes ──
+            // Shown only while a timeline is open. It sits in this bar
+            // because the bar holds what decides the order things play in.
+            <Show when=move || state.timeline.active().with(|t| t.is_some())>
+                <div style="position:relative">
+                    <button
+                        class=move || {
+                            if state.panels.layer_panel_open().get() == Some(LayerPanel::TimelineFiles) { "layer-btn open" }
+                            else { "layer-btn" }
+                        }
+                        on:click=move |_| toggle_panel(&state, LayerPanel::TimelineFiles)
+                        title="Where each file goes on the timeline"
+                    >
+                        <span class="layer-btn-category">"Files"</span>
+                        <span class="layer-btn-value">{move || {
+                            match state.timeline.arrangement().get() {
+                                Arrangement::RecordingTime => "At recorded times".to_string(),
+                                Arrangement::InTurn { gap_secs } if gap_secs > 0.0 => {
+                                    format!("{}\u{a0}s pause", crate::timeline::pause_text(gap_secs))
+                                }
+                                Arrangement::InTurn { .. } => "One after another".to_string(),
+                            }
+                        }}</span>
+                    </button>
+                    <Show when=move || state.panels.layer_panel_open().get() == Some(LayerPanel::TimelineFiles)>
+                        {
+                            let choose = move |a: Arrangement| {
+                                move |_: web_sys::MouseEvent| {
+                                    crate::timeline::set_arrangement(&state, a);
+                                    state.panels.layer_panel_open().set(None);
+                                }
+                            };
+                            let is = move |a: Arrangement| {
+                                move || layer_opt_class(state.timeline.arrangement().get() == a)
+                            };
+                            let in_turn = |gap_secs: f64| Arrangement::InTurn { gap_secs };
+                            view! {
+                                <div class="layer-panel" style="bottom: calc(100% + 4px); left: 0; min-width:170px;">
+                                    <div class="layer-panel-title">"Files on the timeline"</div>
+                                    <button class=is(Arrangement::RecordingTime) on:click=choose(Arrangement::RecordingTime)
+                                    >"At their recorded times"</button>
+                                    <button class=is(in_turn(0.0)) on:click=choose(in_turn(0.0))
+                                    >"One after another"</button>
+                                    {crate::timeline::PAUSE_CHOICES_SECS.iter().map(|&gap| view! {
+                                        <button class=is(in_turn(gap)) on:click=choose(in_turn(gap))
+                                        >{format!("One after another, {}\u{a0}s pause", crate::timeline::pause_text(gap))}</button>
+                                    }).collect::<Vec<_>>()}
+                                </div>
+                            }
+                        }
+                    </Show>
+                </div>
+            </Show>
 
             <div class="bottom-toolbar-sep"></div>
 

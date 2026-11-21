@@ -525,7 +525,7 @@ pub fn Spectrogram() -> impl IntoView {
 
             // In timeline mode, use the first segment's file for freq/resolution defaults
             let primary_file_idx = if let Some(ref tl) = timeline {
-                tl.segments.first().map(|s| s.file_index)
+                tl.primary_segment().map(|s| s.file_index)
             } else {
                 idx
             };
@@ -770,6 +770,33 @@ pub fn Spectrogram() -> impl IntoView {
                             continue;
                         }
 
+                        // The part of this clip's own frequency range that
+                        // the view shows. A clip with a lower sample rate
+                        // than the timeline's highest ends below the top of
+                        // the view: it is drawn on the rows up to its own
+                        // top frequency and the rows above stay black.
+                        let seg_max_freq = seg_file.spectrogram.max_freq;
+                        let own_range = !waterfall_active
+                            && decim_effective == 0
+                            && seg_max_freq > 0.0
+                            && max_freq > min_freq
+                            && (seg_max_freq - file_max_freq).abs() > 1.0;
+                        let (freq_crop_lo, freq_crop_hi, seg_top) = if own_range {
+                            if min_freq >= seg_max_freq {
+                                continue;
+                            }
+                            let shown_top = max_freq.min(seg_max_freq);
+                            let top =
+                                display_h as f64 * (max_freq - shown_top) / (max_freq - min_freq);
+                            (min_freq / seg_max_freq, shown_top / seg_max_freq, top)
+                        } else {
+                            (freq_crop_lo, freq_crop_hi, 0.0)
+                        };
+                        let seg_h = display_h as f64 - seg_top;
+                        if seg_h < 1.0 {
+                            continue;
+                        }
+
                         // Scroll offset within this file
                         let file_scroll = (scroll - seg.timeline_offset_secs).max(0.0);
                         let file_scroll_col = file_scroll / seg_time_res;
@@ -782,7 +809,7 @@ pub fn Spectrogram() -> impl IntoView {
                         // Translate to the visible start of this segment so the helper
                         // can render against a segment-local viewport.
                         let translate_x = clip_left;
-                        ctx.translate(translate_x, 0.0).unwrap_or(());
+                        ctx.translate(translate_x, seg_top).unwrap_or(());
 
                         let seg_visible_time = (clip_right - clip_left) / px_per_sec;
                         let seg_px_per_sec = px_per_sec;
@@ -804,7 +831,7 @@ pub fn Spectrogram() -> impl IntoView {
                         let drawn = spectrogram_renderer::blit_tiles_viewport(
                             &ctx,
                             clip_right - clip_left,
-                            display_h as f64,
+                            seg_h,
                             seg.file_index,
                             seg_total_cols,
                             file_scroll_col,
@@ -825,7 +852,7 @@ pub fn Spectrogram() -> impl IntoView {
                         if line_on && !resonators_on && !xform_on && decim_effective == 0 {
                             if let Some(vg) = crate::canvas::tile_blit::ViewportGeometry::new(
                                 clip_right - clip_left,
-                                display_h as f64,
+                                seg_h,
                                 seg_total_cols,
                                 file_scroll_col,
                                 seg_zoom,
@@ -847,7 +874,7 @@ pub fn Spectrogram() -> impl IntoView {
                                         min_freq: freq_crop_lo * nyquist,
                                         max_freq: freq_crop_hi * nyquist,
                                         width: clip_right - clip_left,
-                                        height: display_h as f64,
+                                        height: seg_h,
                                     },
                                 );
                             }
