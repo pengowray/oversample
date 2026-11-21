@@ -334,11 +334,14 @@ pub fn Waveform() -> impl IntoView {
                         )),
                     };
 
+                // The row this clip is on: the same rows as the spectrogram.
+                // Inside the loop `wave_h` is the row's height.
+                let (row_top, wave_h) = crate::timeline::row_rect(seg.row, tl.row_count, wave_h);
                 ctx.save();
                 ctx.begin_path();
-                ctx.rect(clip_left, 0.0, clip_right - clip_left, wave_h);
+                ctx.rect(clip_left, row_top, clip_right - clip_left, wave_h);
                 ctx.clip();
-                ctx.translate(clip_left, 0.0).unwrap_or(());
+                ctx.translate(clip_left, row_top).unwrap_or(());
 
                 waveform_renderer::draw_waveform(
                     &ctx,

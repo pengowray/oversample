@@ -1,5 +1,5 @@
 use crate::annotations::AnnotationKind;
-use crate::audio::source::{AudioSource, TimelineAudioSource};
+use crate::audio::source::{AudioSource, TimelineAudioSource, TimelineClip};
 use crate::audio::streaming_playback::{self, PlaybackParams};
 use crate::state::store_fields::*;
 use crate::state::{ActiveFocus, AppState, GainMode, PlaybackMode, Selection};
@@ -61,23 +61,34 @@ fn playback_target(state: &AppState) -> Option<PlaybackTarget> {
         let mut segments = Vec::with_capacity(timeline.segments.len());
         let mut timeline_file_ids = Vec::with_capacity(timeline.segments.len());
 
+        // One row can be chosen to play alone. The other rows stay silent,
+        // and the chosen row plays at its full level.
+        let only_row = state
+            .timeline
+            .only_row()
+            .get_untracked()
+            .filter(|&row| row < timeline.row_count && timeline.row_count > 1);
         for seg in &timeline.segments {
+            if only_row.is_some_and(|row| row != seg.row) {
+                continue;
+            }
             let file = files.get(seg.file_index)?;
             timeline_file_ids.push(file.id);
-            segments.push((
-                file.audio.source.clone(),
+            segments.push(TimelineClip {
+                source: file.audio.source.clone(),
                 // The rate the file is read at, which a time-expansion
                 // correction changes. The source keeps the stored rate.
-                file.audio.sample_rate,
-                seg.timeline_offset_secs,
-                seg.duration_secs,
-            ));
+                sample_rate: file.audio.sample_rate,
+                start_secs: seg.timeline_offset_secs,
+                duration_secs: seg.duration_secs,
+                row: seg.row,
+            });
         }
 
-        // Clips with a lower sample rate are resampled to the highest one.
-        let timeline_source = TimelineAudioSource::at_highest_rate(segments)?;
-        let sr = timeline_source.sample_rate();
-        let source: Arc<dyn AudioSource> = Arc::new(timeline_source);
+        // Clips with a lower sample rate are resampled to the highest one,
+        // and rows of clips that overlap in time are averaged.
+        let source = TimelineAudioSource::at_highest_rate(segments, timeline.total_duration_secs)?;
+        let sr = source.sample_rate();
         return Some(PlaybackTarget {
             source,
             sample_rate: sr,

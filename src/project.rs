@@ -139,6 +139,9 @@ pub enum Arrangement {
         #[serde(default)]
         gap_secs: f64,
     },
+    /// Every file starts at the start of the timeline, each on a row of its
+    /// own: for files recorded at the same time.
+    Together,
 }
 
 /// A timeline positions multiple files on a shared time axis.
@@ -350,6 +353,7 @@ mod tests {
             Arrangement::RecordingTime,
             Arrangement::InTurn { gap_secs: 0.0 },
             Arrangement::InTurn { gap_secs: 1.5 },
+            Arrangement::Together,
         ] {
             let yaml = yaml_serde::to_string(&definition(Some(arrangement))).unwrap();
             let loaded: TimelineDefinition = yaml_serde::from_str(&yaml).unwrap();

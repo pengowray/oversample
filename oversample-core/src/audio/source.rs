@@ -17,6 +17,20 @@ struct TimelineSourceSegment {
     duration_samples: u64,
 }
 
+/// One clip for [`TimelineAudioSource::at_highest_rate`].
+pub struct TimelineClip {
+    pub source: Arc<dyn AudioSource>,
+    /// The rate the clip's samples are played at. Passed in, not read from
+    /// the source: a file read at a corrected rate (time expansion) keeps
+    /// the stored rate in its source.
+    pub sample_rate: u32,
+    /// Where the clip starts on the timeline, in seconds.
+    pub start_secs: f64,
+    pub duration_secs: f64,
+    /// The row the clip is on. Rows play at the same time.
+    pub row: usize,
+}
+
 /// Virtual source that stitches multiple files onto one timeline-local sample axis.
 /// Gaps between segments read as silence.
 pub struct TimelineAudioSource {
@@ -38,28 +52,51 @@ impl std::fmt::Debug for TimelineAudioSource {
 }
 
 impl TimelineAudioSource {
-    /// A timeline of `(source, sample rate, start in seconds, duration in
-    /// seconds)` clips at the highest sample rate among them. A clip with a
-    /// lower rate is resampled up to it, so clips with different rates play
-    /// on one timeline. `None` when there are no clips.
+    /// A timeline of clips at the highest sample rate among them. A clip
+    /// with a lower rate is resampled up to it, so clips with different
+    /// rates play on one timeline. `None` when there are no clips.
     ///
-    /// Each clip's rate is passed in, not read from its source: a file read
-    /// at a corrected rate (time expansion) keeps the stored rate in its
-    /// source.
-    pub fn at_highest_rate(segments: Vec<(Arc<dyn AudioSource>, u32, f64, f64)>) -> Option<Self> {
-        let sample_rate = segments.iter().map(|s| s.1).max()?;
-        let segments = segments
-            .into_iter()
-            .map(|(source, rate, start, duration)| {
-                let source: Arc<dyn AudioSource> = if rate == sample_rate {
-                    source
-                } else {
-                    Arc::new(ResampledSource::new(source, rate, sample_rate))
-                };
-                (source, start, duration)
-            })
-            .collect();
-        Some(Self::new(segments, sample_rate))
+    /// Clips on one row play in turn; where two of them overlap, the earlier
+    /// one is heard. Rows play at the same time and are averaged
+    /// ([`AveragedSource`]).
+    ///
+    /// The result is at least `min_duration_secs` long, with silence after
+    /// the last clip: the timeline's length when only some of its rows are
+    /// passed in.
+    pub fn at_highest_rate(
+        clips: Vec<TimelineClip>,
+        min_duration_secs: f64,
+    ) -> Option<Arc<dyn AudioSource>> {
+        let sample_rate = clips.iter().map(|c| c.sample_rate).max()?;
+        let total_secs = clips
+            .iter()
+            .map(|c| c.start_secs + c.duration_secs)
+            .fold(min_duration_secs.max(0.0), f64::max);
+        let row_count = clips.iter().map(|c| c.row).max()? + 1;
+        let mut rows: Vec<Vec<(Arc<dyn AudioSource>, f64, f64)>> = vec![Vec::new(); row_count];
+        for clip in clips {
+            let source: Arc<dyn AudioSource> = if clip.sample_rate == sample_rate {
+                clip.source
+            } else {
+                Arc::new(ResampledSource::new(
+                    clip.source,
+                    clip.sample_rate,
+                    sample_rate,
+                ))
+            };
+            rows[clip.row].push((source, clip.start_secs, clip.duration_secs));
+        }
+        let mut sources: Vec<Arc<dyn AudioSource>> = Vec::new();
+        for row in rows.into_iter().filter(|row| !row.is_empty()) {
+            let mut source = Self::new(row, sample_rate);
+            // Every row is as long as the timeline.
+            source.total_samples = (total_secs * f64::from(sample_rate)).round() as u64;
+            sources.push(Arc::new(source));
+        }
+        if sources.len() == 1 {
+            return sources.pop();
+        }
+        Some(Arc::new(AveragedSource::new(sources)?))
     }
 
     /// Every source must already have `sample_rate`: see
@@ -138,6 +175,80 @@ impl AudioSource for TimelineAudioSource {
 
     fn is_fully_loaded(&self) -> bool {
         self.segments.iter().all(|seg| seg.source.is_fully_loaded())
+    }
+
+    fn as_contiguous(&self) -> Option<&[f32]> {
+        None
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Several sources with one sample rate, played at the same time. Each
+/// sample is the average of the sources' samples, so the result is never
+/// louder than the loudest source. A source that has ended, or is silent,
+/// counts as silence in the average.
+pub struct AveragedSource {
+    sources: Vec<Arc<dyn AudioSource>>,
+    sample_rate: u32,
+    channels: u32,
+    total_samples: u64,
+}
+
+impl AveragedSource {
+    /// `None` when `sources` is empty or the sources have different sample
+    /// rates.
+    pub fn new(sources: Vec<Arc<dyn AudioSource>>) -> Option<Self> {
+        let sample_rate = sources.first()?.sample_rate();
+        if sources.iter().any(|s| s.sample_rate() != sample_rate) {
+            return None;
+        }
+        Some(Self {
+            sample_rate,
+            channels: sources.iter().map(|s| s.channel_count()).max().unwrap_or(1),
+            total_samples: sources.iter().map(|s| s.total_samples()).max().unwrap_or(0),
+            sources,
+        })
+    }
+}
+
+impl AudioSource for AveragedSource {
+    fn total_samples(&self) -> u64 {
+        self.total_samples
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn channel_count(&self) -> u32 {
+        self.channels
+    }
+
+    fn read_samples(&self, channel: ChannelView, start: u64, buf: &mut [f32]) -> usize {
+        if start >= self.total_samples || buf.is_empty() {
+            return 0;
+        }
+        let n = buf.len().min((self.total_samples - start) as usize);
+        buf[..n].fill(0.0);
+        let mut one = vec![0.0f32; n];
+        for source in &self.sources {
+            let got = source.read_samples(channel, start, &mut one).min(n);
+            for (sum, &sample) in buf[..got].iter_mut().zip(&one[..got]) {
+                *sum += sample;
+            }
+        }
+        let scale = 1.0 / self.sources.len() as f32;
+        for sample in &mut buf[..n] {
+            *sample *= scale;
+        }
+        n
+    }
+
+    fn is_fully_loaded(&self) -> bool {
+        self.sources.iter().all(|s| s.is_fully_loaded())
     }
 
     fn as_contiguous(&self) -> Option<&[f32]> {

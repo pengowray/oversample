@@ -240,6 +240,21 @@ pub fn install(state: AppState) {
                 starts.push(&JsValue::from_f64(seg.timeline_offset_secs));
             }
             set(&o, "timelineStarts", starts.into());
+            // The row each clip is on, and the one row that plays alone.
+            let rows = js_sys::Array::new();
+            for seg in &tl.segments {
+                rows.push(&JsValue::from_f64(seg.row as f64));
+            }
+            set(&o, "timelineRows", rows.into());
+            set(
+                &o,
+                "timelineOnlyRow",
+                state
+                    .timeline
+                    .only_row()
+                    .get_untracked()
+                    .map_or(JsValue::NULL, |r| JsValue::from_f64(r as f64)),
+            );
             set(
                 &o,
                 "timelineDuration",

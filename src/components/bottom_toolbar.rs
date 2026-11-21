@@ -732,6 +732,7 @@ pub fn BottomToolbar() -> impl IntoView {
                                     format!("One after another, {}\u{a0}s pause", crate::timeline::pause_text(gap_secs))
                                 }
                                 Arrangement::InTurn { .. } => "One after another".to_string(),
+                                Arrangement::Together => "All start together".to_string(),
                             }
                         }}</span>
                     </button>
@@ -758,6 +759,10 @@ pub fn BottomToolbar() -> impl IntoView {
                                         <button class=is(in_turn(gap)) on:click=choose(in_turn(gap))
                                         >{format!("One after another, {}\u{a0}s pause", crate::timeline::pause_text(gap))}</button>
                                     }).collect::<Vec<_>>()}
+                                    // For files recorded at the same time:
+                                    // each file gets a row of its own.
+                                    <button class=is(Arrangement::Together) on:click=choose(Arrangement::Together)
+                                    >"All start together"</button>
                                 </div>
                             }
                         }

@@ -346,7 +346,7 @@ pub fn resolve_freq_at_pointer(
 ) -> Option<(f64, f64)> {
     let canvas_el = canvas_ref.get()?;
     let canvas: &HtmlCanvasElement = canvas_el.as_ref();
-    let ch = canvas.height() as f64;
+    let ch = crate::canvas::coord::row_height(&state, canvas.height() as f64);
     let is_mic_active =
         state.mic.recording().get_untracked() || state.mic.listening().get_untracked();
     let wf_active = is_mic_active && crate::canvas::live_waterfall::is_active();
@@ -680,7 +680,7 @@ pub fn on_pointerdown(
                     if let Some(canvas_el) = canvas_ref.get() {
                         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                         let cw = canvas.width() as f64;
-                        let ch = canvas.height() as f64;
+                        let ch = crate::canvas::coord::row_height(&state, canvas.height() as f64);
                         let scroll = state.view.scroll_offset().get_untracked();
                         let time_res = file.map(|f| f.spectrogram.time_resolution).unwrap_or(1.0);
                         let zoom = state.view.zoom_level().get_untracked();
@@ -706,7 +706,7 @@ pub fn on_pointerdown(
                         // Check BandFF body click
                         if let Some(canvas_el) = canvas_ref.get() {
                             let canvas: &HtmlCanvasElement = canvas_el.as_ref();
-                            let ch = canvas.height() as f64;
+                            let ch = crate::canvas::coord::row_height(&state, canvas.height() as f64);
                             let band_ff_lo = state.filter.band_ff_freq_lo().get_untracked();
                             let band_ff_hi = state.filter.band_ff_freq_hi().get_untracked();
                             if hit_test_band_ff_body(
@@ -720,7 +720,7 @@ pub fn on_pointerdown(
                     // No selection — check BandFF body click
                     if let Some(canvas_el) = canvas_ref.get() {
                         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
-                        let ch = canvas.height() as f64;
+                        let ch = crate::canvas::coord::row_height(&state, canvas.height() as f64);
                         let band_ff_lo = state.filter.band_ff_freq_lo().get_untracked();
                         let band_ff_hi = state.filter.band_ff_freq_hi().get_untracked();
                         if hit_test_band_ff_body(
@@ -868,7 +868,7 @@ pub fn on_pointermove(
                     if let Some(canvas_el) = canvas_el {
                         let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                         let cw = canvas.width() as f64;
-                        let ch = canvas.height() as f64;
+                        let ch = crate::canvas::coord::row_height(&state, canvas.height() as f64);
                         let band_ff_focused = state.interaction.active_focus().get_untracked()
                             == Some(ActiveFocus::FrequencyFocus);
                         let handle = hit_test_spec_handles(
@@ -1180,7 +1180,7 @@ pub fn on_dblclick(ev: MouseEvent, canvas_ref: &NodeRef<leptos::html::Canvas>, s
             if let Some(canvas_el) = canvas_ref.get() {
                 let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                 let cw = canvas.width() as f64;
-                let ch = canvas.height() as f64;
+                let ch = crate::canvas::coord::row_height(&state, canvas.height() as f64);
                 let file_idx = state.library.current_index().get_untracked().unwrap_or(0);
                 let files = state.library.files().get_untracked();
                 let file = files.get(file_idx);
@@ -1377,7 +1377,7 @@ pub fn on_touchstart(
         if let Some(canvas_el) = canvas_ref.get() {
             let canvas: &HtmlCanvasElement = canvas_el.as_ref();
             let cw = canvas.width() as f64;
-            let ch = canvas.height() as f64;
+            let ch = crate::canvas::coord::row_height(&state, canvas.height() as f64);
             let selected_ids = state.annotations.selected_ids().get_untracked();
             if !selected_ids.is_empty() {
                 let file_idx = state.library.current_index().get_untracked().unwrap_or(0);
@@ -1471,7 +1471,7 @@ pub fn on_touchstart(
         if let Some(canvas_el) = canvas_ref.get() {
             let canvas: &HtmlCanvasElement = canvas_el.as_ref();
             let cw = canvas.width() as f64;
-            let ch = canvas.height() as f64;
+            let ch = crate::canvas::coord::row_height(&state, canvas.height() as f64);
             let files = state.library.files().get_untracked();
             let idx = state.library.current_index().get_untracked();
             let file = idx.and_then(|i| files.get(i));
@@ -1573,7 +1573,7 @@ pub fn on_touchmove(
                 let canvas: &HtmlCanvasElement = canvas_el.as_ref();
                 let rect = canvas.get_bounding_client_rect();
                 let cw = canvas.width() as f64;
-                let ch = canvas.height() as f64;
+                let ch = crate::canvas::coord::row_height(&state, canvas.height() as f64);
 
                 // Decide & lock the zoom axis on the first significant spread —
                 // whichever direction the fingers moved apart more wins, then

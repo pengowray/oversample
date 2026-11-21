@@ -32,6 +32,8 @@ struct ClipIn {
 /// `InTurn` puts the clips one after another in the order given, with
 /// `gap_secs` of silence between them. Channel files of one take start
 /// together and take up one place, as long as the longest of them.
+///
+/// `Together` starts every clip at the start of the timeline.
 fn place_clips(clips: &[ClipIn], arrangement: Arrangement) -> (Vec<(usize, f64)>, f64) {
     match arrangement {
         Arrangement::RecordingTime => {
@@ -57,6 +59,7 @@ fn place_clips(clips: &[ClipIn], arrangement: Arrangement) -> (Vec<(usize, f64)>
                 .collect();
             (placed, origin_ms)
         }
+        Arrangement::Together => ((0..clips.len()).map(|i| (i, 0.0)).collect(), 0.0),
         Arrangement::InTurn { gap_secs } => {
             let gap = if gap_secs.is_finite() {
                 gap_secs.max(0.0)
@@ -93,6 +96,40 @@ fn place_clips(clips: &[ClipIn], arrangement: Arrangement) -> (Vec<(usize, f64)>
             (placed, 0.0)
         }
     }
+}
+
+/// Two clips that overlap by less than this many seconds can share a row.
+/// Recorders write consecutive files whose times overlap by a few
+/// milliseconds.
+const ROW_OVERLAP_TOLERANCE_SECS: f64 = 0.05;
+
+/// The row each clip is drawn on, so that clips that overlap in time are on
+/// different rows. `spans` are `(start, end)` in seconds, in any order; the
+/// result has one row index per span, in the same order.
+///
+/// Clips are taken in the order given and each goes on the first row where
+/// it overlaps nothing already there, so a timeline without overlaps has one
+/// row, and files that start together get rows in the order given.
+fn assign_rows(spans: &[(f64, f64)]) -> Vec<usize> {
+    let mut rows: Vec<Vec<(f64, f64)>> = Vec::new();
+    spans
+        .iter()
+        .map(|&(start, end)| {
+            let overlaps = |other: &(f64, f64)| {
+                start < other.1 - ROW_OVERLAP_TOLERANCE_SECS
+                    && other.0 < end - ROW_OVERLAP_TOLERANCE_SECS
+            };
+            let row = rows
+                .iter()
+                .position(|taken| !taken.iter().any(overlaps))
+                .unwrap_or_else(|| {
+                    rows.push(Vec::new());
+                    rows.len() - 1
+                });
+            rows[row].push((start, end));
+            row
+        })
+        .collect()
 }
 
 /// The arrangement a new timeline of these clips starts with: recording
@@ -133,6 +170,29 @@ fn suggest_arrangement(clips: &[ClipIn]) -> Arrangement {
         end = end.max(span_end);
     }
     Arrangement::RecordingTime
+}
+
+/// The part of a view `height` px tall that row `row` of `row_count` is
+/// drawn in: `(top, height)` in px. Rows are equal and fill the view. The
+/// spectrogram, the waveform, the overview and pointer input all use this,
+/// so a frequency is at the same place for all of them.
+pub fn row_rect(row: usize, row_count: usize, height: f64) -> (f64, f64) {
+    let count = row_count.max(1);
+    let row_height = height / count as f64;
+    (row.min(count - 1) as f64 * row_height, row_height)
+}
+
+/// The row at `y` px from the top of a view `height` px tall, and `y`
+/// measured from that row's top with the row's height:
+/// `(row, y in row, row height)`.
+pub fn row_at(y: f64, row_count: usize, height: f64) -> (usize, f64, f64) {
+    let count = row_count.max(1);
+    let row_height = height / count as f64;
+    if row_height <= 0.0 {
+        return (0, 0.0, 0.0);
+    }
+    let row = ((y / row_height).floor().max(0.0) as usize).min(count - 1);
+    (row, y - row as f64 * row_height, row_height)
 }
 
 /// The pauses the Files menu offers between files placed one after another,
@@ -196,6 +256,8 @@ pub struct TimelineView {
     pub origin_epoch_ms: f64,
     /// How the clips are placed.
     pub arrangement: Arrangement,
+    /// How many rows the clips take: 1 unless clips overlap in time.
+    pub row_count: usize,
     /// The clip whose file has the highest sample rate (the first of them).
     /// The frequency axis covers this file's range, and the zoom level is
     /// counted in this file's spectrogram columns.
@@ -227,6 +289,9 @@ pub struct TimelineSegment {
     pub duration_secs: f64,
     /// True if this segment overlaps with another segment.
     pub has_overlap: bool,
+    /// The row the clip is drawn on, counted from the top. Clips that
+    /// overlap in time are on different rows.
+    pub row: usize,
 }
 
 /// One channel in the Channel menu of a multitrack timeline.
@@ -246,6 +311,8 @@ pub struct MissingClip {
     pub take: String,
     pub timeline_offset_secs: f64,
     pub duration_secs: f64,
+    /// The row the empty place is on.
+    pub row: usize,
 }
 
 /// What one file added to the timeline shows for the chosen channel.
@@ -433,6 +500,7 @@ impl TimelineView {
                         timeline_offset_secs: offset,
                         duration_secs: file.audio.duration_secs,
                         has_overlap: false,
+                        row: 0,
                     });
                 }
                 Shown::Missing { take } => {
@@ -441,6 +509,7 @@ impl TimelineView {
                             take: take.clone(),
                             timeline_offset_secs: offset,
                             duration_secs: duration,
+                            row: 0,
                         });
                     }
                 }
@@ -460,6 +529,32 @@ impl TimelineView {
                     segments[j].has_overlap = true;
                 }
             }
+        }
+
+        // Clips that overlap in time each get a row. A place left empty by a
+        // channel that is not loaded keeps a row too.
+        let spans: Vec<(f64, f64)> = segments
+            .iter()
+            .map(|s| {
+                (
+                    s.timeline_offset_secs,
+                    s.timeline_offset_secs + s.duration_secs,
+                )
+            })
+            .chain(missing.iter().map(|m| {
+                (
+                    m.timeline_offset_secs,
+                    m.timeline_offset_secs + m.duration_secs,
+                )
+            }))
+            .collect();
+        let rows = assign_rows(&spans);
+        let row_count = rows.iter().max().map_or(1, |r| r + 1);
+        for (seg, &row) in segments.iter_mut().zip(&rows) {
+            seg.row = row;
+        }
+        for (m, &row) in missing.iter_mut().zip(&rows[segments.len()..]) {
+            m.row = row;
         }
 
         // Total duration: every place counts, including the empty ones.
@@ -489,6 +584,7 @@ impl TimelineView {
             total_duration_secs,
             origin_epoch_ms: origin_ms,
             arrangement,
+            row_count,
             primary_file_index,
             tracks: plan.tracks,
             take_count: plan.take_count,
@@ -659,6 +755,7 @@ pub fn open(
     state.timeline.clip_file_indices().set(file_indices);
     state.timeline.arrangement().set(arrangement);
     state.timeline.active_definition_id().set(definition_id);
+    state.timeline.only_row().set(None);
     state.timeline.active_track().set(None);
     state.timeline.active().set(Some(tv.clone()));
     state.library.current_index().set(None);
@@ -714,6 +811,7 @@ pub fn set_arrangement(state: &AppState, arrangement: Arrangement) {
         return;
     }
     crate::audio::playback::stop(state);
+    state.timeline.only_row().set(None);
     state.timeline.arrangement().set(arrangement);
     state.interaction.selection().set(None);
     rebuild_active(state);
@@ -763,6 +861,7 @@ pub fn move_clip(state: &AppState, from: usize, to: usize) {
         return;
     }
     crate::audio::playback::stop(state);
+    state.timeline.only_row().set(None);
     let moved = order.remove(from);
     order.insert(to, moved);
     state.timeline.clip_file_indices().set(order);
@@ -921,6 +1020,61 @@ mod tests {
         assert_eq!(
             starts(&clips, Arrangement::InTurn { gap_secs: 1.0 }),
             vec![(0, 0.0), (1, 0.0), (2, 3.5), (3, 5.5)]
+        );
+    }
+
+    #[test]
+    fn together_starts_every_clip_at_the_start() {
+        let clips = [
+            clip(Some(0.0), 2.0, None),
+            clip(Some(900.0), 3.0, None),
+            clip(None, 1.0, None),
+        ];
+        assert_eq!(
+            starts(&clips, Arrangement::Together),
+            vec![(0, 0.0), (1, 0.0), (2, 0.0)]
+        );
+        assert_eq!(place_clips(&clips, Arrangement::Together).1, 0.0);
+    }
+
+    #[test]
+    fn rows_split_the_view_evenly() {
+        assert_eq!(row_rect(0, 1, 600.0), (0.0, 600.0));
+        assert_eq!(row_rect(1, 3, 600.0), (200.0, 200.0));
+        assert_eq!(row_at(0.0, 3, 600.0), (0, 0.0, 200.0));
+        assert_eq!(row_at(250.0, 3, 600.0), (1, 50.0, 200.0));
+        // Past either edge, as during a drag: the nearest row.
+        assert_eq!(row_at(-5.0, 3, 600.0).0, 0);
+        assert_eq!(row_at(700.0, 3, 600.0).0, 2);
+        // One row is the whole view.
+        assert_eq!(row_at(250.0, 1, 600.0), (0, 250.0, 600.0));
+    }
+
+    #[test]
+    fn clips_that_do_not_overlap_share_one_row() {
+        assert_eq!(
+            assign_rows(&[(0.0, 2.0), (2.0, 5.0), (6.0, 7.0)]),
+            vec![0, 0, 0]
+        );
+        // Recorder files that overlap by a few milliseconds still share it.
+        assert_eq!(
+            assign_rows(&[(0.0, 2.0), (1.99, 4.0), (3.98, 6.0)]),
+            vec![0, 0, 0]
+        );
+        assert_eq!(assign_rows(&[]), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn clips_that_overlap_get_a_row_each() {
+        // Three files that start together.
+        assert_eq!(
+            assign_rows(&[(0.0, 2.0), (0.0, 3.0), (0.0, 1.5)]),
+            vec![0, 1, 2]
+        );
+        // The third starts after the first has ended, so it goes back to row 0.
+        assert_eq!(
+            assign_rows(&[(0.0, 2.0), (1.0, 4.0), (2.5, 5.0)]),
+            vec![0, 1, 0]
         );
     }
 

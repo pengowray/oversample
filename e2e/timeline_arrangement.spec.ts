@@ -18,6 +18,9 @@ type Snap = {
   timelineStarts: number[] | null;
   timelineDuration: number | null;
   timelineStreamFiles: string[] | null;
+  timelineRows: number[] | null;
+  timelineOnlyRow: number | null;
+  selection: { timeStart: number; timeEnd: number; freqLow: number | null; freqHigh: number | null } | null;
 };
 
 type Clip = { name: string; sr: number; secs: number; hz: number; mtime?: number };
@@ -80,6 +83,42 @@ function drawnTone(page: Page, atSecs: number, totalSecs: number, nyquist: numbe
         return Math.round(a.nyquist * (1 - best / c.height));
       },
       { frac: atSecs / totalSecs, nyquist },
+    );
+}
+
+/**
+ * As `drawnTone`, for row `row` of `rows` equal rows: the brightest row of
+ * pixels inside that row's band, as a frequency on the row's own axis.
+ */
+function drawnToneInRow(
+  page: Page,
+  atSecs: number,
+  totalSecs: number,
+  nyquist: number,
+  row: number,
+  rows: number,
+): Promise<number> {
+  return page
+    .locator(".spectrogram-container .chart-stage canvas")
+    .first()
+    .evaluate(
+      (c: HTMLCanvasElement, a: { frac: number; nyquist: number; row: number; rows: number }) => {
+        const ctx = c.getContext("2d")!;
+        const x = Math.round(c.width * a.frac);
+        const rowH = c.height / a.rows;
+        const top = Math.round(a.row * rowH) + 2;
+        const h = Math.floor(rowH) - 4;
+        const d = ctx.getImageData(x, top, 1, h).data;
+        const sums: number[] = [];
+        for (let y = 0; y < h; y++) sums.push(d[y * 4] + d[y * 4 + 1] + d[y * 4 + 2]);
+        const sorted = [...sums].sort((p, q) => p - q);
+        const median = sorted[sorted.length >> 1];
+        let best = 0;
+        for (let y = 1; y < h; y++) if (sums[y] > sums[best]) best = y;
+        if (sums[best] < median + 120) return 0;
+        return Math.round(a.nyquist * (1 - (best + 2) / rowH));
+      },
+      { frac: atSecs / totalSecs, nyquist, row, rows },
     );
 }
 
@@ -319,6 +358,117 @@ test.describe("timeline arrangement", () => {
       await page.waitForTimeout(1500);
       await page.screenshot({ path: `${out}/order-375.png` });
       fs.writeFileSync(`${out}/audit-375.json`, JSON.stringify(await page.evaluate(audit), null, 1));
+    }
+    expect(errors).toEqual([]);
+  });
+
+  test("files that start together each get a row, and one row can play alone", async ({ page }) => {
+    test.setTimeout(240_000);
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await openTimeline(page, SAME_DATE);
+    await choose(page, "All start together");
+    await expect.poll(async () => (await snapshot(page)).timelineStarts).toEqual([0, 0, 0]);
+    const snap = await snapshot(page);
+    expect(snap.timelineRows).toEqual([0, 1, 2]);
+    expect(snap.timelineDuration).toBeCloseTo(3, 3);
+    await expect(chip(page).locator(".layer-btn-value")).toHaveText("All start together");
+
+    // Each row draws its own file, on its own frequency axis. Charlie is
+    // 1.5 s long, so its row is empty at 2.5 s.
+    const rowTones = async () => [
+      await drawnToneInRow(page, 1, 3, 96_000, 0, 3),
+      await drawnToneInRow(page, 1, 3, 96_000, 1, 3),
+      await drawnToneInRow(page, 1, 3, 96_000, 2, 3),
+      await drawnToneInRow(page, 2.5, 3, 96_000, 2, 3),
+    ];
+    await expect
+      .poll(
+        async () => {
+          const got = await rowTones();
+          const want = [20_000, 40_000, 60_000, 0];
+          return got.every((g, i) => Math.abs(g - want[i]) <= 2500) ? "ok" : JSON.stringify(got);
+        },
+        { timeout: 30_000 },
+      )
+      .toBe("ok");
+    await expect(page.locator(".timeline-row-name")).toHaveText([
+      "alpha.wav",
+      "bravo.wav",
+      "charlie.wav",
+    ]);
+
+    // A selection dragged inside the middle row gets that row's frequencies:
+    // from 3/4 of the way up the row (72 kHz) to 1/4 of the way up (24 kHz).
+    await page.locator(".tool-combo-btn").click();
+    await page.locator(".layer-panel button", { hasText: "Selection" }).click();
+    const canvas = page.locator(".spectrogram-container .chart-stage canvas").first();
+    const box = (await canvas.boundingBox())!;
+    const rowH = box.height / 3;
+    await page.mouse.move(box.x + box.width * 0.4, box.y + rowH * 1.25);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.6, box.y + rowH * 1.75, { steps: 6 });
+    await page.mouse.up();
+    const sel = (await snapshot(page)).selection!;
+    expect(sel).not.toBeNull();
+    expect(sel.freqHigh!).toBeGreaterThan(68_000);
+    expect(sel.freqHigh!).toBeLessThan(76_000);
+    expect(sel.freqLow!).toBeGreaterThan(20_000);
+    expect(sel.freqLow!).toBeLessThan(28_000);
+    expect(sel.timeStart).toBeGreaterThan(0.9);
+    expect(sel.timeEnd).toBeLessThan(2.1);
+    await page.keyboard.press("Escape");
+
+    // All rows play together; Solo on the middle row plays only bravo.
+    const out = process.env.ARRANGE_OUT;
+    if (out) await page.screenshot({ path: `${out}/rows-3.png` });
+    const solo = page.locator(".timeline-row-label").nth(1).getByRole("button", { name: "Solo" });
+    await solo.click();
+    await expect(solo).toHaveAttribute("aria-pressed", "true");
+    expect((await snapshot(page)).timelineOnlyRow).toBe(1);
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snapshot(page)).isPlaying).toBe(true);
+    expect((await snapshot(page)).timelineStreamFiles).toEqual(["bravo.wav"]);
+    // Solo off while playing: all three files again.
+    await solo.click();
+    await expect
+      .poll(async () => (await snapshot(page)).timelineStreamFiles)
+      .toEqual(["alpha.wav", "bravo.wav", "charlie.wav"]);
+    await page.keyboard.press("Space");
+
+    // Wave view has the same rows.
+    await page.getByRole("button", { name: "Wave", exact: true }).click();
+    await page.waitForTimeout(1500);
+    if (out) await page.screenshot({ path: `${out}/rows-3-wave.png` });
+    expect(errors).toEqual([]);
+  });
+
+  test("eight files that start together fit the view", async ({ page }) => {
+    test.setTimeout(240_000);
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    const eight: Clip[] = Array.from({ length: 8 }, (_, i) => ({
+      name: `260401_0010_${i + 1}.wav`,
+      sr: 192_000,
+      secs: 2,
+      hz: 10_000 + i * 10_000,
+    }));
+    await openTimeline(page, eight);
+    await choose(page, "All start together");
+    await expect
+      .poll(async () => (await snapshot(page)).timelineRows)
+      .toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    await expect(page.locator(".timeline-row-label")).toHaveCount(8);
+    await page.waitForTimeout(3000);
+    const out = process.env.ARRANGE_OUT;
+    if (out) {
+      await page.screenshot({ path: `${out}/rows-8.png` });
+      const audit = fs.readFileSync(process.env.UI_AUDIT!, "utf8");
+      const report = (await page.evaluate(audit)) as { findings: { where: string }[] };
+      fs.writeFileSync(
+        `${out}/audit-rows-8.json`,
+        JSON.stringify(report.findings.filter((f) => f.where.includes("timeline")), null, 1),
+      );
     }
     expect(errors).toEqual([]);
   });

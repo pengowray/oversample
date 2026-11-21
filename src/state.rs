@@ -2087,6 +2087,9 @@ pub struct TimelineState {
     /// Placed one after another, they play in this order. Separate from
     /// `selected_file_indices`, which a Ctrl-click in the Files list changes.
     pub clip_file_indices: Vec<usize>,
+    /// The one row of the open timeline that plays (`None`: all rows play,
+    /// averaged). Only used while the timeline has several rows.
+    pub only_row: Option<usize>,
     /// How the open timeline's clips are placed.
     pub arrangement: crate::project::Arrangement,
     /// `TimelineDefinition::id` of the open timeline in the project.
@@ -3189,6 +3192,7 @@ impl AppState {
                 active: None,
                 active_track: None,
                 clip_file_indices: Vec::new(),
+                only_row: None,
                 arrangement: crate::project::Arrangement::RecordingTime,
                 active_definition_id: None,
                 show_clock_time: false,

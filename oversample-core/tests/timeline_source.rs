@@ -2,7 +2,7 @@
 //! another, a pause between clips, and clips with different sample rates.
 
 use oversample_core::audio::source::{
-    AudioSource, ChannelView, InMemorySource, ResampledSource, TimelineAudioSource,
+    AudioSource, ChannelView, InMemorySource, ResampledSource, TimelineAudioSource, TimelineClip,
 };
 use std::sync::Arc;
 
@@ -19,6 +19,22 @@ fn tone(rate: u32, secs: f64, hz: f64, amplitude: f32) -> Arc<dyn AudioSource> {
         sample_rate: rate,
         channels: 1,
     })
+}
+
+fn clip(
+    source: Arc<dyn AudioSource>,
+    sample_rate: u32,
+    start_secs: f64,
+    duration_secs: f64,
+    row: usize,
+) -> TimelineClip {
+    TimelineClip {
+        source,
+        sample_rate,
+        start_secs,
+        duration_secs,
+        row,
+    }
 }
 
 fn rms(samples: &[f32]) -> f64 {
@@ -40,11 +56,14 @@ fn tone_level(samples: &[f32], rate: u32, hz: f64) -> f64 {
 fn clips_play_one_after_another_with_a_pause_between() {
     let rate = 48_000;
     // 1 s at 0.2, then 0.5 s of silence, then 1 s at 0.6, then 1 s at 0.4.
-    let timeline = TimelineAudioSource::at_highest_rate(vec![
-        (tone(rate, 1.0, 1000.0, 0.2), rate, 0.0, 1.0),
-        (tone(rate, 1.0, 1000.0, 0.6), rate, 1.5, 1.0),
-        (tone(rate, 1.0, 1000.0, 0.4), rate, 2.5, 1.0),
-    ])
+    let timeline = TimelineAudioSource::at_highest_rate(
+        vec![
+            clip(tone(rate, 1.0, 1000.0, 0.2), rate, 0.0, 1.0, 0),
+            clip(tone(rate, 1.0, 1000.0, 0.6), rate, 1.5, 1.0, 0),
+            clip(tone(rate, 1.0, 1000.0, 0.4), rate, 2.5, 1.0, 0),
+        ],
+        0.0,
+    )
     .unwrap();
     assert_eq!(timeline.sample_rate(), rate);
     assert_eq!(timeline.total_samples(), 3 * 48_000 + 24_000);
@@ -67,10 +86,13 @@ fn clips_play_one_after_another_with_a_pause_between() {
 #[test]
 fn a_clip_with_a_lower_rate_is_resampled_to_the_highest_rate() {
     // A 5 kHz tone at 44.1 kHz after a 20 kHz tone at 192 kHz.
-    let timeline = TimelineAudioSource::at_highest_rate(vec![
-        (tone(192_000, 1.0, 20_000.0, 0.5), 192_000, 0.0, 1.0),
-        (tone(44_100, 1.0, 5_000.0, 0.5), 44_100, 1.0, 1.0),
-    ])
+    let timeline = TimelineAudioSource::at_highest_rate(
+        vec![
+            clip(tone(192_000, 1.0, 20_000.0, 0.5), 192_000, 0.0, 1.0, 0),
+            clip(tone(44_100, 1.0, 5_000.0, 0.5), 44_100, 1.0, 1.0, 0),
+        ],
+        0.0,
+    )
     .unwrap();
     assert_eq!(timeline.sample_rate(), 192_000);
     assert_eq!(timeline.total_samples(), 384_000);
@@ -119,10 +141,13 @@ fn resampled_reads_in_pieces_match_one_read() {
 fn a_clip_read_at_a_corrected_rate_plays_at_that_rate() {
     // A x10 time-expanded recording: stored at 38.4 kHz, read at 384 kHz.
     // Its 2 kHz stored tone is a 20 kHz tone, and its 1 s is 0.1 s.
-    let timeline = TimelineAudioSource::at_highest_rate(vec![
-        (tone(38_400, 1.0, 2_000.0, 0.5), 384_000, 0.0, 0.1),
-        (tone(192_000, 1.0, 30_000.0, 0.5), 192_000, 0.1, 1.0),
-    ])
+    let timeline = TimelineAudioSource::at_highest_rate(
+        vec![
+            clip(tone(38_400, 1.0, 2_000.0, 0.5), 384_000, 0.0, 0.1, 0),
+            clip(tone(192_000, 1.0, 30_000.0, 0.5), 192_000, 0.1, 1.0, 0),
+        ],
+        0.0,
+    )
     .unwrap();
     assert_eq!(timeline.sample_rate(), 384_000);
     assert_eq!(timeline.total_samples(), 38_400 + 384_000);
@@ -130,4 +155,42 @@ fn a_clip_read_at_a_corrected_rate_plays_at_that_rate() {
     assert!((tone_level(&first, 384_000, 20_000.0) - 0.5).abs() < 0.01);
     let second = timeline.read_region(ChannelView::MonoMix, 38_400 + 96_000, 96_000);
     assert!((tone_level(&second, 384_000, 30_000.0) - 0.5).abs() < 0.01);
+}
+
+#[test]
+fn rows_play_at_the_same_time_and_are_averaged() {
+    let rate = 96_000;
+    // Two rows that start together: 3 kHz at 0.8 for 1 s, 10 kHz at 0.4 for 2 s.
+    let timeline = TimelineAudioSource::at_highest_rate(
+        vec![
+            clip(tone(rate, 1.0, 3_000.0, 0.8), rate, 0.0, 1.0, 0),
+            clip(tone(rate, 2.0, 10_000.0, 0.4), rate, 0.0, 2.0, 1),
+        ],
+        0.0,
+    )
+    .unwrap();
+    assert_eq!(timeline.total_samples(), 192_000);
+    // Both are heard in the first second, each at half its level.
+    let both = timeline.read_region(ChannelView::MonoMix, 0, 96_000);
+    assert!((tone_level(&both, rate, 3_000.0) - 0.4).abs() < 0.01);
+    assert!((tone_level(&both, rate, 10_000.0) - 0.2).abs() < 0.01);
+    // The longer row carries on alone at the same level.
+    let after = timeline.read_region(ChannelView::MonoMix, 96_000, 96_000);
+    assert!(tone_level(&after, rate, 3_000.0) < 0.001);
+    assert!((tone_level(&after, rate, 10_000.0) - 0.2).abs() < 0.01);
+    // A read across the end of the shorter row.
+    let across = timeline.read_region(ChannelView::MonoMix, 90_000, 12_000);
+    assert_eq!(across.len(), 12_000);
+}
+
+#[test]
+fn one_row_alone_plays_at_full_level() {
+    let rate = 96_000;
+    let timeline = TimelineAudioSource::at_highest_rate(
+        vec![clip(tone(rate, 1.0, 3_000.0, 0.8), rate, 0.0, 1.0, 2)],
+        0.0,
+    )
+    .unwrap();
+    let all = timeline.read_region(ChannelView::MonoMix, 0, 96_000);
+    assert!((tone_level(&all, rate, 3_000.0) - 0.8).abs() < 0.01);
 }

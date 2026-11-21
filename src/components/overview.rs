@@ -1009,9 +1009,11 @@ pub fn OverviewPanel() -> impl IntoView {
                     continue;
                 }
 
+                // The row this clip is on: the same rows as the spectrogram.
+                let (row_top, ch) = crate::timeline::row_rect(seg.row, tl.row_count, ch);
                 ctx.save();
                 ctx.begin_path();
-                ctx.rect(seg_x, 0.0, seg_w, ch);
+                ctx.rect(seg_x, row_top, seg_w, ch);
                 ctx.clip();
 
                 if let Some((tmp, tc)) = get_overview_tmp_canvas(preview.width, preview.height) {
@@ -1023,7 +1025,7 @@ pub fn OverviewPanel() -> impl IntoView {
                     ) {
                         let _ = tc.put_image_data(&img, 0.0, 0.0);
                         let _ = ctx.draw_image_with_html_canvas_element_and_dw_and_dh(
-                            &tmp, seg_x, 0.0, seg_w, ch,
+                            &tmp, seg_x, row_top, seg_w, ch,
                         );
                     }
                 }

@@ -5,8 +5,49 @@ use crate::viewport;
 use leptos::prelude::*;
 use web_sys::HtmlCanvasElement;
 
+thread_local! {
+    /// The timeline row the pointer was last over while nothing was being
+    /// dragged. A drag stays in this row.
+    static POINTER_ROW: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The height in px of one row of the spectrogram: `canvas_height` unless a
+/// timeline with clips on several rows is open. Pointer handlers and hit
+/// tests work in a row's own coordinates, with this as the height.
+pub fn row_height(state: &AppState, canvas_height: f64) -> f64 {
+    let rows = state
+        .timeline
+        .active()
+        .with_untracked(|t| t.as_ref().map_or(1, |tl| tl.row_count));
+    crate::timeline::row_rect(0, rows, canvas_height).1
+}
+
+/// A pointer's y on the canvas as `(y inside its row, the row's height)`.
+/// With one row that is `(px_y, canvas_height)`. During a drag the row is
+/// the one the drag started in, and y is kept inside it, so a drag that
+/// leaves the row stops at the row's top or bottom frequency.
+fn y_in_row(state: &AppState, px_y: f64, canvas_height: f64) -> (f64, f64) {
+    let rows = state
+        .timeline
+        .active()
+        .with_untracked(|t| t.as_ref().map_or(1, |tl| tl.row_count));
+    if rows <= 1 {
+        return (px_y, canvas_height);
+    }
+    let (here, _, height) = crate::timeline::row_at(px_y, rows, canvas_height);
+    let row = if state.interaction.is_dragging().get_untracked() {
+        POINTER_ROW.with(|r| r.get()).min(rows - 1)
+    } else {
+        POINTER_ROW.with(|r| r.set(here));
+        here
+    };
+    let (top, _) = crate::timeline::row_rect(row, rows, canvas_height);
+    ((px_y - top).clamp(0.0, height), height)
+}
+
 /// Convert a pointer position (client_x, client_y) relative to the canvas
-/// into (px_x, px_y, time, freq).
+/// into (px_x, px_y, time, freq). On a timeline with several rows, `px_y`
+/// is measured from the top of the pointer's row: see [`row_height`].
 ///
 /// Works for both mouse and touch events — the caller extracts client_x/client_y
 /// from whichever event type they have.
@@ -20,9 +61,8 @@ pub fn pointer_to_xtf(
     let canvas: &HtmlCanvasElement = canvas_el.as_ref();
     let rect = canvas.get_bounding_client_rect();
     let px_x = client_x - rect.left();
-    let px_y = client_y - rect.top();
     let cw = canvas.width() as f64;
-    let ch = canvas.height() as f64;
+    let (px_y, ch) = y_in_row(state, client_y - rect.top(), canvas.height() as f64);
 
     let files = state.library.files().get_untracked();
     let timeline = state.timeline.active().get_untracked();

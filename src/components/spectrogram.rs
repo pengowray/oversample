@@ -770,6 +770,11 @@ pub fn Spectrogram() -> impl IntoView {
                             continue;
                         }
 
+                        // The row this clip is drawn in. One row is the
+                        // whole view.
+                        let (row_top, row_h) =
+                            crate::timeline::row_rect(seg.row, tl.row_count, display_h as f64);
+
                         // The part of this clip's own frequency range that
                         // the view shows. A clip with a lower sample rate
                         // than the timeline's highest ends below the top of
@@ -786,13 +791,12 @@ pub fn Spectrogram() -> impl IntoView {
                                 continue;
                             }
                             let shown_top = max_freq.min(seg_max_freq);
-                            let top =
-                                display_h as f64 * (max_freq - shown_top) / (max_freq - min_freq);
+                            let top = row_h * (max_freq - shown_top) / (max_freq - min_freq);
                             (min_freq / seg_max_freq, shown_top / seg_max_freq, top)
                         } else {
                             (freq_crop_lo, freq_crop_hi, 0.0)
                         };
-                        let seg_h = display_h as f64 - seg_top;
+                        let seg_h = row_h - seg_top;
                         if seg_h < 1.0 {
                             continue;
                         }
@@ -803,13 +807,13 @@ pub fn Spectrogram() -> impl IntoView {
 
                         ctx.save();
                         ctx.begin_path();
-                        ctx.rect(clip_left, 0.0, clip_right - clip_left, display_h as f64);
+                        ctx.rect(clip_left, row_top, clip_right - clip_left, row_h);
                         ctx.clip();
 
                         // Translate to the visible start of this segment so the helper
                         // can render against a segment-local viewport.
                         let translate_x = clip_left;
-                        ctx.translate(translate_x, seg_top).unwrap_or(());
+                        ctx.translate(translate_x, row_top + seg_top).unwrap_or(());
 
                         let seg_visible_time = (clip_right - clip_left) / px_per_sec;
                         let seg_px_per_sec = px_per_sec;
@@ -959,7 +963,11 @@ pub fn Spectrogram() -> impl IntoView {
                             if x2 <= 0.0 || x1 >= display_w as f64 {
                                 continue;
                             }
-                            let h = display_h as f64;
+                            // The empty place is on its own row.
+                            let (row_top, h) =
+                                crate::timeline::row_rect(m.row, tl.row_count, display_h as f64);
+                            ctx.save();
+                            let _ = ctx.translate(0.0, row_top);
                             ctx.set_fill_style_str("rgba(255, 255, 255, 0.04)");
                             ctx.fill_rect(x1, 0.0, x2 - x1, h);
                             ctx.set_stroke_style_str("#444");
@@ -1001,6 +1009,17 @@ pub fn Spectrogram() -> impl IntoView {
                             }
                             ctx.set_text_align("start");
                             ctx.set_text_baseline("alphabetic");
+                            ctx.restore();
+                        }
+                    }
+
+                    // A line between rows.
+                    if tl.row_count > 1 {
+                        ctx.set_fill_style_str("#555");
+                        for row in 1..tl.row_count {
+                            let (top, _) =
+                                crate::timeline::row_rect(row, tl.row_count, display_h as f64);
+                            ctx.fill_rect(0.0, top.round(), display_w as f64, 1.0);
                         }
                     }
 
@@ -1392,6 +1411,23 @@ pub fn Spectrogram() -> impl IntoView {
                     },
                     None => marker_state,
                 };
+                // The overlays below are placed by frequency. A timeline whose
+                // clips are on several rows gets them once per row: each row
+                // has the whole frequency range. One row is the whole view.
+                let overlay_rows: Vec<(f64, f64)> = {
+                    let row_count = timeline.as_ref().map_or(1, |tl| tl.row_count);
+                    (0..row_count)
+                        .map(|row| crate::timeline::row_rect(row, row_count, display_h as f64))
+                        .collect()
+                };
+                for &(row_top, row_height) in &overlay_rows {
+                ctx.save();
+                ctx.begin_path();
+                ctx.rect(0.0, row_top, display_w as f64, row_height);
+                ctx.clip();
+                let _ = ctx.translate(0.0, row_top);
+                // Inside the loop `display_h` is the row's height.
+                let display_h = row_height;
                 if show_freq_axis {
                     spectrogram_renderer::draw_freq_markers(
                         &ctx,
@@ -1772,6 +1808,8 @@ pub fn Spectrogram() -> impl IntoView {
                         }
                     }
                 }
+                ctx.restore();
+                }
 
                 if visible_time <= 0.0 {
                     return;
@@ -2144,6 +2182,7 @@ pub fn Spectrogram() -> impl IntoView {
                 on:touchend=on_touchend
             />
             <crate::components::species_panel::SpeciesCalls canvas_ref=canvas_ref/>
+            <crate::components::timeline_rows::TimelineRowLabels/>
             <Playhead/>
             </div>
             </div>
