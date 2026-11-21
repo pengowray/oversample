@@ -10,6 +10,7 @@ use super::ClassifierError;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use futures_channel::oneshot;
 use leptos::prelude::*;
+use oversample_ipc::classifier::boxes::RawBox;
 use oversample_ipc::classifier::{
     attach, BatHeadPart, FromWorker, Method, ModelFamily, ModelSlot, Score, ToWorker,
 };
@@ -64,6 +65,11 @@ struct Active {
     windows: Vec<Pending>,
     /// The pending windows' embeddings, back to back.
     embeddings: Vec<f32>,
+    /// Bird boxes not yet in the store, the box windows they complete, and
+    /// the 32 kHz samples once the box detector is done.
+    boxes: Vec<RawBox>,
+    box_windows: u32,
+    boxes_done: Option<u64>,
     last_flush: f64,
 }
 
@@ -76,6 +82,7 @@ struct Client {
     /// The model in each slot, by file id.
     audio: Option<String>,
     head: Option<String>,
+    boxer: Option<String>,
     /// The family of the models loaded last. The worker's memory never
     /// shrinks, so changing family restarts it.
     family: Option<ModelFamily>,
@@ -123,6 +130,7 @@ pub async fn ensure_started(state: AppState) -> Result<(), Stopped> {
             ready: false,
             audio: None,
             head: None,
+            boxer: None,
             family: None,
             waiters: Vec::new(),
             active: None,
@@ -205,30 +213,62 @@ impl Client {
         };
     }
 
-    /// Move pending windows into the store.
+    /// Move pending windows and boxes into the store.
     fn take_flush(&mut self) -> Option<Flush> {
         let a = self.active.as_mut()?;
-        if a.windows.is_empty() {
+        if a.windows.is_empty() && a.box_windows == 0 && a.boxes_done.is_none() {
             return None;
         }
         a.last_flush = now_ms();
-        Some((
-            a.key,
-            std::mem::take(&mut a.windows),
-            std::mem::take(&mut a.embeddings),
-        ))
+        Some(Flush {
+            key: a.key,
+            windows: std::mem::take(&mut a.windows),
+            embeddings: std::mem::take(&mut a.embeddings),
+            boxes: std::mem::take(&mut a.boxes),
+            box_windows: std::mem::take(&mut a.box_windows),
+            boxes_done: a.boxes_done.take(),
+        })
     }
 }
 
-type Flush = ((u64, Method), Vec<Pending>, Vec<f32>);
+struct Flush {
+    key: (u64, Method),
+    windows: Vec<Pending>,
+    embeddings: Vec<f32>,
+    boxes: Vec<RawBox>,
+    box_windows: u32,
+    boxes_done: Option<u64>,
+}
 
 /// Put pending windows into the run's results in time order, each with its
 /// embedding (`ClassifierRun::insert_reading`). A later pass's windows land
 /// between the ones already there.
 fn flush_into_state(state: AppState, flush: Option<Flush>) {
-    let Some((key, windows, embeddings)) = flush else {
+    let Some(Flush {
+        key,
+        windows,
+        embeddings,
+        boxes,
+        box_windows,
+        boxes_done,
+    }) = flush
+    else {
         return;
     };
+    if box_windows > 0 || boxes_done.is_some() {
+        state.classifier.boxes().update(|m| {
+            if let Some(b) = m.get_mut(&key.0) {
+                b.raw.extend(boxes);
+                b.windows += box_windows;
+                if boxes_done.is_some() {
+                    b.samples = boxes_done;
+                }
+            }
+        });
+    }
+    if windows.is_empty() {
+        return;
+    }
     let len = key.1.embedding_len();
     let mut stored = state
         .classifier
@@ -299,6 +339,20 @@ fn on_message(ev: MessageEvent) {
                     }
                 }
             }
+            FromWorker::Boxes { run, boxes, .. } => {
+                if let Some(a) = client.active.as_mut().filter(|a| a.run == run) {
+                    a.boxes.extend(boxes);
+                    a.box_windows += 1;
+                    if now_ms() - a.last_flush >= FLUSH_MS {
+                        flush = client.take_flush();
+                    }
+                }
+            }
+            FromWorker::BoxesDone { run, samples, .. } => {
+                if let Some(a) = client.active.as_mut().filter(|a| a.run == run) {
+                    a.boxes_done = Some(samples as u64);
+                }
+            }
             FromWorker::ChunkDone { run, seq } => {
                 flush = client.take_flush();
                 client.resolve(&Wait::ChunkDone(run, seq), Ok(Reply::Ok));
@@ -336,6 +390,7 @@ fn on_message(ev: MessageEvent) {
                     // The worker dropped the model it was replacing.
                     client.audio = None;
                     client.head = None;
+                    client.boxer = None;
                 }
                 for (_, tx) in hit {
                     let _ = tx.send(Err(error.clone()));
@@ -397,6 +452,7 @@ pub async fn ensure_model(file: &'static super::catalog::ModelFile) -> Result<()
         c.borrow().as_ref().is_some_and(|cl| match part.slot() {
             ModelSlot::Audio => cl.audio.as_deref() == Some(&key),
             ModelSlot::Head => cl.head.as_deref() == Some(&key),
+            ModelSlot::Boxes => cl.boxer.as_deref() == Some(&key),
             ModelSlot::Denoise => false,
         })
     });
@@ -410,6 +466,7 @@ pub async fn ensure_model(file: &'static super::catalog::ModelFile) -> Result<()
         match part.slot() {
             ModelSlot::Audio => client.audio = None,
             ModelSlot::Head => client.head = None,
+            ModelSlot::Boxes => client.boxer = None,
             ModelSlot::Denoise => {}
         }
         client.family = part.family();
@@ -433,6 +490,7 @@ pub async fn ensure_model(file: &'static super::catalog::ModelFile) -> Result<()
             match part.slot() {
                 ModelSlot::Audio => cl.audio = Some(key),
                 ModelSlot::Head => cl.head = Some(key),
+                ModelSlot::Boxes => cl.boxer = Some(key),
                 ModelSlot::Denoise => {}
             }
         }
@@ -503,12 +561,14 @@ pub async fn ensure_bat_heads(
 }
 
 /// Start run `run`, or one pass of it: the windows at `offsets` in each
-/// window length (`ToWorker::Start`). Windows go to the results under `key`.
+/// window length (`ToWorker::Start`). Windows go to the results under `key`;
+/// with `boxes`, bird boxes go to the file's `BoxRun`.
 pub fn start(
     run: u32,
     key: (u64, Method),
     source_rate: u32,
     offsets: Vec<u32>,
+    boxes: bool,
 ) -> Result<(), Stopped> {
     CLIENT.with(|c| {
         let mut c = c.borrow_mut();
@@ -518,6 +578,9 @@ pub fn start(
             key,
             windows: Vec::new(),
             embeddings: Vec::new(),
+            boxes: Vec::new(),
+            box_windows: 0,
+            boxes_done: None,
             last_flush: now_ms(),
         });
         client.post(
@@ -526,6 +589,7 @@ pub fn start(
                 method: key.1,
                 source_rate,
                 offsets,
+                boxes,
             },
             None,
             None,

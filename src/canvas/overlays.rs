@@ -1271,6 +1271,141 @@ pub fn draw_calls(
     let _ = ctx.set_line_dash(&no_dashes);
 }
 
+/// Bird sound boxes (BirdBox's Just-Bird, `crate::classifier::boxes`) are
+/// lime, a hue no other overlay uses: species are pink, sky blue and violet,
+/// sound clusters dark grey, green, orange and yellow, bat calls and
+/// annotations green and amber, the selection amber, PC rows blue and orange.
+/// A dark edge under the line keeps it visible on every colour map.
+const BIRD_BOX_STROKE: &str = "rgba(180, 240, 60, 0.95)";
+const BIRD_BOX_FILL: &str = "rgba(180, 240, 60, 0.14)";
+const BIRD_BOX_LABEL_BG: &str = "rgba(0, 0, 0, 0.65)";
+const BIRD_BOX_CARD_BG: &str = "rgba(16, 18, 14, 0.92)";
+const BIRD_BOX_CARD_MUTED: &str = "rgba(220, 225, 210, 0.85)";
+
+/// Draw the bird sound boxes: an outline round each, its label above it (the
+/// species, or `unnamed` when no bird reached the naming score) when the
+/// label fits the box's width, and for `focus` (the box under the pointer or
+/// picked) a filled box and a card with the box confidence and its species.
+/// `top` is the height of the label strip along the top, which labels stay
+/// under.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_bird_boxes(
+    ctx: &CanvasRenderingContext2d,
+    boxes: &[crate::classifier::boxes::DrawnBox],
+    focus: Option<(f64, f64)>,
+    unnamed: &str,
+    card_first: &dyn Fn(f32) -> String,
+    card_none: &str,
+    min_freq: f64,
+    max_freq: f64,
+    scroll_offset: f64,
+    time_resolution: f64,
+    zoom: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+    top: f64,
+) {
+    if boxes.is_empty() || max_freq <= min_freq {
+        return;
+    }
+    let visible_time = (canvas_width / zoom) * time_resolution;
+    let start_time = scroll_offset;
+    let end_time = start_time + visible_time;
+    let px_per_sec = canvas_width / visible_time;
+    let x_of = |t: f64| (t - start_time) * px_per_sec;
+    let y_of = |f: f64| freq_to_y(f, min_freq, max_freq, canvas_height).clamp(0.0, canvas_height);
+    const MIN_BOX_PX: f64 = 2.0;
+    let no_dashes = js_sys::Array::new();
+    let _ = ctx.set_line_dash(&no_dashes);
+    ctx.set_font("11px sans-serif");
+    ctx.set_text_baseline("bottom");
+    let mut focused = None;
+    for b in boxes {
+        if b.t1 < start_time || b.t0 > end_time || b.f1 < min_freq || b.f0 > max_freq {
+            continue;
+        }
+        let x0 = x_of(b.t0);
+        let x1 = x_of(b.t1).max(x0 + MIN_BOX_PX);
+        let (y0, y1) = (y_of(b.f1), y_of(b.f0));
+        if y1 <= y0 {
+            continue;
+        }
+        let is_focus = focus == Some(b.key());
+        if is_focus {
+            ctx.set_fill_style_str(BIRD_BOX_FILL);
+            ctx.fill_rect(x0, y0, x1 - x0, y1 - y0);
+            focused = Some((b, x0, x1, y0, y1));
+        }
+        ctx.set_stroke_style_str("rgba(0, 0, 0, 0.6)");
+        ctx.set_line_width(if is_focus { 4.0 } else { 3.0 });
+        ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
+        ctx.set_stroke_style_str(BIRD_BOX_STROKE);
+        ctx.set_line_width(if is_focus { 2.0 } else { 1.25 });
+        ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
+        // The label over the box's top edge, when it fits the box's width.
+        let label = b.name.as_deref().unwrap_or(unnamed);
+        let w = ctx.measure_text(label).map_or(0.0, |m| m.width());
+        if w + 6.0 <= (x1 - x0).max(0.0) || is_focus {
+            let ly = (y0 - 1.0).max(top + 14.0);
+            let lx = x0.max(0.0);
+            ctx.set_fill_style_str(BIRD_BOX_LABEL_BG);
+            ctx.fill_rect(lx, ly - 13.0, w + 6.0, 13.0);
+            ctx.set_fill_style_str(BIRD_BOX_STROKE);
+            let _ = ctx.fill_text(label, lx + 3.0, ly - 1.0);
+        }
+    }
+    let Some((b, x0, x1, y0, _)) = focused else {
+        return;
+    };
+    // The card: box confidence, a rule, then the species and their scores.
+    let first = card_first(b.confidence);
+    let lines: Vec<String> = if b.species.is_empty() {
+        vec![card_none.to_string()]
+    } else {
+        b.species
+            .iter()
+            .map(|(name, score)| format!("{name} {score:.2}"))
+            .collect()
+    };
+    ctx.set_font("12px sans-serif");
+    let width = std::iter::once(&first)
+        .chain(&lines)
+        .map(|l| ctx.measure_text(l).map_or(0.0, |m| m.width()))
+        .fold(0.0, f64::max)
+        + 12.0;
+    let line_h = 16.0;
+    let height = line_h * (lines.len() + 1) as f64 + 11.0;
+    // Right of the box, or left of it when that runs off the canvas; level
+    // with its top, kept on the canvas.
+    let mut cx = x1 + 6.0;
+    if cx + width > canvas_width {
+        cx = (x0 - 6.0 - width).max(0.0);
+    }
+    let cy = y0.clamp(top + 2.0, (canvas_height - height).max(top + 2.0));
+    ctx.set_fill_style_str(BIRD_BOX_CARD_BG);
+    ctx.fill_rect(cx, cy, width, height);
+    ctx.set_stroke_style_str(BIRD_BOX_STROKE);
+    ctx.set_line_width(1.0);
+    ctx.stroke_rect(cx + 0.5, cy + 0.5, width - 1.0, height - 1.0);
+    ctx.set_text_baseline("top");
+    ctx.set_fill_style_str(BIRD_BOX_CARD_MUTED);
+    let _ = ctx.fill_text(&first, cx + 6.0, cy + 4.0);
+    ctx.set_stroke_style_str("rgba(220, 225, 210, 0.35)");
+    ctx.begin_path();
+    ctx.move_to(cx + 6.0, cy + line_h + 6.5);
+    ctx.line_to(cx + width - 6.0, cy + line_h + 6.5);
+    ctx.stroke();
+    ctx.set_fill_style_str(if b.species.is_empty() {
+        BIRD_BOX_CARD_MUTED
+    } else {
+        "rgba(255, 255, 255, 0.95)"
+    });
+    for (i, l) in lines.iter().enumerate() {
+        let _ = ctx.fill_text(l, cx + 6.0, cy + 10.0 + line_h * (i + 1) as f64);
+    }
+    ctx.set_text_baseline("bottom");
+}
+
 /// One stretch of the BirdNET / BattyBirdNET label strip: neighbouring windows
 /// with the same top class at or above the minimum confidence.
 pub struct StripSpan {

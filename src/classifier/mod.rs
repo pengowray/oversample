@@ -61,6 +61,7 @@
 //! citation, source URL and revision, to show with results and in About.
 
 pub mod bat_pick;
+pub mod boxes;
 pub mod location;
 pub mod played;
 pub mod quiet;
@@ -308,15 +309,18 @@ pub async fn birdnet_v3_labels() -> Result<Arc<Vec<SpeciesLabel>>, ClassifierErr
             file: key.to_string(),
             message,
         })?;
-    let l = types::parse_birdnet_v3_labels(&String::from_utf8_lossy(&bytes));
+    let text = String::from_utf8_lossy(&bytes);
+    let l = types::parse_birdnet_v3_labels(&text);
+    let birds = types::parse_birdnet_v3_birds(&text);
     // A list that doesn't line up with the model would name every result
     // wrongly.
-    if l.len() != V3_CLASSES {
+    if l.len() != V3_CLASSES || birds.len() != V3_CLASSES {
         return Err(ClassifierError::Corrupt {
             file: key.to_string(),
         });
     }
     let l = Arc::new(l);
+    boxes::set_v3_birds(l.clone(), birds);
     LABELS.with(|m| m.borrow_mut().insert(key, l.clone()));
     Ok(l)
 }
@@ -548,6 +552,52 @@ pub fn step_for(method: Method, step_secs: f64) -> f64 {
     }
 }
 
+/// True when an Analyse of file `file_id` with `choice` also finds bird
+/// boxes: BirdNET+ V3.0 with "Find bird boxes" on, on a recording they apply
+/// to ([`boxes::applies_to`]).
+pub fn finds_boxes(state: AppState, file_id: u64, choice: ModelChoice) -> bool {
+    choice == ModelChoice::BirdNetV3
+        && state.call_detection.bird_boxes().get_untracked()
+        && state.library.files().with_untracked(|files| {
+            files
+                .iter()
+                .find(|f| f.id == file_id)
+                .is_some_and(boxes::applies_to)
+        })
+}
+
+/// Every file an Analyse of `file_id` with `choice` needs: the choice's,
+/// and the bird box model when it finds boxes.
+pub fn run_files(state: AppState, file_id: u64, choice: ModelChoice) -> Vec<&'static ModelFile> {
+    let mut files = choice.files();
+    if finds_boxes(state, file_id, choice) {
+        files.push(&catalog::JUST_BIRD);
+    }
+    files
+}
+
+/// True when every file in `files` is downloaded. Reactive.
+pub fn files_ready(state: AppState, files: &[&'static ModelFile]) -> bool {
+    state.classifier.downloads().with(|m| {
+        files
+            .iter()
+            .all(|f| m.get(f.id) == Some(&DownloadStatus::Downloaded))
+    })
+}
+
+/// Download every file in `files` that is not stored yet, smallest first,
+/// and finish when all are stored or one fails.
+pub async fn ensure_files(
+    state: AppState,
+    mut files: Vec<&'static ModelFile>,
+) -> Result<(), ClassifierError> {
+    files.sort_by_key(|f| f.size);
+    for f in files {
+        download_file(state, f).await?;
+    }
+    Ok(())
+}
+
 /// Analyse file `file_id` (the current file) with `choice`, with `step_secs`
 /// between window starts ([`step_for`]). Replaces that file's earlier results
 /// for the same method, except the readings the live view made of it
@@ -605,7 +655,8 @@ async fn run_task(
             return Err(ClassifierError::SampleRateTooLow { rate, min }.into());
         }
     }
-    for f in choice.files() {
+    let boxes = finds_boxes(state, file_id, choice);
+    for f in run_files(state, file_id, choice) {
         if !store::is_downloaded(f).await {
             let downloading = state.classifier.downloads().with_untracked(|m| {
                 matches!(m.get(f.id), Some(DownloadStatus::Downloading { .. }))
@@ -640,6 +691,9 @@ async fn run_task(
         ModelChoice::BirdNetV3 => {
             let labels = birdnet_v3_labels().await?;
             worker::ensure_model(&catalog::BIRDNET_V3).await?;
+            if boxes {
+                worker::ensure_model(&catalog::JUST_BIRD).await?;
+            }
             (None, labels)
         }
     };
@@ -651,10 +705,25 @@ async fn run_task(
     let step_secs = step_for(method, step_secs);
     let model_rate = method.model_rate() as f64;
     let window = method.window_samples() as u32;
-    let passes = oversample_ipc::classifier::refine_passes(
+    let mut passes = oversample_ipc::classifier::refine_passes(
         window,
         method.step_samples(step_secs).unwrap_or(window),
     );
+    // Bird boxes are named from windows every 1.5 s. A step that does not
+    // give them (3 s or 1 s) gets a pass of its own for them, right after the
+    // windows end to end, so the boxes have names soon. It leaves the step
+    // the results report as it was.
+    let grid = (oversample_ipc::classifier::boxes::CLIP_HOP_S * model_rate) as u32;
+    let naming_pass = boxes && !passes.iter().any(|p| p.offsets.contains(&grid));
+    if naming_pass {
+        passes.insert(
+            1,
+            oversample_ipc::classifier::Pass {
+                offsets: vec![grid],
+                spacing: window,
+            },
+        );
+    }
     let key = (file_id, method);
     // The new run starts with the readings the live view made of this file
     // (`played`), which are the windows Analyse gives for their starts; the
@@ -681,16 +750,29 @@ async fn run_task(
     state.classifier.embeddings().update(|m| {
         m.insert(key, kept_embeddings);
     });
+    if boxes {
+        state.classifier.boxes().update(|m| {
+            m.insert(file_id, boxes::BoxRun::new(rate));
+        });
+    }
     let run_id = generation;
+    // The spacing the results have after each pass: the extra pass for the
+    // bird boxes does not change it.
+    let mut spacing = window;
     for (p, pass) in passes.iter().enumerate() {
-        let refining = (p > 0).then(|| pass.spacing as f64 / model_rate);
+        let naming_boxes = naming_pass && p == 1;
+        if !naming_boxes {
+            spacing = pass.spacing;
+        }
+        let refining = (p > 0 && !naming_boxes).then(|| pass.spacing as f64 / model_rate);
         state.classifier.run().set(RunStatus::Running {
             file_id,
             method,
             fraction: 0.0,
             refining,
+            naming_boxes,
         });
-        worker::start(run_id, key, rate, pass.offsets.clone())?;
+        worker::start(run_id, key, rate, pass.offsets.clone(), boxes && p == 0)?;
         // About two windows per piece, as for the windows end to end, so a
         // Stop never waits behind many slow windows.
         let piece_secs = WINDOWS_PER_PIECE * method.window_secs() / pass.offsets.len() as f64;
@@ -701,6 +783,7 @@ async fn run_task(
                 method,
                 fraction,
                 refining,
+                naming_boxes,
             })
         };
         stream_pass(
@@ -710,7 +793,7 @@ async fn run_task(
         state.classifier.results().update(|m| {
             if let Some(r) = m.get_mut(&key) {
                 r.whole_file = true;
-                r.spacing_secs = pass.spacing as f64 / model_rate;
+                r.spacing_secs = spacing as f64 / model_rate;
             }
         });
     }

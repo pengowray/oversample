@@ -40,6 +40,10 @@ pub enum RunStatus {
         method: Method,
         fraction: f64,
         refining: Option<f64>,
+        /// The pass that adds BirdNET+ V3.0's windows on the 1.5 s grid
+        /// that name the bird boxes (`crate::classifier::boxes`), when the
+        /// step picked does not give them.
+        naming_boxes: bool,
     },
     /// Scoring stored BattyBirdNET embeddings with another region's head, or
     /// with all of them.
@@ -172,6 +176,15 @@ pub fn parse_birdnet_v3_labels(text: &str) -> Vec<SpeciesLabel> {
                 is_sound: matches!(group, "Anthropogenic" | "Geophony" | "Music"),
             }
         })
+        .collect()
+}
+
+/// For each line of BirdNET+ V3.0's trimmed labels (as
+/// [`parse_birdnet_v3_labels`] reads them), true when its taxon group is Aves.
+pub fn parse_birdnet_v3_birds(text: &str) -> Vec<bool> {
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.split('\t').nth(3).map(str::trim) == Some("Aves"))
         .collect()
 }
 
@@ -501,6 +514,16 @@ mod tests {
         assert!(l.iter().all(|x| x.is_species));
         assert!(!l[0].is_sound && !l[1].is_sound && !l[2].is_sound);
         assert!(l[3].is_sound && l[4].is_sound && l[5].is_sound);
+    }
+
+    #[test]
+    fn birdnet_v3_birds_are_the_aves_lines() {
+        let text = include_str!("../../research/birdnet-v3-bench/birdnet-v3-labels.tsv");
+        let birds = parse_birdnet_v3_birds(text);
+        assert_eq!(birds.len(), super::super::V3_CLASSES);
+        assert_eq!(birds.iter().filter(|&&b| b).count(), 9_788);
+        assert!(birds[0]); // Abeillia abeillei
+        assert!(!birds[26]); // an insect
     }
 
     #[test]

@@ -68,6 +68,7 @@ fn run_text(s: &RunStatus) -> String {
             method,
             fraction,
             refining,
+            ..
         } => {
             let pass = refining.map_or_else(String::new, |s| format!(" refining {s}"));
             format!(
