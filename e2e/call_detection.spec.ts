@@ -279,3 +279,26 @@ test("bird sound boxes are drawn and named from BirdNET+ V3.0", async ({ page })
   await expect(row).toHaveCount(0);
   await expect.poll(() => limePixels(page)).toBe(0);
 });
+
+test("a file analysed without bird boxes asks for another Analyse", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("oversample_bird_boxes", "true"));
+  await openFile(page);
+  await pickMethod(page, "BirdNET+ V3.0");
+  // With the box model missing, the download includes it: 72 MB + 21 MB.
+  await expect(page.locator(".detection-primary-btn")).toHaveText("Download model (93 MB)");
+  const seedErr = await page.evaluate(
+    (a) => (window as unknown as { __oversample_classifier: Hook }).__oversample_classifier.seed(a),
+    V3_SEED,
+  );
+  expect(seedErr).toBe("");
+  await expect(page.locator(".cd-recording")).toContainText("Analyse again to add bird sound boxes to this file.");
+  // No boxes found: the row says so and has no best confidence.
+  const err = await page.evaluate(
+    () => (window as unknown as { __oversample_classifier: Hook }).__oversample_classifier.seedBoxes('{"raw":[],"samples":384000}'),
+  );
+  expect(err).toBe("");
+  await expect(page.locator(".cd-recording")).not.toContainText("Analyse again to add bird sound boxes");
+  const row = page.locator(".cd-list tr", { hasText: "Bird sounds" });
+  await expect(row).toContainText("Bird sounds: 0 boxes");
+  await expect(row.locator(".detection-col-num")).toHaveText("–");
+});

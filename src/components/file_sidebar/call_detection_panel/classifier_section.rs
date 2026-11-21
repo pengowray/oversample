@@ -475,6 +475,27 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             .downloads()
             .with(|m| combined_status(m, &model_files(method)))
     });
+    // The large files the action stands for: the model's, and with bird
+    // boxes on (BirdNET+ V3.0) BirdBox's model too.
+    let action_files = move || {
+        let mut files = model_files(method);
+        let boxes = method == Method::BirdNetV3
+            && state.call_detection.bird_boxes().get()
+            && current_file
+                .get()
+                .is_some_and(|f| classifier::finds_boxes(state, f, ModelChoice::BirdNetV3));
+        if boxes {
+            files.push(&catalog::JUST_BIRD);
+        }
+        files
+    };
+    let action_status = Memo::new(move |_| {
+        let files = action_files();
+        state
+            .classifier
+            .downloads()
+            .with(|m| combined_status(m, &files))
+    });
     // This file's results for this method.
     let results_info = Memo::new(move |_| {
         let file = current_file.get()?;
@@ -554,14 +575,27 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         let Some(file_id) = current_file.get() else {
             return view! { <div class="cd-no-file">"No file selected"</div> }.into_any();
         };
-        // Track the setting, so the size follows "Draw a box round each
-        // bird sound".
+        // What a download fetches: the files the run needs that are not on
+        // this device (with bird boxes on, BirdBox's model too).
         state.call_detection.bird_boxes().track();
-        let total_size: u64 = classifier::run_files(state, file_id, choice())
-            .iter()
-            .map(|f| f.size)
-            .sum();
-        match backbone.get() {
+        let missing = move || {
+            let files = classifier::run_files(state, file_id, choice());
+            state.classifier.downloads().with_untracked(|m| {
+                files
+                    .into_iter()
+                    .filter(|f| m.get(f.id) != Some(&DownloadStatus::Downloaded))
+                    .collect::<Vec<_>>()
+            })
+        };
+        let total_size: u64 = missing().iter().map(|f| f.size).sum();
+        let download = move |_| {
+            let files = missing();
+            spawn_local(async move {
+                let _ = classifier::ensure_files(state, files).await;
+            });
+        };
+        let shown_size: u64 = action_files().iter().map(|f| f.size).sum();
+        match action_status.get() {
             DownloadStatus::Unknown => {
                 return view! { <div class="detection-status"></div> }.into_any();
             }
@@ -569,19 +603,19 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 return view! {
                     <button
                         class="sidebar-btn detection-primary-btn"
-                        on:click=move |_| classifier::download(state, choice())
+                        on:click=download
                     >{format!("Download model ({})", mb(total_size))}</button>
                     <div class="detection-status-note">"Runs on this device. Recordings are not uploaded."</div>
                 }
                 .into_any();
             }
             DownloadStatus::Downloading { fraction } => {
-                let done = (fraction * model_size as f64 / MB).round();
+                let done = (fraction * shown_size as f64 / MB).round();
                 let pct = fraction * 100.0;
                 return view! {
                     <div class="cd-progress-text">{format!(
                         "Downloading model: {done:.0} of {:.0} MB",
-                        model_size as f64 / MB
+                        shown_size as f64 / MB
                     )}</div>
                     <div class="detection-progress">
                         <div class="detection-progress-fill" style=format!("width:{pct:.1}%")></div>
@@ -594,7 +628,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                     <div class="detection-error">{format!("Download failed. {e}")}</div>
                     <button
                         class="sidebar-btn detection-primary-btn"
-                        on:click=move |_| classifier::download(state, choice())
+                        on:click=download
                     >{format!("Retry download ({})", mb(total_size))}</button>
                 }
                 .into_any();
