@@ -87,7 +87,7 @@ pub(super) fn pin_button(
 /// A section heading with a fact on its right ("In this recording", "2
 /// species, 16 windows").
 pub(super) fn section_head(
-    title: &'static str,
+    title: impl IntoView + 'static,
     right: impl IntoView + 'static,
     right_title: impl Fn() -> String + Send + Sync + 'static,
 ) -> impl IntoView {

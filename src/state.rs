@@ -1848,6 +1848,9 @@ pub struct CallDetectionState {
     /// species picked, each with its method, in the order picked. Saved in
     /// localStorage (`settings::keys::SCORE_STRIPS`) with `strip_components`.
     pub strip_species: Vec<crate::classifier::strips::StripSpecies>,
+    /// Species whose row the user removed although the file's results would
+    /// show it without a pin (`classifier::strips::auto_species`).
+    pub strip_hidden: Vec<crate::classifier::strips::StripSpecies>,
     /// The BirdNET principal components picked for strips, 0 for PC1.
     pub strip_components: Vec<usize>,
     /// The "Sound groups" row above the spectrogram is on
@@ -3126,6 +3129,7 @@ impl AppState {
                 selected_window: None,
                 preview: None,
                 strip_species: saved_strips.species,
+                strip_hidden: saved_strips.hidden,
                 strip_components: saved_strips.components,
                 sound_groups: saved_strips.sound_groups,
                 sound_group_count: saved_strips.groups,

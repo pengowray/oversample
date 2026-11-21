@@ -32,19 +32,52 @@ pub(super) fn class_name(label: Option<&classifier::SpeciesLabel>) -> String {
     label.map_or_else(|| "Unknown".to_string(), classifier::strips::display_name)
 }
 
-/// True when this species has a row above the spectrogram. Reactive.
+/// True when this species has a row above the spectrogram: pinned, or one of
+/// the best species found in the current file (`strips::auto_species`) that
+/// the user has not removed. Reactive.
 pub(super) fn strip_picked(state: AppState, method: Method, scientific: &str) -> bool {
-    state.call_detection.strip_species().with(|v| {
+    let is = |v: &Vec<classifier::strips::StripSpecies>| {
         v.iter()
             .any(|s| s.method == method && s.scientific == scientific)
+    };
+    state.call_detection.strip_species().with(is)
+        || (strip_auto(state, method, scientific) && !state.call_detection.strip_hidden().with(is))
+}
+
+/// True when the current file's results give this species a row without a
+/// pin. Reactive.
+fn strip_auto(state: AppState, method: Method, scientific: &str) -> bool {
+    let Some(file) = state.current_file_id_tracked() else {
+        return false;
+    };
+    let min = classifier::min_confidence(state, method);
+    state.classifier.results().with(|m| {
+        m.get(&(file, method)).is_some_and(|run| {
+            classifier::strips::auto_species(run, min)
+                .iter()
+                .any(|&c| run.labels[c as usize].scientific == scientific)
+        })
     })
 }
 
-/// Add or remove this species' row above the spectrogram.
+/// Add or remove this species' row above the spectrogram. Removing a row
+/// that is there without a pin is remembered, so it stays away.
 pub(super) fn toggle_strip(state: AppState, method: Method, scientific: String) {
-    state.call_detection.strip_species().update(|v| {
-        classifier::strips::toggle(v, classifier::strips::StripSpecies { method, scientific })
-    });
+    let shown = untrack(|| strip_picked(state, method, &scientific));
+    let auto = untrack(|| strip_auto(state, method, &scientific));
+    let item = classifier::strips::StripSpecies { method, scientific };
+    let cd = state.call_detection;
+    if shown {
+        cd.strip_species().update(|v| v.retain(|s| *s != item));
+        if auto {
+            cd.strip_hidden().update(|v| v.push(item));
+        }
+    } else {
+        cd.strip_hidden().update(|v| v.retain(|s| *s != item));
+        if !auto {
+            cd.strip_species().update(|v| v.push(item));
+        }
+    }
     save_strips(state);
 }
 
@@ -72,6 +105,7 @@ pub(super) fn save_strips(state: AppState) {
     let cd = state.call_detection;
     crate::settings::set_score_strips(&classifier::strips::StripPicks {
         species: cd.strip_species().get_untracked(),
+        hidden: cd.strip_hidden().get_untracked(),
         components: cd.strip_components().get_untracked(),
         sound_groups: cd.sound_groups().get_untracked(),
         groups: cd.sound_group_count().get_untracked(),

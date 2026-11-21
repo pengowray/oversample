@@ -140,34 +140,48 @@ test("the settings open beside Analyse, inside the sidebar", async ({ page }) =>
   await expect(settings).toBeHidden();
 });
 
-test("a pin shows the species in a row above the spectrogram", async ({ page }) => {
+test("species found get rows above the spectrogram, and a pin removes or adds one", async ({ page }) => {
   await openFile(page);
   await pickMethod(page, "BirdNET V2.4");
+  const strips = page.locator(".score-strips-row");
+  await expect(strips).toBeHidden();
   await seed(page);
   const row = page.locator(".cd-list tr", { hasText: "Common Blackbird" });
   await expect(row).toBeVisible();
   await expect(page.locator(".cd-recording .cd-head-fact")).toHaveText("2 species, 4 windows");
+  // Both species found have a row without a pin being pressed first.
   const pin = row.locator(".cd-pin");
-  await expect(pin).toHaveAttribute("aria-pressed", "false");
-  await expect(pin).toHaveAttribute("aria-label", "Show Common Blackbird above the spectrogram");
-  const strips = page.locator(".score-strips-row");
-  await expect(strips).toBeHidden();
-  await pin.click();
+  const robinPin = page.locator(".cd-list tr", { hasText: "European Robin" }).locator(".cd-pin");
+  await expect(strips).toBeVisible();
   await expect(pin).toHaveAttribute("aria-pressed", "true");
   await expect(pin).toHaveAttribute("aria-label", "Remove Common Blackbird from above the spectrogram");
-  await expect(strips).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem("oversample_score_strips"))).toContain("Turdus merula");
-  // A species added by the search is listed too, and its pin removes it.
+  await expect(robinPin).toHaveAttribute("aria-pressed", "true");
+  const height = async () => (await strips.boundingBox())!.height;
+  const two = await height();
+  // The pin removes the row, and that is saved.
+  await pin.click();
+  await expect(pin).toHaveAttribute("aria-pressed", "false");
+  await expect(pin).toHaveAttribute("aria-label", "Show Common Blackbird above the spectrogram");
+  await expect.poll(height).toBeLessThan(two);
+  const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem("oversample_score_strips") ?? "{}"));
+  expect(JSON.stringify((await saved()).hidden)).toContain("Turdus merula");
+  // And puts it back.
+  await pin.click();
+  await expect(pin).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(height).toBe(two);
+  expect((await saved()).hidden).toEqual([]);
+  // A class added by the search is listed too, and its pin removes it.
   await page.locator(".strip-search-input").fill("song thr");
   await expect(page.locator(".strip-search-empty")).toHaveText("No species found");
   await page.locator(".strip-search-input").fill("engine");
   await page.locator(".strip-search-option", { hasText: "Engine" }).dispatchEvent("mousedown");
   await expect(page.locator(".cd-list tr", { hasText: "Engine" }).locator(".cd-pin")).toHaveAttribute("aria-pressed", "true");
+  expect(JSON.stringify((await saved()).species)).toContain("Engine");
   await page.locator(".cd-list tr", { hasText: "Engine" }).locator(".cd-pin").click();
   await expect(page.locator(".cd-list tr", { hasText: "Engine" })).toHaveCount(0);
-  // Unpin: the row above the spectrogram goes.
+  // Every row removed: nothing above the spectrogram.
   await pin.click();
-  await expect(pin).toHaveAttribute("aria-pressed", "false");
+  await robinPin.click();
   await expect(strips).toBeHidden();
 });
 

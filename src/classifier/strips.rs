@@ -263,6 +263,28 @@ pub fn toggle<T: PartialEq>(picked: &mut Vec<T>, item: T) {
     }
 }
 
+/// Most species that get a row without being pinned.
+pub const AUTO_ROWS: usize = 5;
+
+/// The species that get a row above the spectrogram without a pin: those
+/// that are some window's best match at `min_confidence` or above, best
+/// first, [`AUTO_ROWS`] at most.
+pub fn auto_species(run: &ClassifierRun, min_confidence: f32) -> Vec<u16> {
+    let mut best: Vec<(u16, f32)> = Vec::new();
+    for w in &run.windows {
+        let Some(top) = w.top.first() else { continue };
+        if top.confidence < min_confidence || !run.label(top).is_some_and(|l| l.is_species) {
+            continue;
+        }
+        match best.iter_mut().find(|(c, _)| *c == top.class) {
+            Some((_, b)) => *b = b.max(top.confidence),
+            None => best.push((top.class, top.confidence)),
+        }
+    }
+    best.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    best.into_iter().take(AUTO_ROWS).map(|(c, _)| c).collect()
+}
+
 // ── Saved picks ─────────────────────────────────────────────────────────────
 
 /// Most species rows and components kept from a saved value, so a damaged
@@ -295,6 +317,9 @@ fn method_from_key(key: &str) -> Option<Method> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StripPicks {
     pub species: Vec<StripSpecies>,
+    /// Species whose row was removed although the recording's results would
+    /// show it without a pin ([`auto_species`]).
+    pub hidden: Vec<StripSpecies>,
     /// BirdNET principal components, 0 for PC1.
     pub components: Vec<usize>,
     /// The "Sound groups" row is on.
@@ -307,6 +332,7 @@ impl Default for StripPicks {
     fn default() -> Self {
         Self {
             species: Vec::new(),
+            hidden: Vec::new(),
             components: Vec::new(),
             sound_groups: false,
             groups: super::sound_groups::DEFAULT_GROUPS,
@@ -322,8 +348,14 @@ pub fn to_stored(picks: &StripPicks) -> String {
         .iter()
         .map(|s| serde_json::json!({ "method": method_key(s.method), "scientific": s.scientific }))
         .collect();
+    let hidden: Vec<serde_json::Value> = picks
+        .hidden
+        .iter()
+        .map(|s| serde_json::json!({ "method": method_key(s.method), "scientific": s.scientific }))
+        .collect();
     serde_json::json!({
         "species": species,
+        "hidden": hidden,
         "components": picks.components,
         "sound_groups": picks.sound_groups,
         "groups": picks.groups,
@@ -341,21 +373,8 @@ pub fn from_stored(raw: &str) -> StripPicks {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
         return StripPicks::default();
     };
-    let mut species: Vec<StripSpecies> = Vec::new();
-    for entry in value["species"].as_array().into_iter().flatten() {
-        let method = entry["method"].as_str().and_then(method_from_key);
-        let scientific = entry["scientific"].as_str().map(str::trim).unwrap_or("");
-        let (Some(method), false) = (method, scientific.is_empty()) else {
-            continue;
-        };
-        let s = StripSpecies {
-            method,
-            scientific: scientific.to_string(),
-        };
-        if !species.contains(&s) && species.len() < MAX_SAVED_SPECIES {
-            species.push(s);
-        }
-    }
+    let species = stored_species(&value["species"]);
+    let hidden = stored_species(&value["hidden"]);
     let mut components: Vec<usize> = Vec::new();
     for k in value["components"].as_array().into_iter().flatten() {
         let Some(k) = k.as_u64().and_then(|k| usize::try_from(k).ok()) else {
@@ -372,10 +391,32 @@ pub fn from_stored(raw: &str) -> StripPicks {
         .unwrap_or(super::sound_groups::DEFAULT_GROUPS);
     StripPicks {
         species,
+        hidden,
         components,
         sound_groups: value["sound_groups"].as_bool().unwrap_or(false),
         groups,
     }
+}
+
+/// A saved list of species (`"species"` or `"hidden"`), as [`from_stored`]
+/// reads it.
+fn stored_species(list: &serde_json::Value) -> Vec<StripSpecies> {
+    let mut species: Vec<StripSpecies> = Vec::new();
+    for entry in list.as_array().into_iter().flatten() {
+        let method = entry["method"].as_str().and_then(method_from_key);
+        let scientific = entry["scientific"].as_str().map(str::trim).unwrap_or("");
+        let (Some(method), false) = (method, scientific.is_empty()) else {
+            continue;
+        };
+        let s = StripSpecies {
+            method,
+            scientific: scientific.to_string(),
+        };
+        if !species.contains(&s) && species.len() < MAX_SAVED_SPECIES {
+            species.push(s);
+        }
+    }
+    species
 }
 
 // ── Species search ──────────────────────────────────────────────────────────
@@ -627,6 +668,10 @@ mod tests {
             },
         ];
         let picks = StripPicks {
+            hidden: vec![StripSpecies {
+                method: Method::BirdNet,
+                scientific: "Erithacus rubecula".into(),
+            }],
             species,
             components: vec![2, 0],
             sound_groups: true,

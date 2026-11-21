@@ -187,6 +187,16 @@ pub(super) fn LiveView(
         }
         String::new()
     };
+    let readout4 = readout3.clone();
+    let readout5 = readout3.clone();
+    let picked = move || readout4.with(|r| r.as_ref().is_some_and(|r| r.picked));
+    let head = move || {
+        if readout5.with(|r| r.as_ref().is_some_and(|r| r.picked)) {
+            "In the picked window"
+        } else {
+            "At the play position"
+        }
+    };
     let where_title = move || match state.classifier.live().get() {
         LiveStatus::Ready {
             interval_ms,
@@ -199,6 +209,7 @@ pub(super) fn LiveView(
                     method_name
                 )
         }
+        _ if picked() => "The window you clicked (yellow ring on the map)".to_string(),
         _ => format!(
             "The {} s from where Play starts (blue triangle on the map)",
             model.window_s
@@ -276,7 +287,7 @@ pub(super) fn LiveView(
 
     view! {
         <div class="live-emb cd-section">
-            {section_head("At the play position", where_, where_title)}
+            {section_head(head, where_, where_title)}
             {move || status().map(|s| view! { <div class="detection-status-note cd-live-note">{s}</div> })}
             <div class="cd-live-readout" class:playing=sound_on>{rows}</div>
             // Hidden until the model is loaded: before that it would show

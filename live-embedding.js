@@ -67,6 +67,9 @@
   // ring of a live reading below the minimum confidence, and from the blue
   // of the component colours.
   const PLAY_BLUE = '#64a0ff';
+  // The picked window's marker: a ring in the yellow that outlines the
+  // picked window on the rows above the spectrogram.
+  const PICKED_YELLOW = '#ffc850';
   const TOOLTIP = {
     confine: true,
     backgroundColor: '#262626',
@@ -316,19 +319,31 @@
         silent: true,
         data: play
           ? [
-              {
-                value: play,
-                // A triangle pointing right, as a path so no rotation is needed.
-                symbol: 'path://M0,0 L10,6 L0,12 Z',
-                symbolSize: [14, 16],
-                itemStyle: {
-                  color: 'transparent',
-                  borderColor: PLAY_BLUE,
-                  borderWidth: 2,
-                  shadowColor: 'rgba(0,0,0,0.9)',
-                  shadowBlur: 3,
-                },
-              },
+              d.preview.picked
+                ? {
+                    value: play,
+                    symbolSize: 16,
+                    itemStyle: {
+                      color: 'transparent',
+                      borderColor: PICKED_YELLOW,
+                      borderWidth: 2,
+                      shadowColor: 'rgba(0,0,0,0.9)',
+                      shadowBlur: 3,
+                    },
+                  }
+                : {
+                    value: play,
+                    // A triangle pointing right, as a path so no rotation is needed.
+                    symbol: 'path://M0,0 L10,6 L0,12 Z',
+                    symbolSize: [14, 16],
+                    itemStyle: {
+                      color: 'transparent',
+                      borderColor: PLAY_BLUE,
+                      borderWidth: 2,
+                      shadowColor: 'rgba(0,0,0,0.9)',
+                      shadowBlur: 3,
+                    },
+                  },
             ]
           : last
           ? [
@@ -1097,17 +1112,22 @@
         if (d.preview) {
           // The paused reading: the same blue play triangle as the large
           // map, outlined in black so it shows on the coloured areas.
+          // The picked window: a yellow ring instead.
           const r = 4.5 * u;
-          m.ctx.moveTo(x + r, y);
-          m.ctx.lineTo(x - r / 2, y - r * 0.87);
-          m.ctx.lineTo(x - r / 2, y + r * 0.87);
-          m.ctx.closePath();
+          if (d.preview.picked) {
+            m.ctx.arc(x, y, r * 0.8, 0, 2 * Math.PI);
+          } else {
+            m.ctx.moveTo(x + r, y);
+            m.ctx.lineTo(x - r / 2, y - r * 0.87);
+            m.ctx.lineTo(x - r / 2, y + r * 0.87);
+            m.ctx.closePath();
+          }
           m.ctx.lineJoin = 'round';
           m.ctx.lineWidth = 3 * u;
           m.ctx.strokeStyle = '#000000';
           m.ctx.stroke();
           m.ctx.lineWidth = 1.5 * u;
-          m.ctx.strokeStyle = PLAY_BLUE;
+          m.ctx.strokeStyle = d.preview.picked ? PICKED_YELLOW : PLAY_BLUE;
           m.ctx.stroke();
         } else {
           m.ctx.arc(x, y, 3 * u, 0, 2 * Math.PI);

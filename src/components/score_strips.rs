@@ -10,7 +10,7 @@
 
 use crate::canvas::overlays::{draw_score_strips, SCORE_ROW_H};
 use crate::classifier::strips::{
-    class_of, component_cells, display_name, ordinal, species_cells, window_at, window_floors,
+    auto_species, class_of, component_cells, display_name, ordinal, species_cells, window_at, window_floors,
     ScoreRow, ScoreRowKind, ScoreStrips,
 };
 use crate::classifier::{self, location, Method, MethodFacts};
@@ -99,6 +99,12 @@ fn build(state: AppState) -> Option<ScoreStrips> {
             .map(|s| s.scientific.clone())
             .collect()
     });
+    let hidden: Vec<String> = state.call_detection.strip_hidden().with(|v| {
+        v.iter()
+            .filter(|s| s.method == method)
+            .map(|s| s.scientific.clone())
+            .collect()
+    });
     // Components of the method's embedding, for the methods that have them
     // (`components_file`).
     let picked_pcs: Vec<usize> = if components_file(method).is_some() {
@@ -107,9 +113,6 @@ fn build(state: AppState) -> Option<ScoreStrips> {
         Vec::new()
     };
     let groups_on = state.call_detection.sound_groups().get();
-    if species.is_empty() && picked_pcs.is_empty() && !groups_on {
-        return None;
-    }
     let min = classifier::min_confidence(state, method);
     let pcs = (!picked_pcs.is_empty())
         .then(|| components_for(method))
@@ -118,13 +121,25 @@ fn build(state: AppState) -> Option<ScoreStrips> {
         let run = m.get(&(file, method))?;
         let mut rows = Vec::new();
         let order = crate::classifier::summary::colour_order(run);
+        // A row without a pin for each of the best species found
+        // (`auto_species`), as the live view's rows appear by themselves,
+        // apart from those the user removed. Then the pinned species.
+        let mut classes: Vec<u16> = auto_species(run, min)
+            .into_iter()
+            .filter(|&c| !hidden.contains(&run.labels[c as usize].scientific))
+            .collect();
         for scientific in &species {
             // Not among this run's classes (a BattyBirdNET region without
             // the species): no row.
-            let Some(class) = class_of(run, scientific) else {
-                continue;
-            };
+            if let Some(class) = class_of(run, scientific) {
+                if !classes.contains(&class) {
+                    classes.push(class);
+                }
+            }
+        }
+        for class in classes {
             let label = &run.labels[class as usize];
+            let scientific = &label.scientific;
             rows.push(ScoreRow {
                 kind: ScoreRowKind::Species,
                 label: display_name(label),

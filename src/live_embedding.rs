@@ -680,6 +680,8 @@ pub struct ReadoutClass {
 pub struct Readout {
     pub top: Vec<ReadoutClass>,
     pub range: Option<(f64, f64)>,
+    /// The paused reading is of the picked window, not of the play start.
+    pub picked: bool,
     /// A bat recording or other ultrasound, which the model does not hear.
     pub ultrasonic: bool,
 }
@@ -1315,9 +1317,21 @@ fn sound_on(state: AppState) -> bool {
         || state.mic.recording().get_untracked()
 }
 
-/// The window a paused reading would cover now: the current file and the
-/// model's window that Play would start with. `None` with no file or a
-/// timeline open.
+thread_local! {
+    /// For [`preview_key`]: the picked window's start and the play-start
+    /// window as last seen, and whether the picked window is the one shown.
+    static PREVIEW_SOURCE: Cell<(Option<i64>, Option<PreviewKey>, bool)> =
+        const { Cell::new((None, None, false)) };
+    /// The paused reading's window when it is the picked window
+    /// (`call_detection.selected_window`), not the play start.
+    static PICKED_KEY: Cell<Option<PreviewKey>> = const { Cell::new(None) };
+}
+
+/// The window a paused reading would cover now, in the current file: the
+/// window picked in the lists or on the rows above the spectrogram, or the
+/// model's window that Play would start with, whichever changed last. So a
+/// click on a window shows it, and moving the play position afterwards shows
+/// the play position again. `None` with no file or a timeline open.
 fn preview_key(state: AppState) -> Option<PreviewKey> {
     let start = crate::audio::playback::play_start_time(&state)?;
     let idx = state.library.current_index().get_untracked()?;
@@ -1325,9 +1339,24 @@ fn preview_key(state: AppState) -> Option<PreviewKey> {
         .library
         .files()
         .with_untracked(|f| f.get(idx).map(|f| (f.id, f.audio.duration_secs)))?;
-    let (from, to) = preview_window(start, duration, active().window_s);
     let ms = |s: f64| (s * 1000.0).round() as i64;
-    (to > from).then(|| (id, ms(from), ms(to)))
+    let key_from = |start: f64| {
+        let (from, to) = preview_window(start, duration, active().window_s);
+        (to > from).then(|| (id, ms(from), ms(to)))
+    };
+    let play = key_from(start);
+    let picked_start = state.call_detection.selected_window().get_untracked();
+    let picked_ms = picked_start.map(ms);
+    let (seen_picked, seen_play, mut use_picked) = PREVIEW_SOURCE.with(|p| p.get());
+    if picked_ms != seen_picked {
+        use_picked = picked_ms.is_some();
+    } else if play != seen_play {
+        use_picked = false;
+    }
+    PREVIEW_SOURCE.with(|p| p.set((picked_ms, play, use_picked)));
+    let picked = picked_start.filter(|_| use_picked).and_then(key_from);
+    PICKED_KEY.with(|p| p.set(picked));
+    picked.or(play)
 }
 
 /// What the chart should show for the pause now (see [`PausedView`]).
@@ -1934,6 +1963,7 @@ fn draw_view(state: AppState, view: PausedView) {
                 })
                 .collect(),
             range: shown.map(|key| (key.1 as f64 / 1000.0, key.2 as f64 / 1000.0)),
+            picked: shown.is_some() && shown == PICKED_KEY.with(|p| p.get()),
             ultrasonic: RATE.with(|r| r.get()) >= ULTRASONIC_RATE,
         });
         let ago = |r: &Reading| round3(((r.t - now) / 1000.0) as f32);
@@ -2008,6 +2038,7 @@ fn draw_view(state: AppState, view: PausedView) {
             "preview": preview.as_ref().map(|p| serde_json::json!({
                 "at": p.1,
                 "range": p.2,
+                "picked": shown == PICKED_KEY.with(|p| p.get()),
             })),
             "pending": pending,
             "strip": strip,
