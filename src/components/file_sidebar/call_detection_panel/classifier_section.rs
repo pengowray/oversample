@@ -41,9 +41,9 @@ const MB: f64 = 1_000_000.0;
 fn mb(bytes: u64) -> String {
     let m = bytes as f64 / MB;
     if m >= 10.0 {
-        format!("{m:.0} MB")
+        format!("{m:.0}\u{a0}MB")
     } else {
-        format!("{:.1} MB", m.max(0.1))
+        format!("{:.1}\u{a0}MB", m.max(0.1))
     }
 }
 
@@ -738,7 +738,8 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             ));
         }
         f.push(format!("Min confidence {:.2}", min_conf()));
-        if !state.call_detection.overlay_enabled().get() {
+        // Before a run there are no boxes to show, and Analyse turns them on.
+        if !state.call_detection.overlay_enabled().get() && analysed.get() {
             f.push("Boxes off".to_string());
         }
         if let Some(p) = place_fact(state, method, current_file.get()) {
@@ -1034,7 +1035,12 @@ fn in_recording_section(
                 "detection-row"
             }
         };
-        let flag = flag_cell(state, method, current_file.get_untracked(), r.label.as_ref());
+        let flag = flag_cell(
+            state,
+            method,
+            current_file.get_untracked(),
+            r.label.as_ref(),
+        );
         view! {
             <tr class=class title=r.scientific.clone() on:click=move |_| show_window(state, start, end)>
                 <td class="detection-col-kind">
@@ -1086,7 +1092,12 @@ fn in_recording_section(
         })
     });
     let missing_row = move |r: MissingRow| {
-        let flag = flag_cell(state, method, current_file.get_untracked(), r.label.as_ref());
+        let flag = flag_cell(
+            state,
+            method,
+            current_file.get_untracked(),
+            r.label.as_ref(),
+        );
         let cells = if r.in_model {
             view! {
                 <td class="detection-col-num cd-missing">"\u{2013}"</td>
@@ -1208,7 +1219,9 @@ fn in_recording_section(
             {move || (!has_results.get()).then(|| view! {
                 <div class="cd-notes"><div class="detection-status-note">"Analyse to list the species found in this recording."</div></div>
             })}
-            <table class="detection-table cd-list">
+            // Hidden, not removed, before there are results: a row above the
+            // spectrogram needs a run, so there is nothing to pin yet.
+            <table class="detection-table cd-list" style:display=move || if has_results.get() { "" } else { "none" }>
                 <thead>
                     <tr>
                         <th></th>
@@ -1332,10 +1345,15 @@ fn model_line(
         <div class="cd-model">
             {downloaded.then(|| view! {
                 <div>
-                    {format!("Model on this device, {}. ", mb(model_size))}
+                    // Deleting BirdNET's backbone stops BattyBirdNET too, so
+                    // the line says so where Delete is.
+                    {if shared {
+                        format!("Model on this device, {}, used by BirdNET and BattyBirdNET. ", mb(model_size))
+                    } else {
+                        format!("Model on this device, {}. ", mb(model_size))
+                    }}
                     <button
                         class="detection-link-btn"
-                        title=shared.then_some("Used by BirdNET and BattyBirdNET")
                         on:click=move |_| {
                             let ok = web_sys::window()
                                 .and_then(|w| {
@@ -1485,7 +1503,8 @@ fn place_fact(state: AppState, method: Method, file: Option<u64>) -> Option<Stri
     let where_ = match (own, device) {
         (Some(p), _) => country.unwrap_or_else(|| format!("{:.2}, {:.2}", p.lat, p.lon)),
         (None, Some(_)) => "Your location".to_string(),
-        (None, None) => return Some("Place unknown".to_string()),
+        // No place: no bird is marked, so nothing about it is in force.
+        (None, None) => return None,
     };
     Some(match month_of(week) {
         Some(m) => format!("{where_} in {m}"),
@@ -1541,8 +1560,10 @@ fn place_rows(
     // and moves nothing: blank when off or before there are results, then
     // "Checking..." until the location list is worked out, then how many
     // listed species are flagged.
+    // Without a place there is no location list to wait for.
+    let has_place = place.is_some();
     let marked = move || {
-        if !state.call_detection.mark_unexpected().get() || !has_results.get() {
+        if !state.call_detection.mark_unexpected().get() || !has_results.get() || !has_place {
             return String::new();
         }
         let checking = state

@@ -130,7 +130,10 @@ test("the settings open beside Analyse, inside the sidebar", async ({ page }) =>
     };
   });
   expect(fits).toEqual({ inside: true, onTop: true });
-  // Turning the boxes off shows in the line of settings in force.
+  // With results, turning the boxes off shows in the line of settings in force.
+  await seed(page);
+  await settings.getByLabel("Boxes on the spectrogram").check();
+  await expect(page.locator(".cd-in-force")).not.toContainText("Boxes off");
   await settings.getByLabel("Boxes on the spectrogram").uncheck();
   await expect(page.locator(".cd-in-force")).toContainText("Boxes off");
   await page.locator(".cd-in-force").click();

@@ -10336,6 +10336,7 @@ body.hfr-nudge-on .hfr-switch {
     margin-top: 4px;
 }
 .live-emb-pc {
+    position: relative;
     display: block;
     min-width: 0;
     cursor: pointer;
@@ -10356,9 +10357,17 @@ body.hfr-nudge-on .hfr-switch {
     font: inherit;
     cursor: pointer;
 }
+/* On the map's top-right corner (under the 24 px name row), on a dark
+   backing so it shows over the coloured species. */
 .live-emb-pc-pin.cd-pin {
-    flex: none;
+    position: absolute;
+    top: 25px;
+    right: 1px;
     font-size: 12px;
+    background: rgba(26, 26, 26, 0.8);
+}
+.live-emb-pc-pin.cd-pin:hover {
+    background: #2a2a2a;
 }
 .live-emb-pc canvas {
     display: block;
@@ -10702,8 +10711,13 @@ body.hfr-nudge-on .hfr-switch {
     border-color: #6ea8fe;
 }
 .cd-caret {
-    color: #888;
+    color: #999;
     font-size: 11px;
+}
+/* The list is not in a scroll box of its own: a sticky header would stick
+   to the top of the panel and cover the rows scrolled under it. */
+.detection-table.cd-list th {
+    position: static;
 }
 .cd-method-menu {
     left: 0;
@@ -10818,7 +10832,8 @@ body.hfr-nudge-on .hfr-switch {
 .cd-fact {
     white-space: nowrap;
 }
-.cd-fact + .cd-fact::before {
+/* The dot ends a fact, so a wrapped line starts with a fact, not a dot. */
+.cd-fact:not(:last-child)::after {
     content: "\00b7";
     margin: 0 5px;
 }
@@ -10830,7 +10845,9 @@ body.hfr-nudge-on .hfr-switch {
     border: 1px solid #333;
     border-radius: 4px;
 }
+/* A row whose buttons do not fit beside the label goes under it. */
 .cd-settings .setting-row {
+    flex-wrap: wrap;
     padding: 4px 10px;
 }
 .cd-settings .setting-row.detection-annotate-row {
@@ -10877,8 +10894,15 @@ body.hfr-nudge-on .hfr-switch {
 .cd-name-line {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 2px 6px;
+    gap: 6px;
+}
+/* The name wraps beside the swatch, never under it. */
+.cd-name-line > span:not(.map-key):not(.unlikely-flag) {
+    min-width: 0;
+}
+.cd-name-line > .map-key {
+    align-self: flex-start;
+    margin-top: 4px;
 }
 .map-key.cd-swatch {
     width: 8px;
@@ -11002,4 +11026,27 @@ body.hfr-nudge-on .hfr-switch {
 }
 .cd-model a:hover {
     text-decoration: underline;
+}
+/* The name takes the free width, so it wraps only when it has to. */
+.detection-table.cd-list td.detection-col-kind {
+    width: 100%;
+}
+/* No fold applies yet (no results): no divider either. */
+.cd-folds:empty {
+    display: none;
+}
+.cd-inbuilt > .cd-no-file {
+    padding: 8px 16px 4px;
+}
+/* Room for three rows (and the line above them), held while a file plays
+   in, so the list does not jump each time a reading has more or fewer
+   classes. */
+.cd-live-readout.playing:has(table) {
+    min-height: 96px;
+}
+/* The licence link: 24 px tall, the size the other small buttons here have
+   (.detection-link-btn). */
+.cd-model a {
+    display: inline-block;
+    line-height: 24px;
 }

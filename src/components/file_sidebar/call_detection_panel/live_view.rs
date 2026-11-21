@@ -56,6 +56,11 @@ pub(super) fn LiveView(
     let state = expect_context::<AppState>();
     let model = live_embedding::model_for(method);
     live_embedding::set_picked(method);
+    // The name the method drop-down shows.
+    let method_name = match method {
+        Method::Perch => "Perch 2.0",
+        _ => "BirdNET V2.4",
+    };
     let id = NEXT_ID.with(|n| {
         let id = n.get();
         n.set(id.wrapping_add(1));
@@ -162,9 +167,9 @@ pub(super) fn LiveView(
         LiveStatus::Off => None,
         LiveStatus::NeedsDownload => Some(format!(
             "Download {} to see results for the play position.",
-            model.name
+            method_name
         )),
-        LiveStatus::Loading => Some(format!("Loading {}\u{2026}", model.name)),
+        LiveStatus::Loading => Some(format!("Loading {}\u{2026}", method_name)),
         LiveStatus::Failed(e) => Some(format!("Readings at the play position stopped: {e}")),
         LiveStatus::Ready { .. } if readout1.with(Option::is_some) => None,
         LiveStatus::Ready { .. } if sound_on() => Some("Starting\u{2026}".to_string()),
@@ -186,21 +191,22 @@ pub(super) fn LiveView(
         }
         String::new()
     };
-    let where_title = move || {
-        match state.classifier.live().get() {
-            LiveStatus::Ready { interval_ms, model_ms } if interval_ms > 0.0 && sound_on() => {
-                format!(
+    let where_title = move || match state.classifier.live().get() {
+        LiveStatus::Ready {
+            interval_ms,
+            model_ms,
+        } if interval_ms > 0.0 && sound_on() => {
+            format!(
                     "The last {} s of audio, updated every {:.2} s. {} takes {model_ms:.0} ms for each reading on this device.",
                     model.window_s,
                     interval_ms / 1000.0,
-                    model.name
+                    method_name
                 )
-            }
-            _ => format!(
-                "The {} s from where Play starts (blue triangle on the map)",
-                model.window_s
-            ),
         }
+        _ => format!(
+            "The {} s from where Play starts (blue triangle on the map)",
+            model.window_s
+        ),
     };
 
     // The reading's top classes, in the row format of "In this recording".
@@ -242,7 +248,7 @@ pub(super) fn LiveView(
                                 {c.unlikely.then(super::classifier_section::unlikely_flag)}
                             </span>
                         </td>
-                        <td class="detection-col-num">{format!("{:.2}", c.score)}</td>
+                        <td class="detection-col-num" title="Confidence">{format!("{:.2}", c.score)}</td>
                         <td class="cd-col-pin">{pin}</td>
                     </tr>
                 }
@@ -276,7 +282,7 @@ pub(super) fn LiveView(
         <div class="live-emb cd-section">
             {section_head("At the play position", where_, where_title)}
             {move || status().map(|s| view! { <div class="detection-status-note cd-live-note">{s}</div> })}
-            <div class="cd-live-readout">{rows}</div>
+            <div class="cd-live-readout" class:playing=sound_on>{rows}</div>
             // Hidden until the model is loaded: before that it would show
             // an empty frame. Hidden, not removed, so the element registered
             // with live_embedding stays the same.

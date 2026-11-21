@@ -28,10 +28,10 @@ use crate::dsp::call_detect::{
 use crate::state::store_fields::*;
 use crate::state::{AppState, DetectionMethod, RightSidebarTab};
 use classifier_section::ClassifierSection;
-use parts::{in_force_line, section_head, settings_button, Fold};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_core::audio::source::ChannelView;
+use parts::{in_force_line, section_head, settings_button, Fold};
 
 /// Seconds of audio searched between yields to the browser.
 const PIECE_SECS: f64 = 0.25;

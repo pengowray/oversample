@@ -964,8 +964,11 @@
       pick.className = 'live-emb-pc-pick';
       pick.innerHTML = `${pie(pc.variance[k])}<span>${name}</span>`;
       label.appendChild(pick);
+      // The pin sits on the map's top-right corner: four maps to a row
+      // leave no room for it beside the name.
+      let pin = null;
       if (el.__pins) {
-        const pin = document.createElement('button');
+        pin = document.createElement('button');
         pin.type = 'button';
         pin.className = 'cd-pin live-emb-pc-pin';
         pin.innerHTML = PIN_SVG;
@@ -973,7 +976,6 @@
           e.stopPropagation();
           window.dispatchEvent(new CustomEvent('oversample-pc-pin', { detail: k }));
         });
-        label.appendChild(pin);
       }
       const canvas = document.createElement('canvas');
       canvas.className = 'live-emb-pc-map';
@@ -986,6 +988,7 @@
       graph.style.width = `${size}px`;
       graph.style.height = `${GRAPH_H}px`;
       cell.append(label, canvas, graph);
+      if (pin) cell.appendChild(pin);
       div.appendChild(cell);
       const img = document.createElement('canvas');
       img.width = img.height = px;
