@@ -43,6 +43,8 @@ pub enum Icon {
     Wave,
     ArrowLeft,
     ArrowRight,
+    ArrowUp,
+    ArrowDown,
     Undo,
     Redo,
     /// Four corner brackets (expand to full range).
@@ -121,6 +123,8 @@ impl Icon {
             Icon::Wave => r#"<path d="M2 12c2-6 3-6 5 0s3 6 5 0 3-6 5 0 3 6 5 0"/>"#,
             Icon::ArrowLeft => r#"<path d="M19 12H5"/><path d="M12 5l-7 7 7 7"/>"#,
             Icon::ArrowRight => r#"<path d="M5 12h14"/><path d="M12 5l7 7-7 7"/>"#,
+            Icon::ArrowUp => r#"<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>"#,
+            Icon::ArrowDown => r#"<path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/>"#,
             Icon::Undo => r#"<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/>"#,
             Icon::Redo => r#"<path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 15-6.7L21 13"/>"#,
             Icon::Fullscreen => {

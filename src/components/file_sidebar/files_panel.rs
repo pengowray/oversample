@@ -645,14 +645,22 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                     t.as_ref().map(|tv| (tv.segments.len(), tv.total_duration_secs))
                                         .unwrap_or((0, 0.0))
                                 });
-                                // The files in play order. Shown when they
-                                // are placed one after another: placed at
-                                // their recorded times, the order changes
+                                // The files in order: play order when they are
+                                // placed one after another, top to bottom
+                                // when each has a row. Not shown at their
+                                // recorded times, where the order changes
                                 // nothing.
-                                let in_turn = matches!(
-                                    state.timeline.arrangement().get(),
-                                    crate::project::Arrangement::InTurn { .. }
-                                );
+                                let arrangement = state.timeline.arrangement().get();
+                                let in_turn = !matches!(arrangement, crate::project::Arrangement::RecordingTime);
+                                // The buttons point the way the file moves
+                                // on screen: along the timeline, or up and
+                                // down the rows.
+                                let (earlier, later, earlier_icon, later_icon) =
+                                    if matches!(arrangement, crate::project::Arrangement::Together) {
+                                        ("Move up", "Move down", Icon::ArrowUp, Icon::ArrowDown)
+                                    } else {
+                                        ("Play earlier", "Play later", Icon::ArrowLeft, Icon::ArrowRight)
+                                    };
                                 let order = state.timeline.clip_file_indices().get();
                                 let last = order.len().saturating_sub(1);
                                 let rows: Vec<_> = order.iter().enumerate().map(|(pos, &fi)| {
@@ -662,16 +670,16 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                         <li class="timeline-order-row">
                                             <span class="timeline-order-num">{pos + 1}</span>
                                             <span class="timeline-order-name" title=title>{name}</span>
-                                            <button class="timeline-order-btn" title="Play earlier"
-                                                aria-label="Play earlier"
+                                            <button class="timeline-order-btn" title=earlier
+                                                aria-label=earlier
                                                 disabled={pos == 0}
                                                 on:click=move |_| crate::timeline::move_clip(&state, pos, pos.saturating_sub(1))
-                                            ><Icon kind=Icon::ArrowLeft /></button>
-                                            <button class="timeline-order-btn" title="Play later"
-                                                aria-label="Play later"
+                                            ><Icon kind=earlier_icon /></button>
+                                            <button class="timeline-order-btn" title=later
+                                                aria-label=later
                                                 disabled={pos == last}
                                                 on:click=move |_| crate::timeline::move_clip(&state, pos, pos + 1)
-                                            ><Icon kind=Icon::ArrowRight /></button>
+                                            ><Icon kind=later_icon /></button>
                                         </li>
                                     }
                                 }).collect();

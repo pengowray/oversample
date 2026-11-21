@@ -436,10 +436,40 @@ test.describe("timeline arrangement", () => {
       .toEqual(["alpha.wav", "bravo.wav", "charlie.wav"]);
     await page.keyboard.press("Space");
 
-    // Wave view has the same rows.
+    // Wave view has the same rows, with their names and Solo buttons.
     await page.getByRole("button", { name: "Wave", exact: true }).click();
+    await expect(page.locator(".timeline-row-label:visible")).toHaveCount(3);
     await page.waitForTimeout(1500);
     if (out) await page.screenshot({ path: `${out}/rows-3-wave.png` });
+    await page.getByRole("button", { name: "Spec", exact: true }).click();
+
+    // The Files tab lists the rows from the top. Move alpha down one row.
+    await page.locator(".sidebar-header-label", { hasText: "Files" }).click();
+    const order = page.locator(".timeline-order-row");
+    await expect(order).toHaveCount(3);
+    await expect(order.nth(0).getByRole("button", { name: "Move up" })).toBeDisabled();
+    await order.nth(0).getByRole("button", { name: "Move down" }).click();
+    await expect
+      .poll(async () => (await snapshot(page)).timelineFiles)
+      .toEqual(["bravo.wav", "alpha.wav", "charlie.wav"]);
+    expect((await snapshot(page)).timelineRows).toEqual([0, 1, 2]);
+    await expect(page.locator(".timeline-row-name:visible")).toHaveText([
+      "bravo.wav",
+      "alpha.wav",
+      "charlie.wav",
+    ]);
+    if (out) {
+      await page.screenshot({ path: `${out}/rows-3-files-tab.png` });
+      await page.setViewportSize({ width: 375, height: 812 });
+      await page.waitForTimeout(2000);
+      await page.screenshot({ path: `${out}/rows-3-phone.png` });
+      const audit = fs.readFileSync(process.env.UI_AUDIT!, "utf8");
+      const report = (await page.evaluate(audit)) as { findings: { where: string }[] };
+      fs.writeFileSync(
+        `${out}/audit-rows-phone.json`,
+        JSON.stringify(report.findings.filter((f) => f.where.includes("timeline")), null, 1),
+      );
+    }
     expect(errors).toEqual([]);
   });
 

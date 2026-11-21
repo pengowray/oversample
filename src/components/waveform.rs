@@ -1111,6 +1111,7 @@ pub fn Waveform() -> impl IntoView {
                     on:touchmove=on_touchmove
                     on:touchend=on_touchend
                 />
+                <crate::components::timeline_rows::TimelineRowLabels/>
                 <Playhead/>
             </div>
             </div>
