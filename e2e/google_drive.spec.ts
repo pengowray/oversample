@@ -307,6 +307,43 @@ test.describe("Google Drive copies", () => {
     await expect(line.locator(".annotation-storage-drive")).toHaveText("Not in Google Drive");
   });
 
+  test("Move to Google Drive moves annotations made while signed out into the account and uploads them", async ({ page }) => {
+    const drive = new MockDrive();
+    drive.signedIn = false;
+    await mockServer(page, drive);
+    await page.goto("/");
+    await open(page, "move-to-drive.wav", noiseWav(96_000, 8, 4545));
+    await annotate(page, 0.2, 0.4);
+    await expect.poll(async () => inStore(await savedFiles(page), DEVICE).length).toBe(1);
+
+    await signInViaPopup(page, drive);
+    const settings = page.locator(".drive-settings");
+    await expect(settings.locator(".drive-note", { hasText: "1 annotation file" })).toBeVisible();
+    await settings.getByRole("button", { name: "Move to Google Drive" }).click();
+
+    // The set leaves this browser's own store for the account's, and goes up once.
+    await expect.poll(async () => inStore(await savedFiles(page), DEVICE).length).toBe(0);
+    expect(inStore(await savedFiles(page), ACCOUNT)).toHaveLength(1);
+    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(1);
+    expect(regionsIn(drive.uploads[0].content)).toBe(1);
+    // Nothing is left to move, and the open file still shows its annotation.
+    await expect(settings.getByRole("button", { name: "Move to Google Drive" })).toHaveCount(0);
+    expect((await snap(page)).regions).toHaveLength(1);
+
+    // The line now shows the Drive copy.
+    const show = page.locator('button[title="Show info panel"]');
+    if (await show.isVisible()) await show.click();
+    await page.locator(".sidebar-tab-dropdown").click();
+    await page.locator(".sidebar-tab-option", { hasText: "Annotations" }).dispatchEvent("mousedown");
+    await expect(page.locator(".right-sidebar .annotation-storage-drive")).toHaveText("Saved in Google Drive");
+
+    // A later edit of the open file is saved to the account and uploaded.
+    await annotate(page, 0.5, 0.6);
+    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(2);
+    expect(regionsIn(drive.uploads[1].content)).toBe(2);
+    expect(inStore(await savedFiles(page), DEVICE)).toHaveLength(0);
+  });
+
   test("first sign-in with two files in the account's cache makes one set of folders", async ({ page }) => {
     const drive = new MockDrive();
     drive.signedIn = false;
@@ -745,6 +782,7 @@ test.describe("Google Drive copies", () => {
   }
 
   test("both copies changed: the changes are merged, the user is told, and it settles", async ({ page }) => {
+    test.slow(); // two uploads, each after the upload delay
     const drive = new MockDrive();
     await mockServer(page, drive);
     await page.goto("/");
@@ -755,7 +793,7 @@ test.describe("Google Drive copies", () => {
     // Another device adds a region; this browser adds one too.
     editOnDrive(drive, file.id, withRegion(file.content, "from-other", 3.0));
     await annotate(page, 0.5, 0.6);
-    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(2);
+    await expect.poll(() => drive.uploads.length, { timeout: 60_000 }).toBe(2);
     expect(regionsIn(file.content)).toBe(3);
     expect(file.content).toContain("from-other");
     await expect.poll(async () => (await snap(page)).regions.length).toBe(3);
@@ -773,6 +811,7 @@ test.describe("Google Drive copies", () => {
   });
 
   test("a merge that drops part of this browser's copy uploads that copy first, so Drive keeps it as a version", async ({ page }) => {
+    test.slow(); // two uploads, each after the upload delay
     const drive = new MockDrive();
     await mockServer(page, drive);
     await page.goto("/");
@@ -793,7 +832,7 @@ test.describe("Google Drive copies", () => {
     // Another device deletes one region; this browser adds one.
     editOnDrive(drive, file.id, withoutAnnotation(file.content, gone));
     await annotate(page, 0.8, 0.9);
-    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(uploadsBefore + 2);
+    await expect.poll(() => drive.uploads.length, { timeout: 60_000 }).toBe(uploadsBefore + 2);
     const [before, merged] = drive.uploads.slice(uploadsBefore);
     // First this browser's copy as it was (3 regions), then the merge.
     expect(regionsIn(before.content)).toBe(3);
@@ -818,6 +857,7 @@ test.describe("Google Drive copies", () => {
   });
 
   test("if the merge's upload fails after this browser's copy went up, the next try puts the merge on Drive", async ({ page }) => {
+    test.slow(); // two uploads, each after the upload delay
     const drive = new MockDrive();
     await mockServer(page, drive);
     await page.goto("/");
@@ -833,14 +873,14 @@ test.describe("Google Drive copies", () => {
     // The copy from before the merge goes up; the merge itself fails.
     drive.failUploadsAfter = 1;
     await annotate(page, 0.8, 0.9);
-    await expect.poll(() => drive.uploads.length, { timeout: 30_000 }).toBe(uploadsBefore + 1);
+    await expect.poll(() => drive.uploads.length, { timeout: 60_000 }).toBe(uploadsBefore + 1);
     await openSettings(page);
     await expect(page.locator(".drive-settings")).toContainText("Can't reach Google Drive", { timeout: 20_000 });
     expect(file.content).toContain(gone);
 
     drive.failUploadsAfter = null;
     await page.getByRole("button", { name: "Retry" }).click();
-    await expect.poll(() => file.content.includes(gone), { timeout: 30_000 }).toBe(false);
+    await expect.poll(() => file.content.includes(gone), { timeout: 60_000 }).toBe(false);
     expect(regionsIn(file.content)).toBe(2);
     await page.waitForTimeout(7_000);
     expect(file.content).not.toContain(gone);
