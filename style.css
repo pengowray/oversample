@@ -768,45 +768,6 @@ body.sidebar-resizing {
     text-align: center;
 }
 
-/* The "Show" checkbox column: a row above the spectrogram per ticked
-   species (score_strips.rs). */
-.detection-table .detection-col-strip {
-    width: 26px;
-    padding-right: 0;
-}
-
-.detection-col-strip input {
-    margin: 0;
-    vertical-align: -2px;
-}
-
-/* A 24 px square, so the × is easy to tap on a phone. */
-.strip-remove-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 24px;
-    min-height: 24px;
-    font-size: 14px;
-    line-height: 16px;
-    padding: 0 4px;
-}
-
-.strip-pc-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-}
-
-/* "Sound groups" in the Call detection tab: the toggle with the 2 / 3 / 4
-   choice beside it, then one legend line per group. The swatch is a square,
-   like the species swatches in the lists, in the row's colour. */
-.sound-groups-controls {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
-}
 .sound-groups-swatch {
     display: inline-block;
     vertical-align: -1px;
@@ -900,28 +861,6 @@ body.sidebar-resizing {
     cursor: default;
 }
 
-/* Method choice at the top of the tab: each option's description sits under
-   its name, so the user reads what a method does before picking it. */
-.detection-methods {
-    padding-bottom: 6px;
-    border-bottom: 1px solid #2a2a2a;
-    margin-bottom: 6px;
-}
-
-.detection-method {
-    align-items: flex-start;
-    padding: 2px 0;
-}
-
-.detection-method input {
-    margin-top: 2px;
-}
-
-.detection-method-text {
-    display: flex;
-    flex-direction: column;
-}
-
 /* Nested under BattyBirdNET: lines up with the option's text. The label sits
    above the drop-down so the options ("Europe: 29 species") fit the sidebar. */
 .detection-region {
@@ -968,14 +907,9 @@ body.sidebar-resizing {
     font-variant-numeric: tabular-nums;
 }
 
-.detection-stop-btn,
-.detection-delete-btn {
+.detection-stop-btn {
     min-height: 24px;
     padding: 4px 8px;
-}
-
-.detection-delete-btn {
-    margin: 0 16px 4px;
 }
 
 .detection-scientific {
@@ -991,18 +925,11 @@ body.sidebar-resizing {
     padding: 0 16px 2px;
 }
 
-.detection-credit {
-    color: #888;
-    font-size: 11px;
-}
-
-.detection-credit a,
 .detection-link-btn {
     color: #8ab;
     text-decoration: none;
 }
 
-.detection-credit a:hover,
 .detection-link-btn:hover {
     text-decoration: underline;
 }
@@ -10203,17 +10130,24 @@ body.hfr-nudge-on .hfr-switch {
     gap: 8px;
 }
 
-/* Live BirdNET view (Call detection tab, BirdNET only). Experimental. */
+/* "At the play position" (live_view.rs): the rows, the strip, and the map
+   and component maps in the "Map and components" fold. */
 .live-emb {
-    padding: 4px 16px 8px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
 }
-.live-emb-switch {
-    display: flex;
-    align-items: center;
-    gap: 6px;
+.live-emb-chart {
+    margin: 0 16px;
+}
+.live-emb > .cd-fold {
+    padding: 2px 8px 0;
+}
+.live-emb-maphost {
+    padding: 0 8px;
+}
+.cd-map-btn-row {
+    padding: 6px 8px 2px;
 }
 /* A plain grey box, like the other badges (badge style A). */
 .live-emb-tag {
@@ -10222,34 +10156,6 @@ body.hfr-nudge-on .hfr-switch {
     border-radius: 3px;
     background: #3a3a3a;
     color: #ccc;
-}
-.live-emb-readout {
-    /* Room for the name and two lines below it, so the charts under it do
-       not jump as the text changes. */
-    min-height: 52px;
-    font-size: 12px;
-    color: #ccc;
-    font-variant-numeric: tabular-nums;
-}
-.live-emb-name {
-    font-size: 14px;
-    color: #50dc96;
-}
-.live-emb-score {
-    color: #ddd;
-}
-.live-emb-none {
-    color: #aaa;
-}
-/* The part of the file a paused reading is of ("12.4s to 15.4s"), in
-   front of the species name. */
-.live-emb-range {
-    font-size: 11px;
-    color: #64a0ff;
-}
-.live-emb-next {
-    font-size: 11px;
-    color: #999;
 }
 .live-emb-strip {
     width: 100%;
@@ -10430,15 +10336,38 @@ body.hfr-nudge-on .hfr-switch {
     margin-top: 4px;
 }
 .live-emb-pc {
+    position: relative;
     display: block;
     min-width: 0;
+    cursor: pointer;
+}
+/* The component's name (with its share of the variation as a pie): picks
+   the component, as a press on its map does. */
+.live-emb-pc-pick {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex: 1;
+    min-width: 0;
+    min-height: 24px;
     padding: 0;
     border: 0;
     background: none;
     color: inherit;
     font: inherit;
-    text-align: left;
     cursor: pointer;
+}
+/* On the map's top-right corner (under the 24 px name row), on a dark
+   backing so it shows over the coloured species. */
+.live-emb-pc-pin.cd-pin {
+    position: absolute;
+    top: 25px;
+    right: 1px;
+    font-size: 12px;
+    background: rgba(26, 26, 26, 0.8);
+}
+.live-emb-pc-pin.cd-pin:hover {
+    background: #2a2a2a;
 }
 .live-emb-pc canvas {
     display: block;
@@ -10453,7 +10382,7 @@ body.hfr-nudge-on .hfr-switch {
 .live-emb-pc.selected .live-emb-pc-map {
     border-color: #ddd;
 }
-.live-emb-pc.selected .live-emb-pc-label {
+.live-emb-pc.selected .live-emb-pc-pick {
     color: #ddd;
 }
 .live-emb-pc-graph {
@@ -10485,11 +10414,12 @@ body.hfr-nudge-on .hfr-switch {
     margin-right: 4px;
 }
 
-/* Full screen: the view fills the window, the map on the right as large as
-   the window's height allows, the text, strip and component maps in a
-   column on the left. z-index 900: above the sidebars (200), below the
-   dialogs (1000). */
-.live-emb-chart.live-emb-full {
+/* Full screen: the whole "At the play position" section fills the window,
+   the map on the right as large as the window's height allows, the rows,
+   strip and component maps in a column on the left. The fold's heading is
+   hidden and its contents laid out in place, open or not. z-index 900:
+   above the sidebars (200), below the dialogs (1000). */
+.live-emb.live-emb-full {
     position: fixed;
     inset: 0;
     z-index: 900;
@@ -10499,32 +10429,50 @@ body.hfr-nudge-on .hfr-switch {
     background: #1a1a1a;
     display: grid;
     grid-template-columns: minmax(240px, 440px) 1fr;
-    grid-template-rows: auto auto 1fr;
-    grid-template-areas:
-        "readout tools"
-        "strip map"
-        "pcs map";
+    grid-auto-rows: auto;
     gap: 6px 16px;
     align-content: start;
+    margin: 0;
+    border: 0;
 }
-.live-emb-full .live-emb-readout { grid-area: readout; }
-.live-emb-full .live-emb-strip { grid-area: strip; }
-.live-emb-full .live-emb-tools { grid-area: tools; align-self: end; }
-.live-emb-full .live-emb-pcs { grid-area: pcs; align-self: start; }
+.live-emb-full > *,
+.live-emb-full .live-emb-pcs {
+    grid-column: 1;
+}
+.live-emb-full .cd-fold,
+.live-emb-full .cd-fold-body,
+.live-emb-full .live-emb-maphost {
+    display: contents !important;
+}
+.live-emb-full .cd-fold-head,
+.live-emb-full .cd-map-btn-row {
+    display: none;
+}
+.live-emb-full .live-emb-chart {
+    margin: 0;
+}
+.live-emb-full .live-emb-tools {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
+}
 .live-emb-full .live-emb-map {
-    grid-area: map;
+    grid-column: 2;
+    grid-row: 2 / span 8;
     justify-self: center;
     width: min(100%, calc(100vh - 90px));
     max-height: none;
 }
 /* Narrow windows (phones): one column, the map first. */
 @media (max-width: 700px) {
-    .live-emb-chart.live-emb-full {
+    .live-emb.live-emb-full {
         grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: none;
-        grid-template-areas: "tools" "map" "readout" "strip" "pcs";
     }
+    .live-emb-full .live-emb-tools,
     .live-emb-full .live-emb-map {
+        grid-column: 1;
+        grid-row: auto;
+        order: -1;
         width: 100%;
     }
 }
@@ -10719,12 +10667,386 @@ body.hfr-nudge-on .hfr-switch {
     margin: 0;
 }
 
-/* The Show checkbox's cell: the whole cell is the tap target. */
-.detection-strip-hit {
+/* ── Call detection tab (call_detection_panel.rs and its folder) ──────────
+   The layout the owner approved on 2026-11-21: the method drop-down, the
+   action with one settings button beside it and a line of the settings in
+   force, "At the play position", "In this recording" (one list, a pin on
+   each row), folds, and one line about the model. Colours and controls are
+   the app's own: the field look of .setting-select, the menu of
+   .layer-panel, the selected look of .psd-btn-active. */
+.cd-panel {
+    padding-top: 6px;
+}
+.cd-top {
+    padding: 0 16px 8px;
+    border-bottom: 1px solid #2a2a2a;
+}
+/* The method drop-down: a field with the method's name, and its menu over
+   the panel, below the field. Inside the sidebar (not a portal), so on
+   phones it is in the sheet's layer and never behind it. */
+.cd-method {
+    position: relative;
+}
+.cd-method-btn {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    width: 100%;
+    min-height: 30px;
+    padding: 4px 8px;
+    background: #222;
+    color: #ddd;
+    border: 1px solid #444;
+    border-radius: 3px;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+.cd-method-btn:hover {
+    border-color: #666;
+}
+.cd-method-btn[aria-expanded="true"] {
+    border-color: #6ea8fe;
+}
+.cd-caret {
+    color: #999;
+    font-size: 11px;
+}
+/* The list is not in a scroll box of its own: a sticky header would stick
+   to the top of the panel and cover the rows scrolled under it. */
+.detection-table.cd-list th {
+    position: static;
+}
+.cd-method-menu {
+    left: 0;
+    right: 0;
+    top: 34px;
+    z-index: 30;
+    min-width: 0;
+    max-height: none;
+}
+/* Two lines per method: the name, then the description, wrapped to the
+   menu's width. */
+.layer-panel-opt.cd-method-opt {
+    white-space: normal;
+    padding: 6px 8px;
+}
+.cd-method-opt .preset-sub {
+    padding-left: 0;
+    font-size: 11px;
+    line-height: 1.35;
+}
+.cd-method-help {
+    padding-top: 4px;
+}
+.cd-top .detection-region {
+    padding: 6px 0 0;
+}
+
+/* The action (Download, Analyse, progress) and the settings button. */
+.cd-action-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 8px 16px 0;
+}
+.cd-action {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    color: #ccc;
+}
+.cd-action .sidebar-btn {
+    width: 100%;
+    margin: 0 0 2px;
+    min-height: 28px;
+}
+/* After a run, Analyse is no longer the main action: the outlined style. */
+.psd-btn.cd-again-btn {
+    width: 100%;
+    min-height: 28px;
+    padding: 4px 10px;
+    font-size: 12px;
+}
+.cd-no-file {
+    padding: 4px 0;
+    color: #888;
+    font-size: 13px;
+}
+.cd-progress-text {
+    font-size: 12px;
+    color: #ccc;
+    font-variant-numeric: tabular-nums;
+}
+.cd-gear {
+    flex: none;
     display: flex;
     align-items: center;
     justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    background: #1a1a1a;
+    color: #999;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font-size: 16px;
+    cursor: pointer;
+}
+.cd-gear:hover {
+    background: #252525;
+    color: #ccc;
+}
+.cd-gear.open {
+    background: #2a3a4a;
+    color: #8cf;
+    border-color: #4a6a8a;
+}
+/* The settings in force: facts with a middle dot between them, each on one
+   line, so the line wraps between facts. Pressing it opens the settings. */
+.cd-in-force {
+    display: flex;
+    flex-wrap: wrap;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 24px;
+    padding: 4px 16px;
+    background: none;
+    border: none;
+    color: #888;
+    font: inherit;
+    font-size: 11px;
+    line-height: 16px;
+    text-align: left;
+    cursor: pointer;
+}
+.cd-in-force:hover,
+.cd-in-force[aria-expanded="true"] {
+    color: #ccc;
+}
+.cd-action .cd-in-force {
+    padding: 3px 0;
+}
+.cd-fact {
+    white-space: nowrap;
+}
+/* The dot ends a fact, so a wrapped line starts with a fact, not a dot. */
+.cd-fact:not(:last-child)::after {
+    content: "\00b7";
+    margin: 0 5px;
+}
+/* The settings, opened in place under that line. */
+.cd-settings {
+    margin: 2px 12px 6px;
+    padding: 4px 0;
+    background: #161616;
+    border: 1px solid #333;
+    border-radius: 4px;
+}
+/* A row whose buttons do not fit beside the label goes under it. */
+.cd-settings .setting-row {
+    flex-wrap: wrap;
+    padding: 4px 10px;
+}
+.cd-settings .setting-row.detection-annotate-row {
+    padding: 2px 10px;
+}
+.cd-settings .psd-btn {
+    min-height: 24px;
+    padding: 4px 8px;
+}
+.cd-notes {
+    padding: 2px 16px;
+}
+
+/* Sections: "At the play position", "In this recording". The heading in
+   the style of .setting-group-title, its fact on the right. */
+.cd-section {
+    margin-top: 10px;
+    padding-top: 2px;
+    border-top: 1px solid #2a2a2a;
+}
+.cd-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 16px 4px;
+}
+.cd-head-title {
+    flex: none;
+    font-size: 11px;
+    font-weight: 600;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.cd-head-fact {
+    min-width: 0;
+    font-size: 11px;
+    color: #aaa;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+/* A row's name with its swatch (and flag) in front of the wrapped text. */
+.cd-name-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+/* The name wraps beside the swatch, never under it. */
+.cd-name-line > span:not(.map-key):not(.unlikely-flag) {
+    min-width: 0;
+}
+.cd-name-line > .map-key {
+    align-self: flex-start;
+    margin-top: 4px;
+}
+.map-key.cd-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+}
+.map-key.cd-swatch-pc {
+    border: 1px solid #888;
+}
+.cd-name-line .unlikely-flag {
+    margin-left: 0;
+}
+.detection-table .cd-col-pin {
+    width: 28px;
+    padding-top: 0;
+    padding-bottom: 0;
+    text-align: center;
+}
+.detection-table th.cd-col-pin {
+    color: #777;
+    font-size: 12px;
+}
+.cd-pin-head {
+    display: inline-flex;
+    vertical-align: -2px;
+}
+/* The pin: a toggle, 24 px square. Pinned: filled, in the selection
+   colour of .psd-btn-active. */
+.cd-pin {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 3px;
+    color: #808080;
+    font-size: 14px;
+    cursor: pointer;
+}
+.cd-pin:hover {
+    background: #2a2a2a;
+    color: #ccc;
+}
+.cd-pin.on {
+    color: #8cf;
+}
+.cd-pin.on .icon-pin-head {
+    fill: currentColor;
+}
+/* A picked species with nothing at the minimum confidence in this file. */
+.detection-table .cd-missing {
+    color: #888;
+    font-style: italic;
+}
+/* The Sound clusters row's 2 / 3 / 4 choice, on the row. */
+.cd-cluster-count .psd-btn {
     min-width: 24px;
     min-height: 24px;
-    cursor: pointer;
+}
+/* The clusters' legend, indented under their row. */
+.detection-table .cd-sub > td {
+    padding: 0 0 4px 24px;
+    white-space: normal;
+}
+.cd-sub .detection-table td:first-child {
+    padding-left: 0;
+}
+.cd-sub .sound-groups-note {
+    padding: 0 0 2px;
+}
+.cd-recording .strip-search {
+    padding: 4px 16px 2px;
+}
+.cd-live-note {
+    padding: 0 16px 2px;
+}
+.cd-live-rows td {
+    font-size: 12px;
+}
+
+/* Folds: "Every window", "Add N annotations", "Map and components". The
+   heading is the one of "Fine output adjustment" (.fine-out-head). */
+.cd-folds {
+    margin-top: 10px;
+    padding: 4px 8px 0;
+    border-top: 1px solid #2a2a2a;
+}
+.cd-fold-body {
+    padding: 2px 0 6px;
+}
+.cd-folds .detection-annotate-row,
+.cd-folds .setting-row {
+    padding-left: 8px;
+    padding-right: 8px;
+}
+.psd-btn.cd-add-btn {
+    margin: 4px 8px;
+    min-height: 24px;
+    padding: 4px 10px;
+    font-size: 11px;
+}
+.psd-btn.cd-add-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+/* The model on this device, Delete, the attribution and Credits. */
+.cd-model {
+    margin-top: 10px;
+    padding: 6px 16px 10px;
+    border-top: 1px solid #2a2a2a;
+    font-size: 11px;
+    color: #888;
+}
+.cd-model a {
+    color: #8ab;
+    text-decoration: none;
+}
+.cd-model a:hover {
+    text-decoration: underline;
+}
+/* The name takes the free width, so it wraps only when it has to. */
+.detection-table.cd-list td.detection-col-kind {
+    width: 100%;
+}
+/* No fold applies yet (no results): no divider either. */
+.cd-folds:empty {
+    display: none;
+}
+.cd-inbuilt > .cd-no-file {
+    padding: 8px 16px 4px;
+}
+/* Room for three rows (and the line above them), held while a file plays
+   in, so the list does not jump each time a reading has more or fewer
+   classes. */
+.cd-live-readout.playing:has(table) {
+    min-height: 96px;
+}
+/* The licence link: 24 px tall, the size the other small buttons here have
+   (.detection-link-btn). */
+.cd-model a {
+    display: inline-block;
+    line-height: 24px;
 }

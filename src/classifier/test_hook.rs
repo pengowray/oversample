@@ -4,6 +4,7 @@
 //!
 //! - `refresh()`, `download(choice)`, `deleteAll()`
 //! - `run(choice)`: analyse the current file
+//! - `seed(json)`: made-up results for the current file (see [`seed`])
 //! - `rescore(region)`, `cancel()`, `unload()`
 //! - `status()`: a JSON string with downloads, the run status and a summary of
 //!   each result (window count, completeness, best class)
@@ -130,6 +131,90 @@ fn status_json(state: AppState) -> String {
     serde_json::json!({ "downloads": downloads, "run": run, "results": results }).to_string()
 }
 
+/// Put made-up results in place of a run on the current file, for tests of
+/// the Call detection tab without a model:
+/// `{"method":"birdnet","labels":["Turdus merula_Common Blackbird",...],
+/// "windows":[[0,3,[[0,0.91],[1,0.2]]],...]}` (each window: start and end in
+/// seconds, then its top classes as [class, confidence]). Embeddings are
+/// zeros. Returns "" or what was wrong.
+fn seed(state: AppState, json: &str) -> String {
+    let v: serde_json::Value = match serde_json::from_str(json) {
+        Ok(v) => v,
+        Err(e) => return e.to_string(),
+    };
+    let method = match v["method"].as_str() {
+        Some("birdnet") => Method::BirdNet,
+        Some("perch") => Method::Perch,
+        Some("birdnet-v3") => Method::BirdNetV3,
+        Some("bats") => Method::Bats,
+        _ => return "unknown method".into(),
+    };
+    let Some(file_id) = current_file_id(state) else {
+        return "no file".into();
+    };
+    let labels: Vec<SpeciesLabel> = v["labels"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|l| l.as_str().map(SpeciesLabel::parse))
+        .collect();
+    let windows: Vec<WindowScores> = v["windows"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(i, w)| {
+            let top = w[2]
+                .as_array()?
+                .iter()
+                .filter_map(|s| {
+                    Some(Score {
+                        class: s[0].as_u64()? as u16,
+                        confidence: s[1].as_f64()? as f32,
+                    })
+                })
+                .collect();
+            Some(WindowScores {
+                start_s: w[0].as_f64()?,
+                end_s: w[1].as_f64()?,
+                top,
+                slot: i as u32,
+                live: false,
+            })
+        })
+        .collect();
+    let window = method.window_secs();
+    let n = windows.len();
+    let run = ClassifierRun {
+        method,
+        region: (method == Method::Bats).then_some(BatScope::All),
+        backbone: match method {
+            Method::Perch => catalog::PERCH_FILES[0],
+            Method::BirdNetV3 => &catalog::BIRDNET_V3,
+            _ => &catalog::BACKBONE,
+        },
+        head: None,
+        source_rate: 48_000,
+        model_rate: 48_000,
+        window_secs: window,
+        step_secs: window,
+        spacing_secs: window,
+        labels: Arc::new(labels),
+        windows,
+        whole_file: true,
+        complete: true,
+    };
+    state
+        .classifier
+        .embeddings()
+        .update(|m| drop(m.insert((file_id, method), vec![0.0; n * method.embedding_len()])));
+    state
+        .classifier
+        .results()
+        .update(|m| drop(m.insert((file_id, method), run)));
+    String::new()
+}
+
 pub fn install(state: AppState) {
     let Some(window) = web_sys::window() else {
         return;
@@ -191,6 +276,10 @@ pub fn install(state: AppState) {
             }
         })
         .into_js_value(),
+    );
+    set(
+        "seed",
+        Closure::<dyn Fn(String) -> String>::new(move |j: String| seed(state, &j)).into_js_value(),
     );
     set(
         "cancel",

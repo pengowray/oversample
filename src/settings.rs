@@ -68,6 +68,9 @@ pub mod keys {
     /// every classifier: "window" (the model's whole window) or seconds
     /// ("1", "0.5") (`classifier::summary::StepPick`).
     pub const CLASSIFIER_STEP: &str = "oversample_classifier_step";
+    /// Folds in the Call detection tab that are open, as a comma-separated
+    /// list of fold names ("map,windows"). Folds start closed.
+    pub const CALL_DETECTION_FOLDS: &str = "oversample_call_detection_folds";
     /// Developer override for the proxy base URL (e.g. `http://localhost:8080`).
     /// No UI; set it from the browser console. Unset means the build default.
     pub const XC_API_BASE_OVERRIDE: &str = "oversample_xc_api_base";
@@ -184,6 +187,25 @@ pub fn get_classifier_step() -> crate::classifier::summary::StepPick {
 
 pub fn set_classifier_step(pick: crate::classifier::summary::StepPick) {
     set_raw(keys::CLASSIFIER_STEP, &pick.to_stored());
+}
+
+/// True when the Call detection tab's fold `name` was left open on this
+/// device.
+pub fn get_fold_open(name: &str) -> bool {
+    get_raw(keys::CALL_DETECTION_FOLDS).is_some_and(|v| v.split(',').any(|n| n == name))
+}
+
+/// Remember whether the Call detection tab's fold `name` is open.
+pub fn set_fold_open(name: &str, open: bool) {
+    let raw = get_raw(keys::CALL_DETECTION_FOLDS).unwrap_or_default();
+    let mut names: Vec<&str> = raw
+        .split(',')
+        .filter(|n| !n.is_empty() && *n != name)
+        .collect();
+    if open {
+        names.push(name);
+    }
+    set_raw(keys::CALL_DETECTION_FOLDS, &names.join(","));
 }
 
 /// The saved "Lowest bat frequency" in Hz, or the default.

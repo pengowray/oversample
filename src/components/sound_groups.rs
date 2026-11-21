@@ -199,7 +199,7 @@ pub fn row(
     let names = hints(run, &sg::group_tops(&g, run))
         .iter()
         .enumerate()
-        .map(|(i, hint)| format!("Group {}: {hint}", i + 1))
+        .map(|(i, hint)| format!("Cluster {}: {hint}", i + 1))
         .collect();
     // The grouping and the quiet flags are in the embeddings' order, the
     // order the windows arrived; the row is in time order.
@@ -222,7 +222,7 @@ pub fn row(
     Some((
         ScoreRow {
             kind: ScoreRowKind::Groups,
-            label: "Sound groups".to_string(),
+            label: "Sound clusters".to_string(),
             scientific: String::new(),
             unlikely: false,
             colour: None,
@@ -487,9 +487,9 @@ fn windows_text(n: usize) -> String {
 /// "9 quiet windows are not grouped".
 fn quiet_text(n: usize) -> String {
     if n == 1 {
-        "1 quiet window is not grouped".to_string()
+        "1 quiet window is not clustered".to_string()
     } else {
-        format!("{n} quiet windows are not grouped")
+        format!("{n} quiet windows are not clustered")
     }
 }
 
@@ -516,7 +516,7 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                     .filter(|(w, _)| flags.get(w.slot as usize) == Some(&true))
                     .map(|(_, (s, e))| e - s)
                     .sum();
-                format!("{} of quiet audio is not grouped", time_amount(secs))
+                format!("{} of quiet audio is not clustered", time_amount(secs))
             } else {
                 quiet_text(quiet)
             };
@@ -530,12 +530,12 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
             let short = run.complete && windows > 0 && kept < k + 1;
             let text = if quiet > 0 {
                 format!(
-                    "{k} groups need at least {} windows with sound. This file has {kept}.",
+                    "{k} clusters need at least {} windows with sound. This file has {kept}.",
                     k + 1
                 )
             } else {
                 format!(
-                    "{k} groups need at least {} windows. This file has {}.",
+                    "{k} clusters need at least {} windows. This file has {}.",
                     k + 1,
                     windows_text(windows)
                 )
@@ -581,7 +581,7 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
                                 class="map-key sound-groups-swatch"
                                 style:background=GROUP_COLOURS[i.min(GROUP_COLOURS.len() - 1)]
                             ></span>
-                            {format!("Group {}", i + 1)}
+                            {format!("Cluster {}", i + 1)}
                             <div class="sound-groups-hint">{hint}</div>
                         </td>
                         <td class="detection-col-num">{size}</td>
@@ -606,13 +606,22 @@ fn legend(state: AppState, file: u64, method: Method) -> Option<AnyView> {
     })
 }
 
-/// The "Sound groups" toggle, the number of groups and the legend, for the
-/// "Rows above the spectrogram" group. `save` saves the row picks.
-pub fn controls(
+/// What the "Sound clusters" row is, for its tooltip.
+pub const CLUSTERS_HELP: &str =
+    "Windows clustered by how alike they sound (k-means on the model's embeddings)";
+
+/// The "Sound clusters" row of the Call detection tab's list: a swatch in
+/// the clusters' colours, the name, the 2 / 3 / 4 choice while the row is
+/// shown above the spectrogram, and the pin (`pin`, from the panel). While
+/// pinned, the legend (one line per cluster) and its notes sit under it.
+/// `cols` is the number of columns before the pin column.
+pub fn list_rows(
     state: AppState,
     method: Method,
     current_file: Memo<Option<u64>>,
     save: fn(AppState),
+    cols: usize,
+    pin: AnyView,
 ) -> impl IntoView {
     let on = move || state.call_detection.sound_groups().get();
     let count_buttons = move || {
@@ -625,9 +634,10 @@ pub fn controls(
                         <button
                             class=move || if picked() { "psd-btn psd-btn-active" } else { "psd-btn" }
                             aria-pressed=move || picked().to_string()
-                            aria-label=format!("{n} groups")
-                            title=format!("{n} groups")
-                            on:click=move |_| {
+                            aria-label=format!("{n} clusters")
+                            title=format!("{n} clusters")
+                            on:click=move |ev: web_sys::MouseEvent| {
+                                ev.stop_propagation();
                                 state.call_detection.sound_group_count().set(n);
                                 save(state);
                             }
@@ -635,27 +645,43 @@ pub fn controls(
                     }
                 })
                 .collect::<Vec<_>>();
-            view! { <div class="psd-btn-group">{buttons}</div> }
+            view! { <span class="psd-btn-group cd-cluster-count" role="group" aria-label="Number of clusters">{buttons}</span> }
         })
     };
+    // The swatch: the clusters' colours side by side.
+    let stops = GROUP_COLOURS
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let (a, b) = (i * 25, (i + 1) * 25);
+            format!("{c} {a}% {b}%")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     view! {
-        <div class="detection-annotate-row sound-groups-controls">
-            <button
-                class=move || if on() { "psd-btn psd-btn-active" } else { "psd-btn" }
-                aria-pressed=move || on().to_string()
-                title="Windows that sound alike get the same colour"
-                on:click=move |_| {
-                    state.call_detection.sound_groups().update(|v| *v = !*v);
-                    save(state);
-                }
-            >"Sound groups"</button>
-            {count_buttons}
-        </div>
+        <tr class="cd-row-clusters" title=CLUSTERS_HELP>
+            <td class="detection-col-kind" colspan=cols.to_string()>
+                <span class="cd-name-line">
+                    <span
+                        class="map-key sound-groups-swatch"
+                        style=format!("background:linear-gradient(90deg, {stops})")
+                    ></span>
+                    <span>"Sound clusters"</span>
+                    {count_buttons}
+                </span>
+            </td>
+            <td class="cd-col-pin">{pin}</td>
+        </tr>
         {move || {
             if !on() {
                 return None;
             }
-            legend(state, current_file.get()?, method)
+            let legend = legend(state, current_file.get()?, method)?;
+            Some(view! {
+                <tr class="cd-sub">
+                    <td colspan=(cols + 1).to_string()>{legend}</td>
+                </tr>
+            })
         }}
     }
 }
