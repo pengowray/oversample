@@ -340,16 +340,6 @@ pub(super) fn FilesPanel() -> impl IntoView {
                     .filter(|i| sorted_indices.contains(i))
                     .chain(sorted_indices.iter().copied().filter(|i| !tl_order.contains(i)))
                     .collect();
-                // Tooltips say what the move does: along the timeline, or up
-                // and down the rows. The arrows point up and down, the way
-                // the card moves in this list.
-                let (move_up_tip, move_down_tip) =
-                    if matches!(tl_arrangement, crate::project::Arrangement::Together) {
-                        ("Move up", "Move down")
-                    } else {
-                        ("Play earlier", "Play later")
-                    };
-
                 let mut items: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
                 for (_pos, &i) in sorted_indices.iter().enumerate() {
                     {
@@ -577,25 +567,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                         {name}
                                     </div>
                                     {tl_pos.map(|pos| view! {
-                                        <span class="timeline-order-num"
-                                            title="Place on the timeline"
-                                        >{pos + 1}</span>
-                                        <button class="timeline-order-btn" title=move_up_tip
-                                            aria-label=move_up_tip
-                                            disabled={pos == 0}
-                                            on:click=move |ev: MouseEvent| {
-                                                ev.stop_propagation();
-                                                crate::timeline::move_clip(&state, pos, pos.saturating_sub(1));
-                                            }
-                                        ><Icon kind=Icon::ArrowUp /></button>
-                                        <button class="timeline-order-btn" title=move_down_tip
-                                            aria-label=move_down_tip
-                                            disabled={pos == tl_last}
-                                            on:click=move |ev: MouseEvent| {
-                                                ev.stop_propagation();
-                                                crate::timeline::move_clip(&state, pos, pos + 1);
-                                            }
-                                        ><Icon kind=Icon::ArrowDown /></button>
+                                        <crate::components::timeline_rows::TimelineMoveButtons pos=pos last=tl_last />
                                     })}
                                     <button class="file-item-close" on:click=on_close>"×"</button>
                                 </div>

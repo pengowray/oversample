@@ -565,12 +565,6 @@ fn ProjectView(project: BatProject) -> impl IntoView {
             .copied()
             .chain((0..statuses.len()).filter(|pi| !first.contains(pi)))
             .collect();
-        let (move_up_tip, move_down_tip) =
-            if matches!(arrangement, crate::project::Arrangement::Together) {
-                ("Move up", "Move down")
-            } else {
-                ("Play earlier", "Play later")
-            };
         let tl_last = tl_runtime.len().saturating_sub(1);
         shown.into_iter().map(|pi| {
         let (pf, is_loaded) = &statuses[pi];
@@ -625,23 +619,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                     }}
                     <span class="project-file-name-text">{filename}</span>
                     {tl_pos.map(|pos| view! {
-                        <span class="timeline-order-num" title="Place on the timeline">{pos + 1}</span>
-                        <button class="timeline-order-btn" title=move_up_tip
-                            aria-label=move_up_tip
-                            disabled={pos == 0}
-                            on:click=move |ev: web_sys::MouseEvent| {
-                                ev.stop_propagation();
-                                crate::timeline::move_clip(&state, pos, pos.saturating_sub(1));
-                            }
-                        ><Icon kind=Icon::ArrowUp /></button>
-                        <button class="timeline-order-btn" title=move_down_tip
-                            aria-label=move_down_tip
-                            disabled={pos == tl_last}
-                            on:click=move |ev: web_sys::MouseEvent| {
-                                ev.stop_propagation();
-                                crate::timeline::move_clip(&state, pos, pos + 1);
-                            }
-                        ><Icon kind=Icon::ArrowDown /></button>
+                        <crate::components::timeline_rows::TimelineMoveButtons pos=pos last=tl_last />
                     })}
                     {if from_tauri {
                         Some(view! { <span class="file-badge badge-fact file-badge-tauri" title="Metadata from desktop">"T"</span> })

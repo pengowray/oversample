@@ -4,6 +4,7 @@
 //! These are DOM elements over the spectrogram canvas, not drawn on it: the
 //! canvas's own pointer handlers take every press on the canvas.
 
+use crate::components::icons::Icon;
 use crate::state::store_fields::*;
 use crate::state::AppState;
 use leptos::prelude::*;
@@ -57,6 +58,47 @@ pub fn TimelineRowLabels() -> impl IntoView {
             })
             .collect();
         Some(view! { <div class="timeline-rows">{labels}</div> })
+    }
+}
+
+/// A file's place on the open timeline and two buttons that move it one
+/// place. Shown on the file's card in the Files tab and on its row in the
+/// Project tab.
+///
+/// `pos` is the file's place, counted from 0, and `last` the last place.
+/// The arrows point up and down, the way the card moves in the list. The
+/// tooltips say what the move does on the timeline: earlier or later when
+/// the files play one after another, up or down when each has a row.
+#[component]
+pub fn TimelineMoveButtons(pos: usize, last: usize) -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let rows = matches!(
+        state.timeline.arrangement().get_untracked(),
+        crate::project::Arrangement::Together
+    );
+    let (up_tip, down_tip) = if rows {
+        ("Move up", "Move down")
+    } else {
+        ("Play earlier", "Play later")
+    };
+    // The card or row under these buttons has its own click: a press on a
+    // button must not reach it.
+    let move_to = move |to: usize| {
+        move |ev: web_sys::MouseEvent| {
+            ev.stop_propagation();
+            crate::timeline::move_clip(&state, pos, to);
+        }
+    };
+    view! {
+        <span class="timeline-order-num" title="Place on the timeline">{pos + 1}</span>
+        <button class="timeline-order-btn" title=up_tip aria-label=up_tip
+            disabled={pos == 0}
+            on:click=move_to(pos.saturating_sub(1))
+        ><Icon kind=Icon::ArrowUp /></button>
+        <button class="timeline-order-btn" title=down_tip aria-label=down_tip
+            disabled={pos >= last}
+            on:click=move_to(pos + 1)
+        ><Icon kind=Icon::ArrowDown /></button>
     }
 }
 

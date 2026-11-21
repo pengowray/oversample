@@ -572,6 +572,32 @@ test.describe("timeline arrangement", () => {
       { at: 5.75, hz: 5_000 },
     ]);
 
+    // The overview strip at the top draws each file up to its own top
+    // frequency too: the 44.1 kHz file's picture ends about a ninth of the
+    // way up (22.05 of 192 kHz), and above it the strip is black.
+    const overviewRows = await page
+      .locator(".overview-strip canvas")
+      .first()
+      .evaluate((c: HTMLCanvasElement) => {
+        const ctx = c.getContext("2d")!;
+        const lit = (xFrac: number, yFrac: number) => {
+          const d = ctx.getImageData(
+            Math.round(c.width * xFrac) - 3,
+            Math.round(c.height * yFrac) - 1,
+            7,
+            3,
+          ).data;
+          let sum = 0;
+          for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+          return sum / (d.length / 4);
+        };
+        // x 0.89 is inside charlie (5 to 6.5 s of 6.5 s); x 0.5 is inside bravo.
+        return { charlieHigh: lit(0.89, 0.3), charlieLow: lit(0.89, 0.95), bravoHigh: lit(0.5, 0.3) };
+      });
+    expect(overviewRows.charlieHigh).toBeLessThan(15);
+    expect(overviewRows.charlieLow).toBeGreaterThan(40);
+    expect(overviewRows.bravoHigh).toBeGreaterThan(40);
+
     await page.keyboard.press("Space");
     await expect.poll(async () => (await snapshot(page)).isPlaying).toBe(true);
     await expect

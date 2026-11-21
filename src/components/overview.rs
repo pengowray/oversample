@@ -989,6 +989,12 @@ pub fn OverviewPanel() -> impl IntoView {
             let cw = w as f64;
             let ch = h as f64;
             let px_per_sec = cw / total_duration;
+            // The strip's height is the frequency range of the file with
+            // the highest sample rate, as in the main view.
+            let top_freq = tl
+                .primary_segment()
+                .and_then(|s| files.get(s.file_index))
+                .map_or(0.0, |f| f.spectrogram.max_freq);
 
             for seg in &tl.segments {
                 let seg_file = match files.get(seg.file_index) {
@@ -1024,8 +1030,21 @@ pub fn OverviewPanel() -> impl IntoView {
                         preview.height,
                     ) {
                         let _ = tc.put_image_data(&img, 0.0, 0.0);
+                        // A file with a lower sample rate ends below the
+                        // top of the strip: its picture takes the lower
+                        // part of the row, up to its own top frequency.
+                        let seg_freq = seg_file.spectrogram.max_freq;
+                        let part = if top_freq > 0.0 && seg_freq > 0.0 {
+                            (seg_freq / top_freq).min(1.0)
+                        } else {
+                            1.0
+                        };
                         let _ = ctx.draw_image_with_html_canvas_element_and_dw_and_dh(
-                            &tmp, seg_x, row_top, seg_w, ch,
+                            &tmp,
+                            seg_x,
+                            row_top + ch * (1.0 - part),
+                            seg_w,
+                            ch * part,
                         );
                     }
                 }
