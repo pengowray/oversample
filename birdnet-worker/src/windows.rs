@@ -44,6 +44,9 @@ pub struct Windower {
     offsets: Vec<u64>,
     next_index: u32,
     source_samples: u64,
+    /// Every model-rate sample made, for another model that hears the same
+    /// audio (the bird box detector), when [`Windower::tap`] turned it on.
+    tapped: Option<Vec<f32>>,
 }
 
 /// How far a window of a later pass may run past the end of the audio and
@@ -81,6 +84,26 @@ impl Windower {
             offsets,
             next_index: 0,
             source_samples: 0,
+            tapped: None,
+        }
+    }
+
+    /// Keep a copy of every model-rate sample from now on, for
+    /// [`Windower::take_tapped`].
+    pub fn tap(mut self) -> Self {
+        self.tapped = Some(Vec::new());
+        self
+    }
+
+    /// The model-rate samples made since the last call (empty unless
+    /// [`Windower::tap`] turned the copy on).
+    pub fn take_tapped(&mut self) -> Vec<f32> {
+        self.tapped.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    fn copy_tapped(&mut self, from: usize) {
+        if let Some(t) = self.tapped.as_mut() {
+            t.extend_from_slice(&self.buf[from..]);
         }
     }
 
@@ -103,14 +126,18 @@ impl Windower {
     /// Feed source-rate mono samples; returns the windows they completed.
     pub fn push(&mut self, samples: &[f32]) -> Vec<Window> {
         self.source_samples += samples.len() as u64;
+        let from = self.buf.len();
         self.resampler.push(samples, &mut self.buf);
+        self.copy_tapped(from);
         self.take_full()
     }
 
     /// End of the audio: returns the remaining full windows and, for the
     /// windows end to end, the padded last one if it is kept.
     pub fn finish(&mut self) -> Vec<Window> {
+        let from = self.buf.len();
         self.resampler.finish(&mut self.buf);
+        self.copy_tapped(from);
         let mut out = self.take_full();
         let win = self.method.window_samples();
         let end = self.buf_at + self.buf.len() as u64;

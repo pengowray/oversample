@@ -129,6 +129,7 @@ fn analyse_pass(
             method,
             source_rate: rate,
             offsets,
+            boxes: false,
         },
         Attached::default(),
         &mut out,
@@ -418,6 +419,7 @@ fn bats_refuse_low_sample_rate() {
             method: Method::Bats,
             source_rate: 48_000,
             offsets: Vec::new(),
+            boxes: false,
         },
         Attached::default(),
         &mut out,
@@ -1057,4 +1059,107 @@ fn birdnet_v3_kept_reading_is_the_run_window() {
     let checked = kept_reading_matches(&mut s, Method::BirdNetV3, &samples, rate);
     eprintln!("{checked} windows at {rate} Hz");
     assert!(checked >= 4);
+}
+
+/// BirdBox's Just-Bird beside BirdNET+ V3.0 in one run, on the Gentoo Penguin
+/// demo at 32 kHz (so the resampler passes it through): the merged boxes
+/// match BirdBox's own CLI (`research/birdbox-bench`, fixture in
+/// `oversample-ipc`), and V3.0's windows still come.
+#[test]
+fn birdbox_boxes_match_birdbox_cli_on_gentoo_penguins() {
+    use oversample_ipc::classifier::boxes;
+    let (Some(model), Some(audio), Some(v3)) = (
+        std::env::var_os("BIRDBOX_MODEL").map(PathBuf::from),
+        std::env::var_os("BIRDBOX_AUDIO").map(PathBuf::from),
+        v3_model(),
+    ) else {
+        eprintln!("BIRDBOX_MODEL, BIRDBOX_AUDIO or BIRDNET_V3_MODEL not set; skipped");
+        return;
+    };
+    let mut s = Session::new();
+    let t = std::time::Instant::now();
+    load_part(&mut s, ModelPart::JustBird, &model);
+    eprintln!("box model loaded in {:.1} s", t.elapsed().as_secs_f64());
+    load_part(&mut s, ModelPart::BirdNetV3, &v3);
+    let (samples, rate) = load(&audio, 1e9);
+    assert_eq!(rate, 32_000);
+    let mut raw = Vec::new();
+    let mut windows = 0;
+    let mut done = None;
+    let mut errors = Vec::new();
+    let mut sink = |m: FromWorker, _: Option<&[f32]>| match m {
+        FromWorker::Boxes { boxes, .. } => raw.extend(boxes),
+        FromWorker::Window { .. } => windows += 1,
+        FromWorker::BoxesDone {
+            windows, samples, ..
+        } => done = Some((windows, samples)),
+        FromWorker::Error { error, .. } => errors.push(error.to_string()),
+        _ => {}
+    };
+    let t = std::time::Instant::now();
+    s.handle(
+        ToWorker::Start {
+            run: 1,
+            method: Method::BirdNetV3,
+            source_rate: rate,
+            offsets: Vec::new(),
+            boxes: true,
+        },
+        Attached::default(),
+        &mut sink,
+        &|| 0.0,
+    );
+    for (seq, piece) in samples.chunks(rate as usize).enumerate() {
+        s.handle(
+            ToWorker::Chunk {
+                run: 1,
+                seq: seq as u32,
+            },
+            Attached {
+                samples: Some(piece.to_vec()),
+                ..Default::default()
+            },
+            &mut sink,
+            &|| 0.0,
+        );
+    }
+    s.handle(ToWorker::Finish { run: 1 }, Attached::default(), &mut sink, &|| 0.0);
+    eprintln!(
+        "{:.1} s of audio in {:.1} s",
+        samples.len() as f64 / rate as f64,
+        t.elapsed().as_secs_f64()
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    let (box_windows, n) = done.expect("BoxesDone");
+    assert_eq!(n as usize, samples.len());
+    assert_eq!(box_windows, 31);
+    assert_eq!(windows, 16);
+    let content = n / 32_000.0;
+    let end = boxes::padded_end_s(n as u64);
+    let raw = boxes::limit_to_content(raw, content, end);
+    let raw: Vec<_> = raw
+        .into_iter()
+        .filter(|b| b.conf > boxes::DEFAULT_CONF as f64)
+        .collect();
+    let got = boxes::fuse(&raw, end, boxes::DEFAULT_PHRASE_GAP);
+    let want: Vec<Vec<f64>> = include_str!(
+        "../../oversample-ipc/src/classifier/boxes_fixtures/gentoo.cli.boxes.tsv"
+    )
+    .lines()
+    .filter(|l| !l.is_empty())
+    .map(|l| l.split('\t').map(|x| x.parse().unwrap()).collect())
+    .collect();
+    assert_eq!(raw.len(), 76, "window boxes");
+    assert_eq!(got.len(), want.len());
+    let iou = |g: &boxes::MergedBox, w: &[f64]| {
+        let t = (g.t1.min(w[1]) - g.t0.max(w[0])).max(0.0);
+        let f = (g.f1.min(w[3]) - g.f0.max(w[2])).max(0.0);
+        let inter = t * f;
+        inter / ((g.t1 - g.t0) * (g.f1 - g.f0) + (w[1] - w[0]) * (w[3] - w[2]) - inter)
+    };
+    for (g, w) in got.iter().zip(&want) {
+        let i = iou(g, w);
+        assert!(i > 0.75, "{g:?} vs {w:?}: IoU {i:.3}");
+        assert!((g.max_conf - w[5]).abs() < 0.01, "{g:?} vs {w:?}");
+    }
 }

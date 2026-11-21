@@ -41,21 +41,7 @@ pub fn patch_proto(proto: &mut tract_onnx::pb::ModelProto) -> Patched {
         if t.data_type != ONNX_FLOAT16 {
             continue;
         }
-        let halves: Vec<u16> = if !t.raw_data.is_empty() {
-            t.raw_data
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                .collect()
-        } else {
-            // ONNX keeps float16 values in int32_data when raw_data is not used.
-            t.int32_data.iter().map(|&v| v as u16).collect()
-        };
-        t.raw_data = halves
-            .iter()
-            .flat_map(|&h| f16::from_bits(h).to_f32().to_le_bytes())
-            .collect();
-        t.int32_data.clear();
-        t.data_type = ONNX_FLOAT;
+        f16_tensor_to_f32(t);
         p.weights_to_f32 += 1;
     }
     for n in g.node.iter_mut() {
@@ -86,6 +72,26 @@ pub fn patch_proto(proto: &mut tract_onnx::pb::ModelProto) -> Patched {
         }
     }
     p
+}
+
+/// Turn a float16 tensor into float32 in place (also used for BirdBox's
+/// network, `crate::birdbox::network`).
+pub(crate) fn f16_tensor_to_f32(t: &mut tract_onnx::pb::TensorProto) {
+    let halves: Vec<u16> = if !t.raw_data.is_empty() {
+        t.raw_data
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect()
+    } else {
+        // ONNX keeps float16 values in int32_data when raw_data is not used.
+        t.int32_data.iter().map(|&v| v as u16).collect()
+    };
+    t.raw_data = halves
+        .iter()
+        .flat_map(|&h| f16::from_bits(h).to_f32().to_le_bytes())
+        .collect();
+    t.int32_data.clear();
+    t.data_type = ONNX_FLOAT;
 }
 
 /// True when every sample is exactly zero (digital silence). The pruned model
