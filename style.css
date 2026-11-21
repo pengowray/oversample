@@ -11070,11 +11070,35 @@ body.hfr-nudge-on .hfr-switch {
 .cd-inbuilt > .cd-no-file {
     padding: 8px 16px 4px;
 }
-/* Room for three rows (and the line above them), held while a file plays
-   in, so the list does not jump each time a reading has more or fewer
-   classes. */
-.cd-live-readout.playing:has(table) {
+/* The reading at the play position keeps one height: room for the note and
+   three rows, the most it shows. Otherwise the map under it moves up and
+   down with every click, as the number of rows changes and as the rows go
+   away while the next reading is on its way. */
+.cd-live-readout {
     min-height: 96px;
+}
+/* Not while a line above says why there is no reading (no model yet). */
+.live-emb > .cd-live-note + .cd-live-readout {
+    min-height: 0;
+}
+/* For the same reason each name stays on one line; the whole name is in the
+   row's hover text. */
+.cd-live-rows td.detection-col-kind {
+    max-width: 0;
+}
+.cd-live-rows .cd-name-line > span:not(.map-key):not(.unlikely-flag) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* And the heading's time range keeps its width, so whether it fits beside
+   the title does not depend on the time shown. */
+.live-emb > .cd-head {
+    flex-wrap: wrap;
+}
+.live-emb > .cd-head .cd-head-fact {
+    min-width: 18ch;
+    white-space: nowrap;
 }
 /* The licence link: 24 px tall, the size the other small buttons here have
    (.detection-link-btn). */

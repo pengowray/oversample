@@ -174,18 +174,27 @@ pub(super) fn LiveView(
     };
     // The heading's right side: the part of the file a paused reading is of,
     // or where the playhead is.
+    // While the next paused reading is on its way there is no range: the
+    // last one stays, so the heading does not lose a line and get it back.
+    let last_range = StoredValue::new(String::new());
     let where_ = move || {
         if let Some((a, b)) = readout2.with(|r| r.as_ref().and_then(|r| r.range)) {
-            return format!(
+            let text = format!(
                 "{} to {}",
                 format_time_display(a, 1),
                 format_time_display(b, 1)
             );
+            last_range.set_value(text.clone());
+            return text;
         }
-        if state.playback.is_playing().get() && current_file.get().is_some() {
+        if current_file.get().is_none() {
+            last_range.set_value(String::new());
+            return String::new();
+        }
+        if state.playback.is_playing().get() {
             return format_time_display(state.playback.playhead_time().get(), 1);
         }
-        String::new()
+        last_range.get_value()
     };
     let readout4 = readout3.clone();
     let readout5 = readout3.clone();
@@ -247,7 +256,7 @@ pub(super) fn LiveView(
                     ().into_any()
                 };
                 view! {
-                    <tr class=if muted { "detection-row-other" } else { "" } title=c.scientific.clone()>
+                    <tr class=if muted { "detection-row-other" } else { "" } title=name_title(&c.common, &c.scientific)>
                         <td class="detection-col-kind">
                             <span class="cd-name-line">
                                 {species_swatch(slot)}
@@ -322,5 +331,15 @@ fn request_animation_redraw(state: AppState) {
     let cb = wasm_bindgen::closure::Closure::once_into_js(move || live_embedding::redraw(state));
     if let Some(w) = web_sys::window() {
         let _ = w.request_animation_frame(cb.unchecked_ref());
+    }
+}
+
+/// A row's hover text: the whole common name, which the row may cut short,
+/// and the scientific name when it differs.
+fn name_title(common: &str, scientific: &str) -> String {
+    if scientific.is_empty() || scientific == common {
+        common.to_string()
+    } else {
+        format!("{common} ({scientific})")
     }
 }
