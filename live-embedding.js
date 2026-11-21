@@ -10,10 +10,12 @@
 // (live_view.rs); `top` below is not drawn here.
 // `json` is { min, top: [[name, score, unlikelyHere]...],
 //   trail: [[x, y, secondsAgo, score, umapX, umapY]...] (x, y on the t-SNE layout),
-//   rows: [name...], rowsUnlikely: [bool...], heard (any reading in the history),
-//   strip: [[secondsAgo, row, score]...],
-//   change: [[secondsAgo, distance]...], history,
-//   pcHist: [[secondsAgo, percentile on PC1, on PC2, ...]...] (0 to 1),
+//   heard (any reading in the history), history (seconds the graphs span),
+//   fileAt (pcHist is of a file),
+//   pcHist: [[seconds, percentile on PC1, on PC2, ...]...] (0 to 1): for a
+//     file, its kept windows by their start, in seconds before (negative) or
+//     after the place shown; for the microphone, the readings so far, in
+//     seconds before now,
 //   preview: null, or while nothing plays the reading of the 3 s Play would
 //     start with: { at: { x, y, ux, uy, s } or null, range ("12.4s to 15.4s") };
 //     `top` is then that reading's,
@@ -76,146 +78,13 @@
     borderColor: '#444',
     textStyle: { color: INK, fontSize: 12 },
   };
-  const ago = (s) => (s > -0.05 ? 'now' : `${(-s).toFixed(1)} s ago`);
-
-  // A score's colour in the strip: green, more opaque for higher scores, with a
-  // step at the minimum confidence so a hit stands out from a near miss.
-  function cellColor(s, min) {
-    const a = s >= min ? 0.6 + 0.4 * s : 0.08 + 0.4 * (s / Math.max(min, 0.01));
-    return `rgba(80,220,150,${a.toFixed(3)})`;
-  }
-
-  // Rows are the full width of the sidebar, with each name written over the
-  // left end of its row: the sidebar is too narrow for a label column.
-  const ROW_H = 18;
-  const CHANGE_H = 30;
-
-  function stripOptions(d) {
-    const rows = d.rows;
-    const unlikely = d.rowsUnlikely || [];
-    const rowsH = Math.max(rows.length, 1) * ROW_H;
-    // Each reading's cell runs to the next reading's time (the newest to 0).
-    const times = [...new Set(d.strip.map((c) => c[0]))].sort((a, b) => a - b);
-    const next = new Map(times.map((t, i) => [t, i + 1 < times.length ? times[i + 1] : 0]));
-    const xAxis = (gridIndex, show) => ({
-      gridIndex,
-      type: 'value',
-      min: -d.history,
-      max: 0,
-      interval: 5,
-      axisLabel: { show, color: MUTED, fontSize: 10, formatter: (v) => (v === 0 ? 'now' : `${v} s`) },
-      axisLine: { show, lineStyle: { color: GRID } },
-      axisTick: { show: false },
-      splitLine: { show: true, lineStyle: { color: GRID, opacity: 0.5 } },
-    });
-    return {
-      animation: false,
-      backgroundColor: 'transparent',
-      tooltip: { ...TOOLTIP, trigger: 'item' },
-      grid: [
-        { left: 16, right: 14, top: 0, height: rowsH },
-        { left: 16, right: 14, top: rowsH + 16, height: CHANGE_H },
-      ],
-      xAxis: [xAxis(0, false), xAxis(1, true)],
-      yAxis: [
-        {
-          gridIndex: 0,
-          type: 'category',
-          data: rows,
-          inverse: true,
-          axisLabel: {
-            inside: true,
-            color: INK,
-            fontSize: 11,
-            textShadowColor: '#000',
-            textShadowBlur: 3,
-            // The "unlikely here" flag after the name, in the colour of
-            // .unlikely-flag. A text glyph: axis labels are drawn on canvas.
-            formatter: (v, i) => (unlikely[i] ? `${v} {flag|${FLAG_GLYPH}}` : v),
-            rich: { flag: { color: FLAG_COLOUR, fontSize: 11 } },
-          },
-          axisLine: { show: false },
-          axisTick: { show: false },
-          z: 10,
-        },
-        {
-          gridIndex: 1,
-          type: 'value',
-          // Cosine distance between readings 0.25 s apart: a steady sound
-          // stays under 0.1, a new sound reaches 0.2 to 0.5. Higher values
-          // are drawn at the top; the tooltip has the exact value.
-          min: 0,
-          max: 0.5,
-          show: false,
-        },
-      ],
-      graphic: [
-        ...(rows.length || !d.heard
-          ? []
-          : [
-              {
-                type: 'text',
-                left: 16,
-                top: 3,
-                style: { text: 'No class at 0.10 or above', fill: MUTED, fontSize: 11 },
-              },
-            ]),
-        {
-          type: 'text',
-          left: 16,
-          top: rowsH + 3,
-          style: { text: 'Change in latent space', fill: MUTED, fontSize: 10 },
-        },
-      ],
-      series: [
-        {
-          id: 'strip',
-          type: 'custom',
-          xAxisIndex: 0,
-          yAxisIndex: 0,
-          data: d.strip,
-          encode: { x: 0, y: 1 },
-          renderItem: (params, api) => {
-            const t = api.value(0);
-            const row = api.value(1);
-            const s = api.value(2);
-            const a = api.coord([t, row]);
-            const b = api.coord([next.get(t) ?? 0, row]);
-            const h = api.size([0, 1])[1];
-            return {
-              type: 'rect',
-              shape: { x: a[0], y: a[1] - h / 2 + 1, width: Math.max(b[0] - a[0], 1), height: h - 2 },
-              style: { fill: cellColor(s, d.min) },
-            };
-          },
-          tooltip: {
-            formatter: (p) =>
-              `${esc(rows[p.value[1]])}<br>${p.value[2].toFixed(2)} <span style="color:${MUTED}">${ago(p.value[0])}</span>` +
-              (unlikely[p.value[1]] ? `<br><span style="color:${FLAG_COLOUR}">${FLAG_GLYPH}</span> ${UNLIKELY_TEXT}` : ''),
-          },
-        },
-        {
-          id: 'change',
-          type: 'line',
-          xAxisIndex: 1,
-          yAxisIndex: 1,
-          data: d.change.map(([t, v]) => [t, Math.min(v, 0.5), v]),
-          encode: { x: 0, y: 1 },
-          // Small dots, so each reading can be hovered.
-          showSymbol: true,
-          symbolSize: 3,
-          itemStyle: { color: INK },
-          lineStyle: { color: INK, width: 1.5 },
-          areaStyle: { color: 'rgba(221,221,221,0.12)' },
-          tooltip: {
-            formatter: (p) =>
-              `Change from the reading before: ${p.value[2].toFixed(2)}<br><span style="color:${MUTED}">${ago(p.value[0])}</span>`,
-          },
-        },
-      ],
-    };
-  }
-
+  // A graph row's time: before or after the place shown (a file), or
+  // before now (the microphone).
+  const when = (d, s) => {
+    if (Math.abs(s) < 0.05) return d.preview || d.fileAt ? 'here' : 'now';
+    if (s > 0) return `${s.toFixed(1)} s after`;
+    return d.preview || d.fileAt ? `${(-s).toFixed(1)} s before` : `${(-s).toFixed(1)} s ago`;
+  };
 
   // ── Layout ────────────────────────────────────────────────────────────
   // The species are drawn at their UMAP places (species_umap.py) or their
@@ -474,7 +343,13 @@
     let touch = false;
     let pinned = false;
     let shown = null; // the pixel the list was last shown for
+    // The spot and species under the pointer, for the component maps.
+    const hover = (h) => {
+      el.__hover = h;
+      if (el.__last) pcDraw(el, el.__last);
+    };
     const hide = () => {
+      if (el.__hover) hover(null);
       box.style.display = ring.style.display = 'none';
       box.classList.remove('kept');
       pinned = false;
@@ -485,6 +360,7 @@
       const [x, y] = map.convertFromPixel({ gridIndex: 0 }, [px, py]);
       const near = nearestSpecies(el, x, y, NEAR_PX * unitsPerPx(map), NEAR_MAX);
       if (!near.length) return hide();
+      hover({ x, y, near });
       const sp = el.__species;
       const pts = points(el);
       box.classList.toggle('kept', !!keep);
@@ -1041,14 +917,15 @@
         const d = el.__last;
         if (e.pointerType !== 'mouse' || !d || !d.pcHist.length) return;
         const r = graph.getBoundingClientRect();
-        const t = (((e.clientX - r.left) / (r.width - KEY_W)) - 1) * d.history;
+        if (el.__hover) return;
+        const t = ((e.clientX - r.left) / (r.width - KEY_W) - 0.5) * d.history;
         let best = d.pcHist[0];
         for (const row of d.pcHist) if (Math.abs(row[0] - t) < Math.abs(best[0] - t)) best = row;
         const p = best[k + 1];
         const fifth = Math.min(4, Math.floor(p * 5));
         showTip(
           cell,
-          `<div class="live-emb-tip-line">${swatch(fifth)}${name}: ${ordinal(Math.round(p * 100))} percentile, ${ago(best[0])}</div>`,
+          `<div class="live-emb-tip-line">${swatch(fifth)}${name}: ${ordinal(Math.round(p * 100))} percentile, ${when(d, best[0])}</div>`,
         );
       });
       cell.addEventListener('pointerleave', () => (tip.style.display = 'none'));
@@ -1138,8 +1015,20 @@
           m.ctx.stroke();
         }
       }
-      // The graph: percentile (low at the bottom) over the last d.history
-      // seconds, each stretch in the colour of the fifth it is in.
+      // The pointer's place on the large map, as a ring.
+      const hov = el.__hover;
+      if (hov) {
+        const hx = ((hov.x - v.x0) / (v.x1 - v.x0)) * b.px;
+        const hy = ((v.y1 - hov.y) / (v.y1 - v.y0)) * b.px;
+        m.ctx.beginPath();
+        m.ctx.arc(hx, hy, 4 * u, 0, 2 * Math.PI);
+        m.ctx.lineWidth = 3 * u;
+        m.ctx.strokeStyle = '#000000';
+        m.ctx.stroke();
+        m.ctx.lineWidth = 1.5 * u;
+        m.ctx.strokeStyle = '#ffffff';
+        m.ctx.stroke();
+      }
       const g = m.graph;
       const w = b.px;
       const h = g.canvas.height;
@@ -1152,14 +1041,40 @@
         g.fillStyle = c;
         g.fillRect(w - keyW, h - ((j + 1) * h) / 5, keyW, h / 5 - (j ? u / 2 : 0));
       });
-      const at = (row) => [(1 + row[0] / d.history) * plotW, (1 - row[k + 1]) * (h - 2 * u) + u];
+      const yOf = (p) => (1 - p) * (h - 2 * u) + u;
+      if (hov) {
+        // While the pointer is over the large map: one line for each
+        // species under it, at the species' place on this component, in
+        // the colour of its fifth, and a white mark across the key.
+        const ranks = pc.ranks[k];
+        for (const i of hov.near) {
+          // A species with no place on a component from recordings.
+          if (pc.basis !== 'rows' && ranks[i] === 255) continue;
+          const p = ranks[i] / 255;
+          const y = yOf(p);
+          g.fillStyle = PC_COLOURS[Math.min(4, Math.floor(p * 5))];
+          g.fillRect(0, y - u / 2, plotW, u);
+          g.fillStyle = '#ffffff';
+          g.fillRect(w - keyW - 2 * u, y - u, keyW + 2 * u, 2 * u);
+        }
+        return;
+      }
+      // The graph: percentile (low at the bottom) over d.history seconds
+      // with the place shown in the middle, each stretch in the colour of
+      // the fifth it is in.
+      const half = d.history / 2;
+      const at = (row) => [(0.5 + row[0] / d.history) * plotW, yOf(row[k + 1])];
+      const rows = d.pcHist.filter((row) => Math.abs(row[0]) <= half);
+      // The place shown.
+      g.fillStyle = '#555555';
+      g.fillRect(Math.round(plotW / 2), 0, 1, h);
       g.lineWidth = 1.5 * u;
       g.lineJoin = 'round';
-      for (let i = 1; i < d.pcHist.length; i++) {
-        const a = d.pcHist[i - 1];
-        const c = d.pcHist[i];
-        // A gap in the readings (playback paused) is not joined.
-        if (c[0] - a[0] > 1.5) continue;
+      for (let i = 1; i < rows.length; i++) {
+        const a = rows[i - 1];
+        const c = rows[i];
+        // A gap (windows not analysed, or listening paused) is not joined.
+        if (c[0] - a[0] > 3.5) continue;
         const [x0, y0] = at(a);
         const [x1, y1] = at(c);
         g.strokeStyle = PC_COLOURS[Math.min(4, Math.floor(c[k + 1] * 5))];
@@ -1168,11 +1083,18 @@
         g.lineTo(x1, y1);
         g.stroke();
       }
-      const now = d.pcHist[d.pcHist.length - 1];
-      if (now) {
-        // The newest value, as a white mark across the key.
+      // A single window is a dot.
+      if (rows.length === 1) {
+        const [x, y] = at(rows[0]);
+        g.fillStyle = PC_COLOURS[Math.min(4, Math.floor(rows[0][k + 1] * 5))];
+        g.fillRect(x - u, y - u, 2 * u, 2 * u);
+      }
+      // The value at the place shown, as a white mark across the key.
+      let here = null;
+      for (const row of rows) if (!here || Math.abs(row[0]) < Math.abs(here[0])) here = row;
+      if (here && Math.abs(here[0]) <= 3.5) {
         g.fillStyle = '#ffffff';
-        g.fillRect(w - keyW - 2 * u, at(now)[1] - u, keyW + 2 * u, 2 * u);
+        g.fillRect(w - keyW - 2 * u, at(here)[1] - u, keyW + 2 * u, 2 * u);
       }
     });
   }
@@ -1269,7 +1191,6 @@
         return div;
       };
       const p = {
-        strip: mk('live-emb-strip', el),
         tools: mk('live-emb-tools', host),
         map: mk('live-emb-map', host),
         pcs: mk('live-emb-pcs', host),
@@ -1325,18 +1246,6 @@
       if (el.__last !== d) return; // a newer reading arrived while loading
       const p = parts(el);
       p.tools.__mark();
-      // The strip keeps the most rows it has had, so the map under it does
-      // not move up and down as classes come and go.
-      el.__rows = Math.max(el.__rows || 1, d.rows.length);
-      p.strip.style.height = `${el.__rows * ROW_H + CHANGE_H + 36}px`;
-      // Nothing heard yet (a file open and paused shows only the reading of
-      // where Play starts): the strip and its change trace would be empty
-      // frames, so they are hidden until the first reading.
-      p.strip.style.display = d.heard ? '' : 'none';
-      if (d.heard) {
-        const strip = chartFor(p.strip);
-        strip.setOption(stripOptions(d), { replaceMerge: ['series', 'yAxis', 'grid', 'xAxis', 'graphic'] });
-      }
       // The map's fold is closed: nothing to draw there. Opening it draws
       // the map again (live_embedding::redraw).
       if (p.map.clientWidth === 0) return;
@@ -1365,13 +1274,12 @@
       el.__frame = 0;
       if (el.__parts.map.__explore) el.__parts.map.__explore.remove();
       el.__parts.tools.__remove();
-      for (const div of [el.__parts.strip, el.__parts.map]) {
+      for (const div of [el.__parts.map]) {
         if (div.__resize) div.__resize.disconnect();
         const chart = window.echarts && window.echarts.getInstanceByDom(div);
         if (chart) chart.dispose();
       }
       el.__parts = null;
-      el.__rows = 0;
       el.__liveSpecies = false;
       // The next update may be of another model: its species, layouts and
       // components replace these.

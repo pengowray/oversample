@@ -10157,9 +10157,6 @@ body.hfr-nudge-on .hfr-switch {
     background: #3a3a3a;
     color: #ccc;
 }
-.live-emb-strip {
-    width: 100%;
-}
 /* Above the map: the layout choice (the app's segmented buttons,
    .peak-src-btn) and Full screen. */
 .live-emb-tools {

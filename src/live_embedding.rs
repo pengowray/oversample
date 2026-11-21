@@ -55,8 +55,6 @@ const TICK_MS: u32 = 50;
 pub const HISTORY_S: f64 = 20.0;
 /// Seconds of trail on the map.
 const TRAIL_S: f64 = 15.0;
-/// Most rows in the strip; the ones with the lowest peak drop out first.
-const MAX_ROWS: usize = 8;
 /// Placement rule of the species map (`classifier::species_map`): the top 3
 /// classes pull the marker, but only those within the map's radius of the
 /// top class, so the marker never sits between unrelated groups.
@@ -373,15 +371,12 @@ pub enum LiveStatus {
 struct Reading {
     t: f64,
     scores: Vec<f32>,
-    embedding: Vec<f32>,
     /// Map position of the marker on the t-SNE layout, if a map is loaded.
     at: Option<(f32, f32)>,
     /// The same on the UMAP layout.
     at_umap: Option<(f32, f32)>,
     /// Percentile (0 to 1) on each component.
     pc: Vec<f32>,
-    /// Cosine distance from the previous reading's embedding, 0 to 2.
-    change: Option<f32>,
 }
 
 struct Link {
@@ -421,8 +416,6 @@ thread_local! {
     static PCS: RefCell<Option<Arc<Components>>> = const { RefCell::new(None) };
     /// UMAP places of the classes: the layout the maps start on.
     static PC_UMAP: RefCell<Option<Arc<Vec<Option<(f32, f32)>>>>> = const { RefCell::new(None) };
-    /// The strip's rows, in the order they first appeared.
-    static ROWS: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
     /// Interval between the last two readings, smoothed.
     static INTERVAL: Cell<f64> = const { Cell::new(0.0) };
     static LAST_READING: Cell<f64> = const { Cell::new(0.0) };
@@ -812,7 +805,6 @@ pub fn restart(state: AppState) {
     PREVIEW_REQ.with(|p| p.set(None));
     PREVIEW_WANT.with(|p| p.set(None));
     PAUSED_DRAWN.with(|p| p.set(None));
-    ROWS.with(|r| r.borrow_mut().clear());
     INTERVAL.with(|i| i.set(0.0));
     if USERS.with(|u| u.get()) == 0 {
         state.classifier.live().set(LiveStatus::Off);
@@ -1325,6 +1317,8 @@ thread_local! {
     /// The paused reading's window when it is the picked window
     /// (`call_detection.selected_window`), not the play start.
     static PICKED_KEY: Cell<Option<PreviewKey>> = const { Cell::new(None) };
+    /// The paused reading was last drawn as the picked window's.
+    static PICKED_DRAWN: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The window a paused reading would cover now, in the current file: the
@@ -1383,7 +1377,10 @@ async fn preview_tick(state: AppState, gen: u32, now: f64) {
     // for the flags has come in (it arrives after the reading).
     let flags_changed =
         view.is_some() && flag_scores(state).is_some() != FLAGS_DRAWN.with(|f| f.get());
-    if PAUSED_DRAWN.with(|p| p.get()) != view || flags_changed {
+    // Or when the same window is now shown as the picked one (or no longer).
+    let picked = view.flatten().is_some() && view.flatten() == PICKED_KEY.with(|p| p.get());
+    let picked_changed = PICKED_DRAWN.with(|p| p.get()) != picked;
+    if PAUSED_DRAWN.with(|p| p.get()) != view || flags_changed || picked_changed {
         draw_view(state, view);
     }
     if USERS.with(|u| u.get()) & LIVE_VIEW == 0 {
@@ -1687,11 +1684,6 @@ fn add_reading(state: AppState, payload: Vec<f32>, model_ms: Option<f64>) {
             .as_ref()
             .map_or_else(Vec::new, |p| p.percentiles(&embedding))
     });
-    let change = HISTORY.with(|h| {
-        h.borrow()
-            .back()
-            .map(|prev| cosine_distance(&prev.embedding, &embedding))
-    });
     let last = LAST_READING.with(|l| l.replace(t));
     if last > 0.0 && t - last < model.lost_after_ms {
         INTERVAL.with(|i| {
@@ -1727,11 +1719,9 @@ fn add_reading(state: AppState, payload: Vec<f32>, model_ms: Option<f64>) {
         h.push_back(Reading {
             t,
             scores,
-            embedding,
             at,
             at_umap,
             pc,
-            change,
         });
         while h.front().is_some_and(|r| t - r.t > HISTORY_S * 1000.0) {
             h.pop_front();
@@ -1811,39 +1801,32 @@ pub fn top_classes(scores: &[f32], n: usize) -> Vec<(usize, f32)> {
     top
 }
 
-/// Update the strip's rows from the history: a class gets a row once it
-/// scores `row_min` or more, keeps its place while it is in the history, and
-/// the rows with the lowest peaks go first when there are too many.
-fn update_rows(history: &VecDeque<Reading>, row_min: f32) -> Vec<u16> {
-    let n = history.front().map_or(0, |r| r.scores.len());
-    let mut peak = vec![0.0f32; n];
-    for r in history {
-        for (p, &s) in peak.iter_mut().zip(&r.scores) {
-            if s > *p {
-                *p = s;
-            }
-        }
-    }
-    ROWS.with(|rows| {
-        let mut rows = rows.borrow_mut();
-        rows.retain(|&c| peak.get(c as usize).is_some_and(|&p| p >= row_min));
-        // New rows, in the order they first reached the threshold.
-        for r in history {
-            for (c, &s) in r.scores.iter().enumerate() {
-                if s >= row_min && !rows.contains(&(c as u16)) {
-                    rows.push(c as u16);
-                }
-            }
-        }
-        while rows.len() > MAX_ROWS {
-            let (drop, _) = rows
+/// Each kept window of `file` that starts within half of [`HISTORY_S`] of
+/// `at` (seconds), as its start from `at` in seconds and then its percentile
+/// on each component: `[-3.0, p1, p2, ...]`. Empty without components, or
+/// before the file has results.
+fn stored_pc_hist(state: AppState, file: u64, method: Method, at: f64) -> Vec<Vec<f32>> {
+    let Some(pcs) = PCS.with(|p| p.borrow().clone()) else {
+        return Vec::new();
+    };
+    let half = HISTORY_S / 2.0;
+    state.classifier.results().with_untracked(|m| {
+        let Some(run) = m.get(&(file, method)) else {
+            return Vec::new();
+        };
+        state.classifier.embeddings().with_untracked(|e| {
+            let e = e.get(&(file, method)).map_or(&[][..], |v| &v[..]);
+            run.windows
                 .iter()
-                .enumerate()
-                .min_by(|a, b| peak[*a.1 as usize].total_cmp(&peak[*b.1 as usize]))
-                .expect("non-empty");
-            rows.remove(drop);
-        }
-        rows.clone()
+                .filter(|w| (w.start_s - at).abs() <= half)
+                .filter_map(|w| {
+                    let emb = classifier::types::embedding(e, method, w.slot as usize)?;
+                    let mut row = vec![round3((w.start_s - at) as f32)];
+                    row.extend(pcs.percentiles(emb).into_iter().map(round3));
+                    Some(row)
+                })
+                .collect()
+        })
     })
 }
 
@@ -1895,6 +1878,7 @@ fn draw_view(state: AppState, view: PausedView) {
     // before the pause is hidden, so it is not taken for the play start.
     let pending = matches!(view, Some(None));
     let was_shown = PAUSED_DRAWN.with(|p| p.replace(view)).flatten();
+    PICKED_DRAWN.with(|p| p.set(shown.is_some() && shown == PICKED_KEY.with(|p| p.get())));
     // The paused reading: its top classes and its place on both layouts.
     let preview = shown.and_then(|key| {
         PREVIEW.with(|p| {
@@ -1929,7 +1913,6 @@ fn draw_view(state: AppState, view: PausedView) {
             return None;
         }
         let now = h.back().map_or(0.0, |r| r.t);
-        let rows = update_rows(&h, model.row_min);
         let top_scores = match &preview {
             Some(p) => p.0.as_slice(),
             None if pending => &[],
@@ -1986,24 +1969,6 @@ fn draw_view(state: AppState, view: PausedView) {
                 ))
             })
             .collect();
-        let strip: Vec<_> = h
-            .iter()
-            .flat_map(|r| {
-                rows.iter().enumerate().map(move |(row, &c)| {
-                    (
-                        ago(r),
-                        row,
-                        round3(r.scores.get(c as usize).copied().unwrap_or(0.0)),
-                    )
-                })
-            })
-            .collect();
-        let change: Vec<_> = h
-            .iter()
-            .filter_map(|r| Some((ago(r), round3(r.change?))))
-            .collect();
-        let row_names: Vec<_> = rows.iter().map(|&c| name(c as usize)).collect();
-        let rows_unlikely: Vec<bool> = rows.iter().map(|&c| unlikely(c as usize)).collect();
         // Each reading's percentile on each component, as the mean of the
         // last few readings so a line does not jump from one reading to the
         // next: [secondsAgo, p1, p2, ...].
@@ -2025,15 +1990,37 @@ fn draw_view(state: AppState, view: PausedView) {
                 row
             })
             .collect();
-        let pc: Vec<f32> = pc_hist.last().map_or_else(Vec::new, |r| r[1..].to_vec());
+        // For a file, the values kept for its windows instead, before and
+        // after the place shown: the paused reading's window, or the window
+        // ending at the playhead. Only the microphone has no values after.
+        let file_at = match shown {
+            Some(key) => Some((key.0, key.1 as f64 / 1000.0)),
+            None if !pending && state.playback.is_playing().get_untracked() => {
+                state.current_file_id().map(|id| {
+                    let t = state.playback.playhead_time().get_untracked();
+                    (id, (t - model.window_s).max(0.0))
+                })
+            }
+            None => None,
+        };
+        let pc_hist = match file_at {
+            Some((file, at)) => stored_pc_hist(state, file, model.method, at),
+            None if pending => Vec::new(),
+            None => pc_hist,
+        };
+        // The value at the place shown: the row nearest to it.
+        let pc: Vec<f32> = pc_hist
+            .iter()
+            .min_by(|a, b| a[0].abs().total_cmp(&b[0].abs()))
+            .map_or_else(Vec::new, |r| r[1..].to_vec());
         Some(serde_json::json!({
             "pc": pc,
             "pcHist": pc_hist,
+            // The graphs are of a file's kept windows round the place shown.
+            "fileAt": file_at.is_some(),
             "min": min,
             "top": top,
             "trail": trail,
-            "rows": row_names,
-            "rowsUnlikely": rows_unlikely,
             "heard": !h.is_empty(),
             "preview": preview.as_ref().map(|p| serde_json::json!({
                 "at": p.1,
@@ -2041,8 +2028,6 @@ fn draw_view(state: AppState, view: PausedView) {
                 "picked": shown == PICKED_KEY.with(|p| p.get()),
             })),
             "pending": pending,
-            "strip": strip,
-            "change": change,
             "history": HISTORY_S,
             "ultrasonic": RATE.with(|r| r.get()) >= ULTRASONIC_RATE,
             "model": {
