@@ -1,4 +1,5 @@
 pub mod annota;
+pub mod a2o;
 pub mod annotations;
 pub mod audio;
 pub mod bat_book;

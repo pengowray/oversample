@@ -63,6 +63,17 @@ fn wikimedia_hash_target(hash: &str) -> Option<String> {
     )
 }
 
+/// Recognise the Australian Acoustic Observatory forms of the URL hash:
+/// `#a2o:<A2O url>`, or an A2O url as the whole hash. Returns the url for
+/// `a2o::load_from_input`.
+fn a2o_hash_target(hash: &str) -> Option<String> {
+    let rest = hash
+        .get(..4)
+        .filter(|h| h.eq_ignore_ascii_case("a2o:"))
+        .map_or(hash, |_| &hash[4..]);
+    crate::a2o::parse_link(rest).map(|_| rest.to_string())
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     let state = AppState::new();
@@ -144,6 +155,11 @@ pub fn App() -> impl IntoView {
                         }
                     }
                     state.loading_done(load_id);
+                });
+            } else if let Some(target) = a2o_hash_target(trimmed) {
+                // A2O deep links: `#a2o:<A2O url>`, or the A2O url itself.
+                wasm_bindgen_futures::spawn_local(async move {
+                    crate::a2o::load_from_input(state, &target).await;
                 });
             } else if let Some(target) = wikimedia_hash_target(trimmed) {
                 // Wikimedia deep links: `#commons:File:Foo.wav`, `#wiki:<url>`,

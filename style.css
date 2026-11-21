@@ -2313,7 +2313,11 @@ a.open-link-btn {
     color: #666;
 }
 
+/* The select gives up width first, so the Select and preview buttons to
+   its right stay inside a narrow sidebar. */
 .file-sort-select {
+    flex: 0 1 auto;
+    min-width: 0;
     background: #222;
     color: #aaa;
     border: 1px solid #444;
@@ -2858,6 +2862,36 @@ a.open-link-btn {
 .timeline-row-solo.on {
     background: #d9a400;
     color: #111;
+}
+
+/* "Add 30 s before" and "Add 30 s after" for an A2O clip, in the transport
+   bar. Plain outlined buttons: adding audio is a secondary action there,
+   beside Play. Both wait (dimmed) while a clip is being fetched. */
+.a2o-add {
+    display: flex;
+    gap: 4px;
+}
+
+.a2o-add-btn {
+    min-height: 32px;
+    padding: 4px 10px;
+    background: #222;
+    color: #ddd;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.a2o-add-btn:hover:not(:disabled) {
+    background: #2c2c2c;
+    border-color: #666;
+}
+
+.a2o-add-btn:disabled {
+    color: #777;
+    cursor: progress;
 }
 
 /* Main area */
@@ -5087,6 +5121,18 @@ a.open-link-btn {
     gap: 5px;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
     overflow: visible;
+}
+
+/* On a phone the A2O buttons share a row of their own, after the Order
+   chip's row. */
+.bottom-toolbar.mobile .a2o-add {
+    grid-column: 1 / -1;
+    order: 100;
+}
+
+.bottom-toolbar.mobile .a2o-add-btn {
+    flex: 1;
+    min-height: 44px;
 }
 
 /* The timeline's Order chip says "One after another, 0.5 s pause", which

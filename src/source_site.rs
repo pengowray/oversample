@@ -22,13 +22,16 @@ pub enum SourceSite {
     Wikipedia,
     Gbif,
     OversampleDemos,
+    /// A clip of an Australian Acoustic Observatory recording, opened from
+    /// an A2O link (`crate::a2o`).
+    AcousticObservatory,
     /// A search source this build doesn't know, by its search key.
     Other(String),
 }
 
 /// Each known site with its search key (as the search server sends it) and
 /// display name.
-static KNOWN: [(SourceSite, &str, &str); 9] = [
+static KNOWN: [(SourceSite, &str, &str); 10] = [
     (SourceSite::XenoCanto, "xc", "Xeno-canto"),
     (SourceSite::INaturalist, "inat", "iNaturalist"),
     (SourceSite::ObservationOrg, "obsorg", "Observation.org"),
@@ -42,6 +45,11 @@ static KNOWN: [(SourceSite, &str, &str); 9] = [
     (SourceSite::WikimediaCommons, "commons", "Wikimedia Commons"),
     (SourceSite::Gbif, "gbif", "GBIF"),
     (SourceSite::OversampleDemos, "demo", "Oversample demos"),
+    (
+        SourceSite::AcousticObservatory,
+        "a2o",
+        "Australian Acoustic Observatory",
+    ),
 ];
 
 impl SourceSite {

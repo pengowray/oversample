@@ -164,6 +164,7 @@ pub(super) fn push_streaming_file(state: AppState, f: NewStreamingFile) -> usize
         settings: FileSettings::default(),
         add_order: 0,
         last_modified_ms: None,
+        origin_clip: None,
         identity: None,
         file_handle: Some(handle),
         cached_peak_db,

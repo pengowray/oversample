@@ -832,6 +832,50 @@ pub fn create(state: &AppState, file_indices: Vec<usize>) -> bool {
     if open(state, file_indices, None, None).is_none() {
         return false;
     }
+    add_open_timeline_to_project(state);
+    true
+}
+
+/// Put exactly these files on the timeline, in this order. With a timeline
+/// open, its files are replaced and its arrangement kept. Otherwise a new
+/// timeline opens, as [`create`] makes one, but in the order given.
+/// Returns `false` when fewer than two of the files are loaded.
+pub fn set_files(state: &AppState, file_indices: Vec<usize>) -> bool {
+    if state.timeline.active().with_untracked(|t| t.is_none()) {
+        let arrangement = state
+            .library
+            .files()
+            .with_untracked(|files| TimelineView::suggested_arrangement(&file_indices, files));
+        if open(state, file_indices, Some(arrangement), None).is_none() {
+            return false;
+        }
+        add_open_timeline_to_project(state);
+        return true;
+    }
+    crate::audio::playback::stop(state);
+    state.timeline.only_row().set(None);
+    state
+        .timeline
+        .selected_file_indices()
+        .set(file_indices.clone());
+    state.timeline.clip_file_indices().set(file_indices);
+    state.library.current_index().set(None);
+    rebuild_active(state);
+    let Some(tv) = state.timeline.active().get_untracked() else {
+        close(state);
+        return false;
+    };
+    show_whole_timeline(state, &tv);
+    state
+        .viewmode
+        .tile_ready_signal()
+        .update(|n| *n = n.wrapping_add(1));
+    save_active_to_project(state);
+    true
+}
+
+/// Add the open timeline to the open project, when there is one.
+fn add_open_timeline_to_project(state: &AppState) {
     let id = crate::annotations::generate_uuid();
     let mut added = false;
     state.project.current().update(|p| {
@@ -849,7 +893,6 @@ pub fn create(state: &AppState, file_indices: Vec<usize>) -> bool {
         state.timeline.active_definition_id().set(Some(id));
         save_active_to_project(state);
     }
-    true
 }
 
 /// Move the file at position `from` in the open timeline's play order to

@@ -335,6 +335,10 @@ pub struct LoadedFile {
     pub add_order: usize,
     /// File.lastModified timestamp from the File API (ms since epoch), if available.
     pub last_modified_ms: Option<f64>,
+    /// Where in an Australian Acoustic Observatory recording this file came
+    /// from, for a clip opened from an A2O link. Gives the clip its start
+    /// time and lets the audio before and after it be fetched.
+    pub origin_clip: Option<crate::a2o::ClipRef>,
     /// Multi-layered file identity for annotation matching. Computed progressively after load.
     pub identity: Option<FileIdentity>,
     /// File handle for on-demand range reading (Layer 3/4 hash computation).
@@ -394,6 +398,10 @@ impl LoadedFile {
     /// Returns `(epoch_ms, source_label)` where `source_label` describes the
     /// origin: "GUANO Timestamp" or "File modified date (approx.)".
     pub fn recording_start_info(&self) -> Option<(f64, &'static str)> {
+        // An A2O clip: the recording's start plus the clip's offset in it.
+        if let Some(clip) = &self.origin_clip {
+            return Some((clip.start_ms(), "A2O recording time"));
+        }
         // Try GUANO Timestamp first
         if let Some(ref guano) = self.audio.metadata.guano {
             if let Some((_, ts)) = guano.fields.iter().find(|(k, _)| k == "Timestamp") {

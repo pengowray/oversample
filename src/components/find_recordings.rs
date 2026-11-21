@@ -35,7 +35,7 @@ use crate::xc_client::{self, XcSource};
 
 const TITLE: &str = "Find recordings";
 const SEARCH_PLACEHOLDER: &str =
-    "Species name in any language, or a Xeno-canto, Wikimedia Commons or Wikipedia link";
+    "Species name in any language, or a Xeno-canto, Wikimedia Commons, Wikipedia or A2O link";
 /// For screens too narrow for [`SEARCH_PLACEHOLDER`].
 const SEARCH_PLACEHOLDER_SHORT: &str = "Species name or link";
 const ALL_SPECIES: &str = "All species";
@@ -225,6 +225,8 @@ enum Link {
     /// A Wikipedia article, which may have several audio files: listed in the
     /// Commons dialog.
     WikiPage(String),
+    /// An Australian Acoustic Observatory event or clip link.
+    A2o(crate::a2o::A2oLink),
 }
 
 fn detect_link(text: &str) -> Option<Link> {
@@ -238,6 +240,9 @@ fn detect_link(text: &str) -> Option<Link> {
         if let Ok(n) = xc_lib::api::parse_xc_number(&t.replace(' ', "")) {
             return Some(Link::Xc(n));
         }
+    }
+    if let Some(link) = crate::a2o::parse_link(t) {
+        return Some(Link::A2o(link));
     }
     match crate::wikimedia::parse_input(t) {
         Ok(crate::wikimedia::WikiTarget::File { .. }) => Some(Link::Wikimedia(t.to_string())),
@@ -1362,6 +1367,7 @@ pub fn FindRecordings() -> impl IntoView {
                     Ok(())
                 }
                 Link::WikiPage(_) => Ok(()),
+                Link::A2o(link) => crate::a2o::load_link(state, &link).await.map(|_| ()),
             };
             loading.try_set(None);
             match result {
@@ -1560,6 +1566,8 @@ pub fn FindRecordings() -> impl IntoView {
                 Link::Xc(n) => format!("Load XC{n}"),
                 Link::Wikimedia(_) => "Load from Wikimedia".to_string(),
                 Link::WikiPage(_) => LOAD_WIKI_PAGE.to_string(),
+                Link::A2o(crate::a2o::A2oLink::Event { .. }) => "Load A2O event".to_string(),
+                Link::A2o(crate::a2o::A2oLink::Clip { .. }) => "Load A2O clip".to_string(),
             };
             view! {
                 <button class="find-link-row" on:click=move |_| load_link(l.clone())>

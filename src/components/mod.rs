@@ -1,3 +1,4 @@
+pub mod a2o_add;
 pub mod analysis_panel;
 pub mod annotation_storage;
 pub mod merge_notice;

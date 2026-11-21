@@ -412,6 +412,7 @@ pub(crate) async fn load_named_bytes_id(
         settings: FileSettings::default(),
         add_order: 0,
         last_modified_ms: None,
+        origin_clip: None,
         identity: None,
         file_handle: None,
         cached_peak_db,

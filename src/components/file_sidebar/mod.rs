@@ -5,7 +5,7 @@ pub(crate) mod file_badges;
 pub(crate) mod file_groups;
 pub(crate) mod files_panel;
 mod project_panel;
-pub(crate) use project_panel::save_project_async;
+pub(crate) use project_panel::{add_open_files_to_project, save_project_async};
 pub mod analysis;
 pub mod call_detection_panel;
 pub mod harmonics;

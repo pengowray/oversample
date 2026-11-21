@@ -770,6 +770,9 @@ pub fn BottomToolbar() -> impl IntoView {
                 </div>
             </Show>
 
+            // ── A2O clip: add the audio before or after it ──
+            <crate::components::a2o_add::A2oAddButtons/>
+
             <div class="bottom-toolbar-sep"></div>
 
             // ── Capture group: [Mic ▼] [Record] [Listen] ──

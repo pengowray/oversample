@@ -101,6 +101,12 @@ pub struct ProjectFile {
     /// the recording start time (while last_modified is the end).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub creation_time_ms: Option<f64>,
+
+    /// Where in an Australian Acoustic Observatory recording this file came
+    /// from, for a clip opened from an A2O link. With it, a project whose
+    /// clips are not open can fetch them again.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub origin_clip: Option<crate::a2o::ClipRef>,
 }
 
 /// Explicit sequence definition — groups files into a continuous recording sequence.
@@ -319,6 +325,7 @@ impl BatProject {
             recording_start_override_ms: None,
             metadata_from_tauri: false,
             creation_time_ms: None,
+            origin_clip: None,
         });
         self.touch();
         idx
@@ -341,6 +348,36 @@ mod tests {
             arrangement,
             label: None,
         }
+    }
+
+    #[test]
+    fn a_file_keeps_its_a2o_clip_when_saved_and_loaded() {
+        let clip = crate::a2o::ClipRef {
+            recording_id: 55743,
+            start_secs: 1516.0,
+            end_secs: 1546.5,
+            recording_start_ms: 1_585_641_600_000.0,
+            recording_secs: 14389.685,
+        };
+        let file = |name: &str, origin_clip| ProjectFile {
+            identity: crate::file_identity::identity_layer1(name, 1234),
+            audio_metadata: None,
+            annotations: Vec::new(),
+            noise_profile: None,
+            lowest_bat_hz: None,
+            time_offset_secs: 0.0,
+            recording_start_override_ms: None,
+            metadata_from_tauri: false,
+            creation_time_ms: None,
+            origin_clip,
+        };
+        let files = vec![file("clip.flac", Some(clip.clone())), file("other.wav", None)];
+        let yaml = yaml_serde::to_string(&files).unwrap();
+        let loaded: Vec<ProjectFile> = yaml_serde::from_str(&yaml).unwrap();
+        assert_eq!(loaded[0].origin_clip, Some(clip));
+        assert_eq!(loaded[1].origin_clip, None);
+        // A file that is not an A2O clip writes no key for it.
+        assert_eq!(yaml.matches("origin_clip").count(), 1, "{yaml}");
     }
 
     #[test]

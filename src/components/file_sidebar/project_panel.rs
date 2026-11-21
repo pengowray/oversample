@@ -31,7 +31,34 @@ fn open_file_index(
         lf.identity
             .as_ref()
             .is_some_and(|id| pf.identity.is_same_file(id))
+            // An A2O clip fetched again is the same clip, whatever bytes
+            // the server sent this time.
+            || (pf.origin_clip.is_some() && lf.origin_clip == pf.origin_clip)
     })
+}
+
+/// Add every open file that is not in the project to it, with where it came
+/// from when it is an A2O clip. Returns how many were added. A file whose
+/// identity is not worked out yet is left for the next call.
+pub(crate) fn add_open_files_to_project(state: AppState) -> usize {
+    let loaded = state.library.files().get_untracked();
+    let mut added = 0;
+    state.project.current().update(|p| {
+        let Some(proj) = p else { return };
+        for f in loaded.iter() {
+            let Some(identity) = &f.identity else { continue };
+            if proj.find_file(identity).is_some() {
+                continue;
+            }
+            let idx = proj.add_file(identity.clone(), Some(audio_meta_from_loaded(f)));
+            proj.files[idx].origin_clip = f.origin_clip.clone();
+            added += 1;
+        }
+    });
+    if added > 0 {
+        state.project.dirty().set(true);
+    }
+    added
 }
 
 /// Save the current project to OPFS (fire-and-forget).
@@ -148,7 +175,8 @@ fn NoProjectView() -> impl IntoView {
         let mut proj = BatProject::new();
         for f in files.iter() {
             if let Some(ref identity) = f.identity {
-                proj.add_file(identity.clone(), Some(audio_meta_from_loaded(f)));
+                let idx = proj.add_file(identity.clone(), Some(audio_meta_from_loaded(f)));
+                proj.files[idx].origin_clip = f.origin_clip.clone();
             }
         }
         state.project.current().set(Some(proj.clone()));
@@ -344,6 +372,39 @@ fn ProjectView(project: BatProject) -> impl IntoView {
         })
         .collect();
     let loaded_count = file_statuses.iter().filter(|(_, loaded)| *loaded).count();
+    // A2O clips of the project that are not open: they can be fetched again.
+    let missing_clips: Vec<crate::a2o::ClipRef> = file_statuses
+        .iter()
+        .filter(|(_, loaded)| !*loaded)
+        .filter_map(|(pf, _)| pf.origin_clip.clone())
+        .collect();
+    let missing_clip_count = missing_clips.len();
+    let fetching_clips = RwSignal::new(false);
+    let on_fetch_clips = move |_: web_sys::MouseEvent| {
+        if fetching_clips.get_untracked() {
+            return;
+        }
+        fetching_clips.set(true);
+        let clips = missing_clips.clone();
+        spawn_local(async move {
+            let mut failed = 0;
+            for clip in &clips {
+                if let Err(e) = crate::a2o::open_saved_clip(state, clip).await {
+                    log::error!("A2O clip of recording {} failed: {e}", clip.recording_id);
+                    failed += 1;
+                }
+            }
+            if failed > 0 {
+                state.show_error_toast(format!(
+                    "Could not get {failed} of {} clips from A2O",
+                    clips.len()
+                ));
+            }
+            fetching_clips.try_set(false);
+            // Draw the file list again: the clips are open now.
+            state.project.current().update(|_| {});
+        });
+    };
 
     // Check for loaded files not yet in the project
     let new_files_count = {
@@ -488,18 +549,7 @@ fn ProjectView(project: BatProject) -> impl IntoView {
 
     // Add new loaded files that aren't in the project yet
     let on_sync_files = move |_: web_sys::MouseEvent| {
-        let loaded = state.library.files().get_untracked();
-        state.project.current().update(|p| {
-            let Some(proj) = p else { return };
-            for f in loaded.iter() {
-                if let Some(ref identity) = f.identity {
-                    if proj.find_file(identity).is_none() {
-                        proj.add_file(identity.clone(), Some(audio_meta_from_loaded(f)));
-                    }
-                }
-            }
-        });
-        state.project.dirty().set(true);
+        add_open_files_to_project(state);
     };
 
     // ── File selection for timeline creation ──
@@ -713,6 +763,21 @@ fn ProjectView(project: BatProject) -> impl IntoView {
             } else {
                 None
             }}
+
+            // A2O clips that are not open
+            {(missing_clip_count > 0).then(|| view! {
+                <div class="project-new-files-banner">
+                    <span>{if missing_clip_count == 1 {
+                        "1 A2O clip is not open".to_string()
+                    } else {
+                        format!("{missing_clip_count} A2O clips are not open")
+                    }}</span>
+                    <button class="project-btn-inline" on:click=on_fetch_clips
+                        disabled=move || fetching_clips.get()
+                        title="Download these clips from the Australian Acoustic Observatory again"
+                    >{move || if fetching_clips.get() { "Getting\u{2026}" } else { "Get from A2O" }}</button>
+                </div>
+            })}
 
             // File list
             <div class="project-file-list">
