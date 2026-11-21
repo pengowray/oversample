@@ -91,21 +91,23 @@ pub(super) fn settings_rows(state: AppState, current_file: Memo<Option<u64>>) ->
     }
 }
 
-/// The part of the line of settings in force, while boxes are on:
-/// "One box per phrase, min 0.30".
-pub(super) fn fact(state: AppState) -> Option<String> {
+/// The parts of the line of settings in force, while boxes are on:
+/// "One box per phrase" and "Min box confidence 0.30", in the style of
+/// "Min confidence 0.25".
+pub(super) fn facts(state: AppState) -> Vec<String> {
     let cd = state.call_detection;
-    cd.bird_boxes().get().then(|| {
-        format!(
-            "One box per {}, min {:.2}",
-            if cd.box_calls().get() {
-                "call"
-            } else {
-                "phrase"
-            },
-            cd.box_min_confidence().get()
-        )
-    })
+    if !cd.bird_boxes().get() {
+        return Vec::new();
+    }
+    let per = if cd.box_calls().get() {
+        "call"
+    } else {
+        "phrase"
+    };
+    vec![
+        format!("One box per {per}"),
+        format!("Min box confidence {:.2}", cd.box_min_confidence().get()),
+    ]
 }
 
 /// How many boxes there are with the settings now, the best confidence and

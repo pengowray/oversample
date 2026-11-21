@@ -1347,7 +1347,9 @@ pub fn draw_bird_boxes(
         let w = ctx.measure_text(label).map_or(0.0, |m| m.width());
         if w + 6.0 <= (x1 - x0).max(0.0) || is_focus {
             let ly = (y0 - 1.0).max(top + 14.0);
-            let lx = x0.max(0.0);
+            // Kept on the canvas: a box running off the right edge has its
+            // label moved left, not cut off.
+            let lx = x0.min(canvas_width - w - 6.0).max(0.0);
             ctx.set_fill_style_str(BIRD_BOX_LABEL_BG);
             ctx.fill_rect(lx, ly - 13.0, w + 6.0, 13.0);
             ctx.set_fill_style_str(BIRD_BOX_STROKE);

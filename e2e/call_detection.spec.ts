@@ -253,7 +253,8 @@ test("bird sound boxes are drawn and named from BirdNET+ V3.0", async ({ page })
   const settings = page.locator(".cd-settings");
   await settings.getByLabel("Draw a box round each bird sound").check();
   await settings.getByLabel("Boxes on the spectrogram").check();
-  await expect(page.locator(".cd-in-force")).toContainText("One box per phrase, min 0.30");
+  await expect(page.locator(".cd-in-force")).toContainText("One box per phrase");
+  await expect(page.locator(".cd-in-force")).toContainText("Min box confidence 0.30");
   await expect(settings).toContainText("Minimum box confidence");
   const row = page.locator(".cd-list tr", { hasText: "Bird sounds" });
   await expect(row).toContainText("Bird sounds: 2 boxes");
@@ -267,7 +268,8 @@ test("bird sound boxes are drawn and named from BirdNET+ V3.0", async ({ page })
   await settings.getByLabel("Minimum box confidence").fill("0.15");
   await expect(row).toContainText("Bird sounds: 3 boxes");
   await settings.getByRole("button", { name: "Call", exact: true }).click();
-  await expect(page.locator(".cd-in-force")).toContainText("One box per call, min 0.15");
+  await expect(page.locator(".cd-in-force")).toContainText("One box per call");
+  await expect(page.locator(".cd-in-force")).toContainText("Min box confidence 0.15");
   // The row shows the best box and opens its card.
   await row.click();
   await expect.poll(() => limePixels(page)).toBeGreaterThan(50);

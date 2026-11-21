@@ -772,7 +772,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             f.push(p);
         }
         if method == Method::BirdNetV3 {
-            f.extend(bird_boxes::fact(state));
+            f.extend(bird_boxes::facts(state));
         }
         f
     };
