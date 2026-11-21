@@ -67,8 +67,33 @@ const json = (data: unknown) => ({
  * app.oversample.com read it. (A mocked reply cannot leave the header out:
  * Playwright adds it.)
  */
-async function mockA2o(page: Page, eventsOpen = true): Promise<string[]> {
+async function mockA2o(
+  page: Page,
+  eventsOpen = true,
+  relayAsked: string[] | null = null,
+): Promise<string[]> {
   const clips: string[] = [];
+  // The Oversample server's /a2o route, which passes event and tag lookups
+  // on to A2O. Down unless `relayAsked` is given; then it answers, and the
+  // paths asked are added to that list.
+  await page.route("https://api.oversample.com/a2o/**", async (route) => {
+    if (!relayAsked) return route.abort("failed");
+    const path = new URL(route.request().url()).pathname.replace("/a2o", "");
+    relayAsked.push(path);
+    if (path === "/audio_recordings/55743/audio_events/30169") {
+      return route.fulfill(
+        json({
+          id: 30169,
+          audio_recording_id: 55743,
+          start_time_seconds: 1506.0,
+          end_time_seconds: 1516.0,
+          taggings: [{ id: 1, tag_id: 105 }],
+        }),
+      );
+    }
+    if (path === "/tags/105") return route.fulfill(json({ id: 105, text: "frogs" }));
+    return route.fulfill({ status: 404, headers: OPEN, body: '{"error":"A2O has no such thing."}' });
+  });
   await page.route(`${SEARCH}/**`, async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname.replace("/api/v1/a2o", "");
@@ -297,15 +322,26 @@ test.describe("A2O links", () => {
     if (process.env.A2O_OUT) await page.screenshot({ path: `${process.env.A2O_OUT}/a2o-phone.png` });
   });
 
-  test("an event link that cannot reach A2O's main API opens nothing and says so", async ({
+  test("an event link opens through the Oversample server when A2O's main API does not answer", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const relayAsked: string[] = [];
+    const clips = await mockA2o(page, false, relayAsked);
+    await page.goto(`/#${EVENT_LINK}`);
+    await expect
+      .poll(async () => (await snapshot(page)).currentFile, { timeout: 60_000 })
+      .toBe(clipName(1506, 1516));
+    expect(clips).toEqual(["1506-1516"]);
+    expect(relayAsked).toEqual(["/audio_recordings/55743/audio_events/30169", "/tags/105"]);
+  });
+
+  test("an event link that reaches neither A2O's main API nor the Oversample server opens nothing and says so", async ({
     page,
   }) => {
     test.setTimeout(120_000);
     const clips = await mockA2o(page, false);
     await page.goto(`/#${EVENT_LINK}`);
-    // This page is on localhost, which A2O's main API answers, so a failed
-    // request is reported as a network fault. (On a website the API does
-    // not answer, the message says where the link can be opened instead.)
     await expect(page.getByText("Could not reach A2O for event 30169")).toBeVisible({
       timeout: 60_000,
     });

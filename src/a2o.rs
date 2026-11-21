@@ -12,8 +12,9 @@
 //!   recording details and site details to any website.
 //! - The main API (`api.acousticobservatory.org`) serves event details and
 //!   tags. It answers pages on localhost and the desktop and Android apps,
-//!   and refuses other websites, including app.oversample.com. Only
-//!   [`fetch_event`] and [`fetch_tag`] use it.
+//!   and refuses other websites, including app.oversample.com. Those ask
+//!   the Oversample server instead, which passes the question on
+//!   ([`main_api_text`]).
 //!
 //! A2O data is licensed CC BY 4.0
 //! (acousticobservatory.org/data/data-submission-and-usage-terms).
@@ -352,35 +353,57 @@ fn main_api_answers_this_page(state: &AppState) -> bool {
     host == "localhost" || host == "127.0.0.1" || host == "[::1]" || host.ends_with(".localhost")
 }
 
-/// An event's details, from the main API. On a website that API does not
-/// answer, the browser blocks the reply and the request fails with no
-/// status; the error then says where the link can be opened. Where the API
-/// does answer, a failed request is a network fault and is reported as one.
+/// A reply from A2O's main API for `path` ("/tags/105"). A page the main API
+/// answers asks it directly. Any other website asks the Oversample server,
+/// which passes the question on (`/a2o/*` in the oversample-api repo). If
+/// the direct request fails without a status (no network, or a browser that
+/// blocks it after all), the Oversample server is asked as well.
+///
+/// The error is the HTTP status as "HTTP 404", or `None` when neither
+/// server could be reached.
+async fn main_api_text(state: &AppState, path: &str) -> Result<String, Option<u16>> {
+    let status_of = |e: &str| e.strip_prefix("HTTP ").and_then(|s| s.trim().parse().ok());
+    if main_api_answers_this_page(state) {
+        match fetch_text(&format!("{MAIN_API}{path}")).await {
+            Ok(text) => return Ok(text),
+            Err(e) => {
+                if let Some(status) = status_of(&e) {
+                    return Err(Some(status));
+                }
+            }
+        }
+    }
+    let relay = format!("{}/a2o{path}", crate::xc_client::proxy_base());
+    fetch_text(&relay).await.map_err(|e| status_of(&e))
+}
+
+/// An event's times and tags.
 pub async fn fetch_event(
     state: &AppState,
     recording_id: u64,
     event_id: u64,
 ) -> Result<EventInfo, String> {
-    let url = format!("{MAIN_API}/audio_recordings/{recording_id}/audio_events/{event_id}");
-    match fetch_text(&url).await {
+    let path = format!("/audio_recordings/{recording_id}/audio_events/{event_id}");
+    match main_api_text(state, &path).await {
         Ok(text) => parse_event(&text),
-        Err(e) if e.starts_with("HTTP ") => Err(format!("A2O event {event_id}: {e}")),
-        Err(_) if !main_api_answers_this_page(state) => Err(EVENT_BLOCKED.to_string()),
-        Err(_) => Err(format!(
+        Err(Some(404)) => Err(format!(
+            "A2O has no event {event_id} in recording {recording_id}"
+        )),
+        // A2O answers this way for a private event, and for an event that
+        // is not in the recording the link names.
+        Err(Some(401 | 403)) => Err(format!(
+            "A2O does not share event {event_id} in recording {recording_id}"
+        )),
+        Err(Some(status)) => Err(format!("A2O event {event_id}: HTTP {status}")),
+        Err(None) => Err(format!(
             "Could not reach A2O for event {event_id}. Check the internet connection."
         )),
     }
 }
 
-/// Shown when the browser blocks the event lookup.
-pub const EVENT_BLOCKED: &str =
-    "A2O only gives event details to its own site and to the Oversample \
-desktop and Android apps. Open this link in one of those apps, or paste a link with a start and \
-end time.";
-
 /// A tag's text ("birds"), or `None` when it cannot be read.
-async fn fetch_tag(tag_id: u64) -> Option<String> {
-    let text = fetch_text(&format!("{MAIN_API}/tags/{tag_id}"))
+async fn fetch_tag(state: &AppState, tag_id: u64) -> Option<String> {
+    let text = main_api_text(state, &format!("/tags/{tag_id}"))
         .await
         .ok()?;
     data_of(&text).ok()?["text"].as_str().map(str::to_string)
@@ -551,7 +574,7 @@ pub async fn load_link(state: AppState, link: &A2oLink) -> Result<u64, String> {
             .ok_or("The event is past the end of its recording")?;
             let mut tags = Vec::new();
             for &id in event.tag_ids.iter().take(8) {
-                if let Some(text) = fetch_tag(id).await {
+                if let Some(text) = fetch_tag(&state, id).await {
                     tags.push(text);
                 }
             }
