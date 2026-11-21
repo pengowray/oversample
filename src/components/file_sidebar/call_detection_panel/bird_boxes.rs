@@ -161,7 +161,7 @@ pub(super) fn list_row(
         let text = format!("Bird sounds: {}", super::count(f.count, "box", "boxes"));
         let show = move |_| {
             if let Some((t0, t1, f0)) = f.best_box {
-                super::classifier_section::show_window(state, t0, t1);
+                super::rows::show_window(state, t0, t1);
                 state.call_detection.selected_window().set(None);
                 state.call_detection.picked_box().set(Some((t0, f0)));
             }

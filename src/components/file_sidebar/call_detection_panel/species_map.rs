@@ -4,7 +4,7 @@
 //! with this file's windows as highlighted dots. Drawn by `species-map.js`
 //! with Apache ECharts; positions come from `crate::classifier::species_map`.
 
-use super::classifier_section::show_window;
+use super::rows::show_window;
 use crate::classifier::species_map::{map_spec, parse_map, place_windows, MapSpec};
 use crate::classifier::summary::{window_kind, WindowKind};
 use crate::classifier::{self, location, ClassifierRun, Method};

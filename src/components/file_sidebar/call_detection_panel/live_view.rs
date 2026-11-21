@@ -11,10 +11,8 @@
 //! the results. The switch it replaced was never saved, so there was no
 //! stored choice to carry over.
 
-use super::classifier_section::{
-    component_picked, species_swatch, strip_picked, toggle_component, toggle_strip,
-};
 use super::parts::{pin_button, section_head, Fold};
+use super::rows::{component_picked, species_swatch, strip_picked, toggle_component, toggle_strip};
 use crate::classifier::{DownloadStatus, Method, MethodFacts};
 use crate::format_time::format_time_display;
 use crate::live_embedding::{self, LiveStatus, Readout};
@@ -243,7 +241,7 @@ pub(super) fn LiveView(
                             <span class="cd-name-line">
                                 {species_swatch(slot)}
                                 <span>{c.common.clone()}</span>
-                                {c.unlikely.then(super::classifier_section::unlikely_flag)}
+                                {c.unlikely.then(super::rows::unlikely_flag)}
                             </span>
                         </td>
                         <td class="detection-col-num" title="Confidence">{format!("{:.2}", c.score)}</td>

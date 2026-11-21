@@ -11,11 +11,18 @@
 //! `AppState::call_detection`, so they survive closing the tab and the overlay keeps
 //! showing them.
 
+mod annotate;
 mod bird_boxes;
 mod classifier_section;
+mod every_window;
+mod in_recording;
 mod live_view;
+mod model_line;
 mod parts;
+mod rows;
+mod settings;
 mod species_map;
+mod species_search;
 
 use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
 use crate::call_annotations::{
