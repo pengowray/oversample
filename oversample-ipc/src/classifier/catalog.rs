@@ -180,13 +180,16 @@ pub const PERCH_LABELS: ModelFile = ModelFile {
 pub const PERCH_FILES: [&ModelFile; 3] = [&PERCH_CLASSIFIER, &PERCH_EMBEDDING, &PERCH_LABELS];
 
 /// BirdNET+ V3.0 (`BirdNET+_V3.0_Global_12K_FP16_pruned.onnx`), unchanged, from
-/// Zenodo record 24362980, version 3.0.1 (Apache 2.0). Zenodo sends
-/// `Access-Control-Allow-Origin: *`. To serve the same file from a mirror,
-/// change only `url`: the size and SHA-256 stay. The worker converts its
+/// Zenodo record 24362980, version 3.0.1 (Apache 2.0). Downloaded from a copy
+/// on Hugging Face (pengowray/birdnet-plus-v3.0-pruned, pinned to a commit),
+/// which sends `Access-Control-Allow-Origin: *`: Zenodo gave about 0.25 MB/s
+/// (five minutes for the file) where Hugging Face gives several MB/s. Zenodo
+/// also answers 403 to a request without a User-Agent. To serve the same
+/// file from elsewhere, change only `url`: the size and SHA-256 stay. The worker converts its
 /// float16 weights to float32 as it loads it (`research/birdnet-v3-bench`).
 pub const BIRDNET_V3: ModelFile = ModelFile {
     id: "birdnet-v3.0-global-12k-fp16-pruned.onnx",
-    url: "https://zenodo.org/api/records/24362980/files/BirdNET%2B_V3.0_Global_12K_FP16_pruned.onnx/content",
+    url: "https://huggingface.co/pengowray/birdnet-plus-v3.0-pruned/resolve/034628824d8f0762c2b37c14825654693f83dbde/birdnet-v3.0-global-12k-fp16-pruned.onnx",
     size: 72_317_224,
     sha256: "feadeccc84feb021aeb9c51ec5288f6f5bd7065fe3773e2d48a69ea8a26b412a",
     kind: FileKind::BirdNetV3,
@@ -446,7 +449,7 @@ const PERCH_CITATION: &str =
 
 const BIRDNET_V3_CREDITS: &[&str] = &[
     "BirdNET+ V3.0 was developed by the BirdNET team.",
-    "Oversample downloads the team's pruned float16 model file, version 3.0.1, unchanged from Zenodo (zenodo.org/records/24362980), and converts it to float32 on this device.",
+    "Oversample downloads a copy of the team's pruned float16 model file, version 3.0.1, unchanged from the one on Zenodo (zenodo.org/records/24362980), and converts it to float32 on this device.",
     "The model's acceptable use policy is published in the same Zenodo record.",
     GEOMODEL_CREDIT,
 ];
