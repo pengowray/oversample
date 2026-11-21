@@ -1354,7 +1354,7 @@ pub fn draw_bird_boxes(
             let _ = ctx.fill_text(label, lx + 3.0, ly - 1.0);
         }
     }
-    let Some((b, x0, x1, y0, _)) = focused else {
+    let Some((b, x0, x1, y0, y1)) = focused else {
         return;
     };
     // The card: box confidence, a rule, then the species and their scores.
@@ -1375,13 +1375,23 @@ pub fn draw_bird_boxes(
         + 12.0;
     let line_h = 16.0;
     let height = line_h * (lines.len() + 1) as f64 + 11.0;
-    // Right of the box, or left of it when that runs off the canvas; level
-    // with its top, kept on the canvas.
-    let mut cx = x1 + 6.0;
-    if cx + width > canvas_width {
-        cx = (x0 - 6.0 - width).max(0.0);
-    }
-    let cy = y0.clamp(top + 2.0, (canvas_height - height).max(top + 2.0));
+    // Right of the box, level with its top; else left of it; else (a box
+    // nearly as wide as the canvas, or a narrow phone canvas) above it with
+    // its label, or below it. Kept on the canvas.
+    let level = y0.clamp(top + 2.0, (canvas_height - height).max(top + 2.0));
+    let (cx, cy) = if x1 + 6.0 + width <= canvas_width {
+        (x1 + 6.0, level)
+    } else if x0 - 6.0 - width >= 0.0 {
+        (x0 - 6.0 - width, level)
+    } else {
+        let x = x0.clamp(0.0, (canvas_width - width).max(0.0));
+        let above = y0 - 16.0 - height;
+        if above >= top + 2.0 {
+            (x, above)
+        } else {
+            (x, (y1 + 4.0).min((canvas_height - height).max(top + 2.0)))
+        }
+    };
     ctx.set_fill_style_str(BIRD_BOX_CARD_BG);
     ctx.fill_rect(cx, cy, width, height);
     ctx.set_stroke_style_str(BIRD_BOX_STROKE);

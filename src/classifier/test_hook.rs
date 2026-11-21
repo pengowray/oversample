@@ -7,7 +7,10 @@
 //! - `seed(json)`: made-up results for the current file (see [`seed`])
 //! - `rescore(region)`, `cancel()`, `unload()`
 //! - `status()`: a JSON string with downloads, the run status and a summary of
-//!   each result (window count, completeness, best class)
+//!   each result (window count, completeness, best class) and of each file's
+//!   bird sound boxes
+//! - `seedBoxes(json)`: made-up bird box windows for the current file (see
+//!   [`seed_boxes`]); `boxes()`: the boxes the spectrogram draws, as JSON
 //!
 //! `choice` is `"birdnet"`, `"perch"` or `"bats:<region>"`, and `region` is
 //! `"all"` or a file-name part such as `"EU"`, `"UK"` or `"USA-EAST"` (see
@@ -129,7 +132,20 @@ fn status_json(state: AppState) -> String {
             })
             .collect()
     });
-    serde_json::json!({ "downloads": downloads, "run": run, "results": results }).to_string()
+    let boxes: Vec<serde_json::Value> = state.classifier.boxes().with_untracked(|m| {
+        m.iter()
+            .map(|(file_id, b)| {
+                serde_json::json!({
+                    "file": file_id,
+                    "windows": b.windows,
+                    "windowBoxes": b.raw.len(),
+                    "samples": b.samples,
+                })
+            })
+            .collect()
+    });
+    serde_json::json!({ "downloads": downloads, "run": run, "results": results, "boxes": boxes })
+        .to_string()
 }
 
 /// Put made-up results in place of a run on the current file, for tests of
@@ -216,6 +232,68 @@ fn seed(state: AppState, json: &str) -> String {
     String::new()
 }
 
+/// Put made-up bird box windows in place of a run on the current file:
+/// `{"raw":[[clip_start, t0, t1, f0, f1, conf], ...], "samples": 384000}`
+/// (`samples`: 32 kHz samples in the recording; leave it out for a run still
+/// going). Returns "" or what was wrong.
+fn seed_boxes(state: AppState, json: &str) -> String {
+    let v: serde_json::Value = match serde_json::from_str(json) {
+        Ok(v) => v,
+        Err(e) => return e.to_string(),
+    };
+    let Some(file_id) = current_file_id(state) else {
+        return "no file".into();
+    };
+    let rate = state.library.files().with_untracked(|fs| {
+        fs.iter()
+            .find(|f| f.id == file_id)
+            .map_or(0, |f| f.audio.sample_rate)
+    });
+    let raw: Vec<oversample_ipc::classifier::boxes::RawBox> = v["raw"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|b| {
+            let n = |i: usize| b[i].as_f64();
+            Some(oversample_ipc::classifier::boxes::RawBox {
+                clip_start: n(0)?,
+                t0: n(1)?,
+                t1: n(2)?,
+                f0: n(3)?,
+                f1: n(4)?,
+                conf: n(5)?,
+            })
+        })
+        .collect();
+    let run = boxes::BoxRun {
+        source_rate: rate,
+        windows: raw.len() as u32,
+        raw,
+        samples: v["samples"].as_u64(),
+    };
+    state.classifier.boxes().update(|m| drop(m.insert(file_id, run)));
+    String::new()
+}
+
+/// The boxes the spectrogram draws on the current file, as JSON.
+fn drawn_json(state: AppState) -> String {
+    let drawn = untrack(|| boxes::drawn(state));
+    serde_json::Value::Array(
+        drawn
+            .iter()
+            .map(|b| {
+                serde_json::json!({
+                    "t0": b.t0, "t1": b.t1, "f0": b.f0, "f1": b.f1,
+                    "confidence": b.confidence,
+                    "name": b.name,
+                    "species": b.species,
+                })
+            })
+            .collect(),
+    )
+    .to_string()
+}
+
 pub fn install(state: AppState) {
     let Some(window) = web_sys::window() else {
         return;
@@ -281,6 +359,15 @@ pub fn install(state: AppState) {
     set(
         "seed",
         Closure::<dyn Fn(String) -> String>::new(move |j: String| seed(state, &j)).into_js_value(),
+    );
+    set(
+        "seedBoxes",
+        Closure::<dyn Fn(String) -> String>::new(move |j: String| seed_boxes(state, &j))
+            .into_js_value(),
+    );
+    set(
+        "boxes",
+        Closure::<dyn Fn() -> String>::new(move || drawn_json(state)).into_js_value(),
     );
     set(
         "cancel",

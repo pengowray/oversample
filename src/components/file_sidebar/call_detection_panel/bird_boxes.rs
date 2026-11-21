@@ -40,7 +40,7 @@ pub(super) fn settings_rows(state: AppState, current_file: Memo<Option<u64>>) ->
         }
     };
     view! {
-        <div class="setting-row detection-annotate-row" title="Also runs BirdBox Just-Bird to draw a box round each bird sound, named by BirdNET+ V3.0. One-off 21 MB download; Analyse takes about twice as long.">
+        <div class="setting-row detection-annotate-row" title="Also runs BirdBox Just-Bird to draw a box round each bird sound, named by BirdNET+ V3.0. One-off 21 MB download; Analyse takes about 2.5 times as long.">
             <label class="setting-label">
                 <input
                     type="checkbox"
