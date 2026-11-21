@@ -27,7 +27,8 @@ use crate::annotations::{now_iso8601, AnnotationId, AnnotationSet};
 use crate::call_annotations::remove_annotations_where;
 use crate::classifier::summary::{self, WindowKind};
 use crate::classifier::{
-    self, catalog, location, ClassifierError, DownloadStatus, Method, ModelChoice, RunStatus,
+    self, catalog, location, ClassifierError, DownloadStatus, Method, MethodFacts, ModelChoice,
+    RunStatus,
 };
 use crate::components::icons::Icon;
 use crate::recording_place as place;
@@ -868,7 +869,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
     });
 
     // ── 2. At the play position ──────────────────────────────────────────
-    let live = matches!(method, Method::BirdNet | Method::Perch | Method::BirdNetV3).then(|| {
+    let live = method.info().live_model.is_some().then(|| {
         view! { <LiveView method=method current_file=current_file has_results=has_results map_open=map_open /> }
     });
 
@@ -1195,7 +1196,7 @@ fn in_recording_section(
 
     // The model's components picked for a row above the spectrogram.
     let component_rows = move || {
-        if !has_components(method) {
+        if !method.info().component_rows {
             return Vec::new();
         }
         let picked = state.call_detection.strip_components().get();
@@ -1392,17 +1393,14 @@ fn model_line(
 ) -> impl IntoView {
     let downloaded = backbone.get() == DownloadStatus::Downloaded;
     let a = catalog::attribution(method);
-    let (byline, cant_run) = match method {
-        Method::BirdNet => ("Powered by BirdNET V2.4.", "BirdNET and BattyBirdNET"),
-        Method::Bats => (
-            "BattyBirdNET by rdz-oss, powered by BirdNET.",
-            "BirdNET and BattyBirdNET",
-        ),
-        Method::Perch => ("Perch 2.0 by Google DeepMind.", "Perch"),
-        Method::BirdNetV3 => ("Powered by BirdNET+ V3.0.", "BirdNET+ V3.0"),
+    let byline = method.info().byline;
+    // What can't run once the model is deleted, and whether the model is
+    // shared (BirdNET's backbone is shared with BattyBirdNET).
+    let (cant_run, shared) = match method {
+        Method::BirdNet | Method::Bats => ("BirdNET and BattyBirdNET", true),
+        Method::Perch => ("Perch", false),
+        Method::BirdNetV3 => ("BirdNET+ V3.0", false),
     };
-    // BirdNET's backbone is shared with BattyBirdNET.
-    let shared = matches!(method, Method::BirdNet | Method::Bats);
     // BirdBox's model, beside BirdNET+ V3.0: its size, Delete and its
     // licence (AGPL-3.0) go on the same lines.
     let v3 = method == Method::BirdNetV3;
@@ -1990,12 +1988,6 @@ impl LabelList {
 /// (`classifier::strips::fold_labels`).
 type FoldedNames = std::sync::Arc<Vec<(String, String)>>;
 
-/// True for the methods whose components can be rows above the spectrogram:
-/// BirdNET V2.4 and BirdNET+ V3.0.
-fn has_components(method: Method) -> bool {
-    matches!(method, Method::BirdNet | Method::BirdNetV3)
-}
-
 /// One row the search offers: a species, or one of the model's
 /// components.
 #[derive(Clone, PartialEq)]
@@ -2034,7 +2026,7 @@ fn strip_search(state: AppState, method: Method, current_file: Memo<Option<u64>>
     let query = RwSignal::new(String::new());
     let focused = RwSignal::new(false);
     let highlight = RwSignal::new(0usize);
-    let with_components = has_components(method);
+    let with_components = method.info().component_rows;
     let labels = Memo::new_with_compare(
         move |_| {
             let file = current_file.get()?;

@@ -3,6 +3,7 @@ use crate::annotations::{AnnotationId, AnnotationStore, FileIdentity};
 use crate::audio::source::ChannelView;
 use crate::canvas::flow::FlowAlgo;
 use crate::canvas::spectrogram_renderer::Colormap;
+use crate::classifier::{Method, MethodFacts};
 use crate::dsp::filters::BandMode;
 use crate::dsp::pitch_shift::PitchFactor;
 use crate::types::{AudioData, PreviewImage, SpectrogramData};
@@ -1828,13 +1829,9 @@ pub struct CallDetectionState {
     /// out of the summary, the lists, the annotations and the overlay.
     pub min_confidence: f32,
     /// The same for Perch, whose confidences are softmax shares and run lower.
-    /// At 0.30, 5 of 348 windows of rain, thunder, traffic, wind and voices still
-    /// show an animal, and 61 of 81 correct windows stay (`research/perch.md`,
-    /// "Sound events").
+    /// The defaults and their sources are in `MethodInfo::default_min_confidence`.
     pub perch_min_confidence: f32,
-    /// The same for BirdNET+ V3.0. 0.25, the BirdNET team's suggestion: the
-    /// pruned model's scores run up to 0.16 lower than the full model's
-    /// (`research/birdnet-v3-bench/README.md`).
+    /// The same for BirdNET+ V3.0.
     pub v3_min_confidence: f32,
     /// BirdNET and Perch: mark birds the BirdNET+ Geomodel does not expect at
     /// the recording's place and week (when its metadata has a place).
@@ -1896,8 +1893,7 @@ pub enum DetectionMethod {
 
 impl DetectionMethod {
     /// The classifier method, `None` for the in-built detector.
-    pub fn classifier(self) -> Option<crate::classifier::Method> {
-        use crate::classifier::Method;
+    pub fn classifier(self) -> Option<Method> {
         match self {
             DetectionMethod::Inbuilt => None,
             DetectionMethod::BirdNet => Some(Method::BirdNet),
@@ -3123,9 +3119,9 @@ impl AppState {
                 progress: 0.0,
                 method: DetectionMethod::Inbuilt,
                 bat_pick: crate::classifier::BatPick::Auto,
-                min_confidence: 0.05,
-                perch_min_confidence: 0.3,
-                v3_min_confidence: 0.25,
+                min_confidence: Method::BirdNet.info().default_min_confidence,
+                perch_min_confidence: Method::Perch.info().default_min_confidence,
+                v3_min_confidence: Method::BirdNetV3.info().default_min_confidence,
                 mark_unexpected: true,
                 selected_window: None,
                 preview: None,

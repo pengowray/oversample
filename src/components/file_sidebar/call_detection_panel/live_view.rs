@@ -15,7 +15,7 @@ use super::classifier_section::{
     component_picked, species_swatch, strip_picked, toggle_component, toggle_strip,
 };
 use super::parts::{pin_button, section_head, Fold};
-use crate::classifier::{DownloadStatus, Method};
+use crate::classifier::{DownloadStatus, Method, MethodFacts};
 use crate::format_time::format_time_display;
 use crate::live_embedding::{self, LiveStatus, Readout};
 use crate::state::store_fields::*;
@@ -45,7 +45,8 @@ fn set_shown(state: AppState, id: u32, on: bool) {
 
 #[component]
 pub(super) fn LiveView(
-    /// BirdNET V2.4, BirdNET+ V3.0 or Perch 2.0: the method picked in the tab.
+    /// The method picked in the tab, one with a live model
+    /// (`MethodInfo::live_model`).
     method: Method,
     current_file: Memo<Option<u64>>,
     /// The file has results for this method (for the Species map button).
@@ -57,11 +58,7 @@ pub(super) fn LiveView(
     let model = live_embedding::model_for(method);
     live_embedding::set_picked(method);
     // The name the method drop-down shows.
-    let method_name = match method {
-        Method::Perch => "Perch 2.0",
-        Method::BirdNetV3 => "BirdNET+ V3.0",
-        _ => "BirdNET V2.4",
-    };
+    let method_name = method.info().name;
     let id = NEXT_ID.with(|n| {
         let id = n.get();
         n.set(id.wrapping_add(1));

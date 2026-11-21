@@ -47,7 +47,7 @@ use std::sync::Arc;
 use realfft::num_complex::Complex;
 use realfft::RealToComplex;
 
-use crate::classifier::Method;
+use crate::classifier::{Method, MethodFacts};
 
 /// Frames per model window.
 pub const FRAMES_PER_WINDOW: usize = 150;
@@ -81,33 +81,11 @@ const LOWEST_DB: f32 = -140.0;
 /// A part's level in hundredths of a dB, for a digitally silent frame.
 const SILENT_CDB: i16 = i16::MIN;
 
-/// The band the quiet check measures for `method`, in Hz: what the model's
-/// own spectrograms cover, less the rumble under 250 Hz (a choice made
-/// here, not the models'), scaled for BattyBirdNET.
-///
-/// Read from the mel filter banks inside the model files (the 2-D constant
-/// matrices of the ONNX graphs):
-/// - BirdNET V2.4 (`birdnet-v2.4-embeddings-fp32.onnx`, also the backbone
-///   under BattyBirdNET's heads) makes two mel spectrograms of its 48 kHz
-///   input: 96 bands over 23 to 2,977 Hz (2048-point FFT) and 96 bands over
-///   516 to 14,953 Hz (1024-point FFT). BirdNET-Analyzer 1.5.1's `config.py`
-///   agrees: `SIG_FMIN = 0`, `SIG_FMAX = 15000`, "model specific".
-/// - Perch 2.0 (`perch_v2_embed.tract.onnx`) makes one mel spectrogram of
-///   its 32 kHz input: 128 bands over 62 to 15,969 Hz (1024-point FFT), as
-///   `research/perch.md` says (60 Hz to 16 kHz).
-/// - BattyBirdNET gives BirdNET audio at 256 kHz as if it were 48 kHz, so
-///   its band is BirdNET's times 256 / 48: up to 80 kHz. Its head files have
-///   no spectrogram of their own.
+/// The band the quiet check measures for `method`, in Hz
+/// ([`MethodInfo::band`](super::MethodInfo::band), which says where each
+/// band comes from).
 pub fn model_band(method: Method) -> (f32, f32) {
-    match method {
-        // BirdNET+ V3.0's mel bands also stop near 15 kHz (its docs/model.md).
-        Method::BirdNet | Method::BirdNetV3 => (250.0, 15_000.0),
-        Method::Perch => (250.0, 16_000.0),
-        Method::Bats => {
-            let scale = method.model_rate() as f32 / 48_000.0;
-            (250.0 * scale, 15_000.0 * scale)
-        }
-    }
+    method.info().band
 }
 
 /// Frame levels of a recording, for [`quiet_windows`].

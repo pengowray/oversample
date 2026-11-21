@@ -24,7 +24,9 @@
 //! window read starts on that module's grid, so it ends up to
 //! `played::GRID_S` before the playhead.
 
-use crate::classifier::{self, catalog, location, ClassifierError, Method, Score, SpeciesLabel};
+use crate::classifier::{
+    self, catalog, location, ClassifierError, Method, MethodFacts, Score, SpeciesLabel,
+};
 use crate::format_time::format_time_display;
 use crate::recording_place::{file_place, file_week, Place};
 use crate::state::store_fields::*;
@@ -338,15 +340,12 @@ const V3_PC_ENDS: [[&str; 2]; 12] = [
     ],
 ];
 
-/// The live view's model for `method`: Perch for Perch, BirdNET+ V3.0 for
-/// V3.0, else BirdNET V2.4 (BattyBirdNET has no live view; the tab does not
-/// offer one).
+/// The live view's model for `method` ([`MethodInfo::live_model`]), else
+/// BirdNET V2.4 (BattyBirdNET has no live view; the tab does not offer one).
+///
+/// [`MethodInfo::live_model`]: crate::classifier::MethodInfo::live_model
 pub fn model_for(method: Method) -> &'static LiveModel {
-    match method {
-        Method::Perch => &PERCH,
-        Method::BirdNetV3 => &BIRDNET_V3,
-        Method::BirdNet | Method::Bats => &BIRDNET,
-    }
+    method.info().live_model.unwrap_or(&BIRDNET)
 }
 
 /// The model the worker runs now (or last ran).
@@ -482,7 +481,7 @@ impl FileWindow {
             source_rate,
             start_s: cut.start_s,
             end_s: cut.end_s,
-            keep: matches!(method, Method::BirdNet | Method::Perch | Method::BirdNetV3),
+            keep: method.info().live_model.is_some(),
         }
     }
 
@@ -720,11 +719,13 @@ pub fn clear_chart(el: &web_sys::HtmlElement) {
     }
 }
 
-/// True when the chart's component maps are the class-row components of
-/// BirdNET V2.4 or BirdNET+ V3.0, the ones the rows above the spectrogram can show, so each
-/// map can carry a pin.
+/// True when the chart's component maps are the class-row components of a
+/// method whose components can be rows above the spectrogram
+/// ([`MethodInfo::component_rows`]), so each map can carry a pin.
+///
+/// [`MethodInfo::component_rows`]: crate::classifier::MethodInfo::component_rows
 pub fn component_pins_apply(method: Method) -> bool {
-    matches!(method, Method::BirdNet | Method::BirdNetV3) && pc_rows(model_for(method))
+    method.info().component_rows && pc_rows(model_for(method))
 }
 
 /// Say whether view `who` ([`LIVE_VIEW`] or [`EXPLORER`]) wants readings. The

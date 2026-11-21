@@ -63,6 +63,7 @@
 pub mod bat_pick;
 pub mod boxes;
 pub mod location;
+pub mod method_info;
 pub mod played;
 pub mod quiet;
 pub mod sound_groups;
@@ -76,6 +77,7 @@ mod worker;
 
 pub use bat_pick::BatPick;
 pub use location::Occurrence;
+pub use method_info::{MethodFacts, MethodInfo};
 
 pub use oversample_ipc::classifier::catalog::{self, Attribution, ModelChoice, ModelFile};
 pub use oversample_ipc::classifier::{
@@ -540,16 +542,17 @@ pub fn worker_running() -> bool {
 /// The step between window starts a run of `method` uses when `step_secs`
 /// is asked for, in seconds: `step_secs` when it is shorter than the window
 /// and fits a whole number of times in it, otherwise the whole window.
-/// BattyBirdNET always uses the whole window.
+/// A method without the Step setting ([`MethodInfo::step_setting`]:
+/// BattyBirdNET) always uses the whole window.
 pub fn step_for(method: Method, step_secs: f64) -> f64 {
-    match method {
-        Method::Bats => method.window_secs(),
-        _ => method
-            .step_samples(step_secs)
-            .map_or(method.window_secs(), |s| {
-                s as f64 / method.model_rate() as f64
-            }),
+    if !method.info().step_setting {
+        return method.window_secs();
     }
+    method
+        .step_samples(step_secs)
+        .map_or(method.window_secs(), |s| {
+            s as f64 / method.model_rate() as f64
+        })
 }
 
 /// True when an Analyse of file `file_id` with `choice` also finds bird

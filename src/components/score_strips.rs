@@ -13,7 +13,7 @@ use crate::classifier::strips::{
     class_of, component_cells, display_name, ordinal, species_cells, window_at, window_floors,
     ScoreRow, ScoreRowKind, ScoreStrips,
 };
-use crate::classifier::{self, location, Method};
+use crate::classifier::{self, location, Method, MethodFacts};
 use crate::live_embedding::Components;
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
@@ -34,16 +34,13 @@ thread_local! {
 }
 
 /// The components file of `method`'s embedding, for rows above the
-/// spectrogram: the live view's class-row components. BirdNET V2.4 and
-/// BirdNET+ V3.0 only. BattyBirdNET's embeddings have V2.4's length but come
-/// from 256 kHz audio; Perch's are not offered yet.
+/// spectrogram: the live view's class-row components, for the methods with
+/// [`MethodInfo::component_rows`](classifier::MethodInfo::component_rows).
 fn components_file(method: Method) -> Option<&'static str> {
-    match method {
-        Method::BirdNet | Method::BirdNetV3 => {
-            Some(crate::live_embedding::model_for(method).pc_file)
-        }
-        Method::Bats | Method::Perch => None,
-    }
+    method
+        .info()
+        .component_rows
+        .then(|| crate::live_embedding::model_for(method).pc_file)
 }
 
 /// `method`'s principal components: the components of its class rows

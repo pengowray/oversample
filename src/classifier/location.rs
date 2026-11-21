@@ -7,7 +7,7 @@
 //! The place is the recording's own (GPS in its metadata), or else this
 //! device's position if the user asked for it this session.
 
-use super::{catalog, store, worker, ClassifierError, Method, SpeciesLabel};
+use super::{catalog, store, worker, ClassifierError, Method, MethodFacts, SpeciesLabel};
 use crate::recording_place::{file_place, file_week, Place};
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
@@ -106,9 +106,9 @@ pub async fn english_names(state: AppState, download: bool) -> Option<HashMap<St
     )
 }
 
-/// Methods whose results can be marked.
+/// Methods whose results can be marked ([`MethodInfo::marks_unlikely`](super::MethodInfo::marks_unlikely)).
 pub fn applies_to(method: Method) -> bool {
-    matches!(method, Method::BirdNet | Method::Perch | Method::BirdNetV3)
+    method.info().marks_unlikely
 }
 
 /// Work out the location list for file `file_id` if it has a place (its own,

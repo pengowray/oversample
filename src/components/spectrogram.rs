@@ -1387,16 +1387,15 @@ pub fn Spectrogram() -> impl IntoView {
                 // the spectrogram readable for low frequencies.
 
                 // Call detection overlay, for the file the calls came from.
-                // Also under BattyBirdNET, so each call box sits under the
-                // species label of its window; BirdNET and Perch (mostly not
-                // bats) hide them.
+                // Also under the classifiers with `MethodInfo::call_boxes`
+                // (BattyBirdNET), so each call box sits under the species
+                // label of its window; BirdNET and Perch (mostly not bats)
+                // hide them.
                 if detection_overlay
-                    && !matches!(
-                        detection_method,
-                        crate::state::DetectionMethod::BirdNet
-                            | crate::state::DetectionMethod::Perch
-                            | crate::state::DetectionMethod::BirdNetV3
-                    )
+                    && detection_method.classifier().is_none_or(|m| {
+                        use crate::classifier::MethodFacts;
+                        m.info().call_boxes
+                    })
                     && detection_file.is_some()
                     && detection_file == state.current_file_id()
                 {

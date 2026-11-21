@@ -2,7 +2,7 @@
 //! windows at or above the minimum confidence, the species they name, and the
 //! annotations made from them.
 
-use super::{ClassifierRun, Method, SpeciesLabel};
+use super::{ClassifierRun, Method, MethodFacts, SpeciesLabel};
 use crate::annotations::{Annotation, AnnotationId, AnnotationKind, Region};
 use oversample_core::annotation_tags::{self, Tag, AUTO, UNLIKELY_HERE};
 
@@ -284,7 +284,7 @@ impl StepPick {
 /// with their step in seconds. None for BattyBirdNET, which always steps a
 /// whole window.
 pub fn step_choices(method: Method) -> Vec<(StepPick, f64)> {
-    if method == Method::Bats {
+    if !method.info().step_setting {
         return Vec::new();
     }
     let mut out = vec![(StepPick::Window, method.window_secs())];

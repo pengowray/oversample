@@ -4,7 +4,7 @@
 //! of a run placed among the species it scored highest.
 
 use super::summary::{window_kind, WindowKind};
-use super::{ClassifierRun, Method};
+use super::{ClassifierRun, Method, MethodFacts};
 
 /// One model's species map.
 pub struct MapSpec {
@@ -59,12 +59,7 @@ const BIRDNET_V3_RADIUS: f32 = 0.105;
 /// The species map for `method`, if it has one. BattyBirdNET's regional
 /// classifiers give no usable map (research/species-map/README.md).
 pub fn map_spec(method: Method) -> Option<&'static MapSpec> {
-    match method {
-        Method::BirdNet => Some(&BIRDNET_MAP),
-        Method::BirdNetV3 => Some(&BIRDNET_V3_MAP),
-        Method::Perch => Some(&PERCH_MAP),
-        Method::Bats => None,
-    }
+    method.info().species_map
 }
 
 /// Map positions, -1 to 1 on both axes, one per class in label order. A class

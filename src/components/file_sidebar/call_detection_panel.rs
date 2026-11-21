@@ -22,7 +22,7 @@ use crate::call_annotations::{
     build_call_annotations, count_call_annotations, count_detector_annotations, detector_tags_in,
     kind_label, remove_detector_annotations, AnnotateWhat,
 };
-use crate::classifier::{bat_pick, BatPick, BatRegion, BatScope, Method};
+use crate::classifier::{bat_pick, BatPick, BatRegion, BatScope, MethodFacts};
 use crate::dsp::call_detect::{
     group_trains, CallKind, CallScanParams, CallScanner, DetectedCall, TrainParams,
 };
@@ -943,35 +943,31 @@ fn InbuiltDetection() -> impl IntoView {
     }
 }
 
-/// The methods, in the order the drop-down lists them, each with its line of
-/// description.
-const METHODS: [(DetectionMethod, &str, &str); 5] = [
-    (
-        DetectionMethod::Inbuilt,
-        "In-built bat call detection",
-        "Finds bat calls. Runs automatically.",
-    ),
-    (
-        DetectionMethod::BirdNet,
-        "BirdNET V2.4",
-        "Bird species, plus some other sounds such as dog and engine",
-    ),
-    (
-        DetectionMethod::BirdNetV3,
-        "BirdNET+ V3.0",
-        "11,725 birds, insects, frogs, mammals and other sounds. Slower than V2.4.",
-    ),
-    (
-        DetectionMethod::Perch,
-        "Perch 2.0",
-        "Birds, frogs and insects, plus sounds such as thunder and traffic",
-    ),
-    (
-        DetectionMethod::Bats,
-        "BattyBirdNET",
-        "Bat species of Europe and the USA",
-    ),
+/// The methods, in the order the drop-down lists them.
+const METHODS: [DetectionMethod; 5] = [
+    DetectionMethod::Inbuilt,
+    DetectionMethod::BirdNet,
+    DetectionMethod::BirdNetV3,
+    DetectionMethod::Perch,
+    DetectionMethod::Bats,
 ];
+
+/// The name the method drop-down shows. The classifiers' names are in
+/// `classifier::MethodInfo`.
+fn method_name(method: DetectionMethod) -> &'static str {
+    match method.classifier() {
+        None => "In-built bat call detection",
+        Some(m) => m.info().name,
+    }
+}
+
+/// The line under the method's name in the drop-down.
+fn method_description(method: DetectionMethod) -> &'static str {
+    match method.classifier() {
+        None => "Finds bat calls. Runs automatically.",
+        Some(m) => m.info().description,
+    }
+}
 
 /// The method drop-down: a button with the picked method's name, and a menu
 /// of the methods with their descriptions. The menu sits over the panel
@@ -1005,11 +1001,10 @@ fn MethodPicker() -> impl IntoView {
             open.set(false);
         }
     };
-    let name_of = |m: DetectionMethod| METHODS.iter().find(|x| x.0 == m).map_or("", |x| x.1);
-    let help_of = |m: DetectionMethod| METHODS.iter().find(|x| x.0 == m).map_or("", |x| x.2);
     let options = METHODS
         .iter()
-        .map(|&(value, label, help)| {
+        .map(|&value| {
+            let (label, help) = (method_name(value), method_description(value));
             let sel = move || method() == value;
             view! {
                 <button
@@ -1039,7 +1034,7 @@ fn MethodPicker() -> impl IntoView {
                 title="Method"
                 on:click=move |_| open.update(|v| *v = !*v)
             >
-                <span class="cd-method-name">{move || name_of(method())}</span>
+                <span class="cd-method-name">{move || method_name(method())}</span>
                 <span class="cd-caret">{"\u{25BE}"}</span>
             </button>
             <div
@@ -1050,7 +1045,7 @@ fn MethodPicker() -> impl IntoView {
             >
                 {options.into_inner()}
             </div>
-            <div class="detection-status-note cd-method-help">{move || help_of(method())}</div>
+            <div class="detection-status-note cd-method-help">{move || method_description(method())}</div>
         </div>
     }
 }
@@ -1123,12 +1118,9 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
                 <MethodPicker />
                 {region_select}
             </div>
-            {move || match method() {
-                DetectionMethod::Inbuilt => view! { <InbuiltDetection /> }.into_any(),
-                DetectionMethod::BirdNet => view! { <ClassifierSection method=Method::BirdNet /> }.into_any(),
-                DetectionMethod::Perch => view! { <ClassifierSection method=Method::Perch /> }.into_any(),
-                DetectionMethod::Bats => view! { <ClassifierSection method=Method::Bats /> }.into_any(),
-                DetectionMethod::BirdNetV3 => view! { <ClassifierSection method=Method::BirdNetV3 /> }.into_any(),
+            {move || match method().classifier() {
+                None => view! { <InbuiltDetection /> }.into_any(),
+                Some(m) => view! { <ClassifierSection method=m /> }.into_any(),
             }}
         </div>
     }
