@@ -714,21 +714,22 @@ pub fn BottomToolbar() -> impl IntoView {
             // Shown only while a timeline is open. It sits in this bar
             // because the bar holds what decides the order things play in.
             <Show when=move || state.timeline.active().with(|t| t.is_some())>
-                <div style="position:relative">
+                <div class="timeline-order-chip" style="position:relative">
                     <button
                         class=move || {
                             if state.panels.layer_panel_open().get() == Some(LayerPanel::TimelineFiles) { "layer-btn open" }
                             else { "layer-btn" }
                         }
                         on:click=move |_| toggle_panel(&state, LayerPanel::TimelineFiles)
-                        title="Where each file goes on the timeline"
+                        title="The order of the files on the timeline"
                     >
-                        <span class="layer-btn-category">"Files"</span>
+                        <span class="layer-btn-category">"Order"</span>
+                        // The same words as the menu's options.
                         <span class="layer-btn-value">{move || {
                             match state.timeline.arrangement().get() {
-                                Arrangement::RecordingTime => "At recorded times".to_string(),
+                                Arrangement::RecordingTime => "Recorded times".to_string(),
                                 Arrangement::InTurn { gap_secs } if gap_secs > 0.0 => {
-                                    format!("{}\u{a0}s pause", crate::timeline::pause_text(gap_secs))
+                                    format!("One after another, {}\u{a0}s pause", crate::timeline::pause_text(gap_secs))
                                 }
                                 Arrangement::InTurn { .. } => "One after another".to_string(),
                             }
@@ -748,9 +749,9 @@ pub fn BottomToolbar() -> impl IntoView {
                             let in_turn = |gap_secs: f64| Arrangement::InTurn { gap_secs };
                             view! {
                                 <div class="layer-panel" style="bottom: calc(100% + 4px); left: 0; min-width:170px;">
-                                    <div class="layer-panel-title">"Files on the timeline"</div>
+                                    <div class="layer-panel-title">"Order of the files"</div>
                                     <button class=is(Arrangement::RecordingTime) on:click=choose(Arrangement::RecordingTime)
-                                    >"At their recorded times"</button>
+                                    >"Recorded times"</button>
                                     <button class=is(in_turn(0.0)) on:click=choose(in_turn(0.0))
                                     >"One after another"</button>
                                     {crate::timeline::PAUSE_CHOICES_SECS.iter().map(|&gap| view! {

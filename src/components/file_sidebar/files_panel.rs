@@ -621,12 +621,60 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             } else {
                                 None
                             }}
+                            // Two or more files selected and no timeline
+                            // open: one press makes a timeline of them.
+                            {move || {
+                                let count = state.timeline.selected_file_indices().with(|s| s.len());
+                                let open = state.timeline.active().with(|t| t.is_some());
+                                (count >= 2 && !open).then(|| view! {
+                                    <div class="timeline-create-bar">
+                                        <span>{format!("{count} files selected")}</span>
+                                        <button class="timeline-create-btn"
+                                            title="Put the selected files on one timeline"
+                                            on:click=move |_| {
+                                                let sel = state.timeline.selected_file_indices().get_untracked();
+                                                crate::timeline::create(&state, sel);
+                                            }
+                                        >"Create Timeline"</button>
+                                    </div>
+                                })
+                            }}
                             // Active timeline banner
                             {state.timeline.active().with(|t| t.is_some()).then(|| {
                                 let (seg_count, total_dur) = state.timeline.active().with(|t| {
                                     t.as_ref().map(|tv| (tv.segments.len(), tv.total_duration_secs))
                                         .unwrap_or((0, 0.0))
                                 });
+                                // The files in play order. Shown when they
+                                // are placed one after another: placed at
+                                // their recorded times, the order changes
+                                // nothing.
+                                let in_turn = matches!(
+                                    state.timeline.arrangement().get(),
+                                    crate::project::Arrangement::InTurn { .. }
+                                );
+                                let order = state.timeline.clip_file_indices().get();
+                                let last = order.len().saturating_sub(1);
+                                let rows: Vec<_> = order.iter().enumerate().map(|(pos, &fi)| {
+                                    let name = file_vec.get(fi).map(|f| f.name.clone()).unwrap_or_default();
+                                    let title = name.clone();
+                                    view! {
+                                        <li class="timeline-order-row">
+                                            <span class="timeline-order-num">{pos + 1}</span>
+                                            <span class="timeline-order-name" title=title>{name}</span>
+                                            <button class="timeline-order-btn" title="Play earlier"
+                                                aria-label="Play earlier"
+                                                disabled={pos == 0}
+                                                on:click=move |_| crate::timeline::move_clip(&state, pos, pos.saturating_sub(1))
+                                            ><Icon kind=Icon::ArrowLeft /></button>
+                                            <button class="timeline-order-btn" title="Play later"
+                                                aria-label="Play later"
+                                                disabled={pos == last}
+                                                on:click=move |_| crate::timeline::move_clip(&state, pos, pos + 1)
+                                            ><Icon kind=Icon::ArrowRight /></button>
+                                        </li>
+                                    }
+                                }).collect();
                                 view! {
                                     <div class="timeline-banner">
                                         <span class="timeline-banner-label">
@@ -636,6 +684,9 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                             title="Exit timeline view"
                                         >"\u{00D7}"</button>
                                     </div>
+                                    {in_turn.then(|| view! {
+                                        <ol class="timeline-order">{rows}</ol>
+                                    })}
                                 }
                             })}
                             {(!no_files).then(|| view! {

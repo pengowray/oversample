@@ -724,26 +724,117 @@ pub fn set_arrangement(state: &AppState, arrangement: Arrangement) {
         .viewmode
         .tile_ready_signal()
         .update(|n| *n = n.wrapping_add(1));
-    if let Some(id) = state.timeline.active_definition_id().get_untracked() {
-        let mut saved = false;
-        state.project.current().update(|p| {
-            let Some(def) = p
-                .as_mut()
-                .and_then(|proj| proj.timelines.iter_mut().find(|t| t.id == id))
-            else {
-                return;
-            };
-            def.arrangement = Some(arrangement);
-            saved = true;
-        });
-        if saved {
-            state.project.current().update(|p| {
-                if let Some(proj) = p {
-                    proj.touch();
-                }
+    save_active_to_project(state);
+}
+
+/// Make a timeline of the files at `file_indices`, open it, and add it to
+/// the open project when there is one. Returns `false` when fewer than two
+/// of the files are loaded.
+pub fn create(state: &AppState, file_indices: Vec<usize>) -> bool {
+    if open(state, file_indices, None, None).is_none() {
+        return false;
+    }
+    let id = crate::annotations::generate_uuid();
+    let mut added = false;
+    state.project.current().update(|p| {
+        if let Some(proj) = p {
+            proj.timelines.push(crate::project::TimelineDefinition {
+                id: id.clone(),
+                entries: Vec::new(),
+                arrangement: None,
+                label: None,
             });
-            state.project.dirty().set(true);
+            added = true;
         }
+    });
+    if added {
+        state.timeline.active_definition_id().set(Some(id));
+        save_active_to_project(state);
+    }
+    true
+}
+
+/// Move the file at position `from` in the open timeline's play order to
+/// position `to`. The order decides where the files go when they are placed
+/// one after another. Audio that is playing stops.
+pub fn move_clip(state: &AppState, from: usize, to: usize) {
+    let mut order = state.timeline.clip_file_indices().get_untracked();
+    if from == to || from >= order.len() || to >= order.len() {
+        return;
+    }
+    crate::audio::playback::stop(state);
+    let moved = order.remove(from);
+    order.insert(to, moved);
+    state.timeline.clip_file_indices().set(order);
+    state.interaction.selection().set(None);
+    rebuild_active(state);
+    state
+        .viewmode
+        .tile_ready_signal()
+        .update(|n| *n = n.wrapping_add(1));
+    save_active_to_project(state);
+}
+
+/// Write the open timeline's files, their order and the arrangement to its
+/// definition in the project. Does nothing when the timeline is not in a
+/// project. A file of the definition that is not loaded now stays in it,
+/// after the loaded ones.
+fn save_active_to_project(state: &AppState) {
+    let Some(id) = state.timeline.active_definition_id().get_untracked() else {
+        return;
+    };
+    let Some(tv) = state.timeline.active().get_untracked() else {
+        return;
+    };
+    let order = state.timeline.clip_file_indices().get_untracked();
+    let files = state.library.files().get_untracked();
+    let mut saved = false;
+    state.project.current().update(|p| {
+        let Some(proj) = p else { return };
+        let mut entries: Vec<crate::project::TimelineEntry> = order
+            .iter()
+            .filter_map(|&i| {
+                let loaded = files.get(i)?;
+                let file_index = proj.find_file(loaded.identity.as_ref()?)?;
+                let offset = tv
+                    .segment_for_file(i)
+                    .map_or(0.0, |seg| seg.timeline_offset_secs);
+                Some(crate::project::TimelineEntry {
+                    file_index,
+                    start_epoch_ms: tv.origin_epoch_ms + offset * 1000.0,
+                    duration_secs: loaded.audio.duration_secs,
+                    multitrack_group_id: None,
+                })
+            })
+            .collect();
+        let Some(pos) = proj.timelines.iter().position(|t| t.id == id) else {
+            return;
+        };
+        if entries.is_empty() && proj.timelines[pos].entries.is_empty() {
+            // None of the files is in the project: nothing to save.
+            proj.timelines.remove(pos);
+            return;
+        }
+        let def = &mut proj.timelines[pos];
+        let kept: Vec<_> = def
+            .entries
+            .iter()
+            .filter(|old| !entries.iter().any(|e| e.file_index == old.file_index))
+            .cloned()
+            .collect();
+        entries.extend(kept);
+        def.entries = entries;
+        def.arrangement = Some(tv.arrangement);
+        proj.touch();
+        saved = true;
+    });
+    if saved {
+        state.project.dirty().set(true);
+    } else if state.project.current().with_untracked(|p| {
+        p.as_ref()
+            .is_some_and(|proj| !proj.timelines.iter().any(|t| t.id == id))
+    }) {
+        state.timeline.active_definition_id().set(None);
     }
 }
 

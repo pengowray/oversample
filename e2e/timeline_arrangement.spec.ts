@@ -7,7 +7,7 @@ import path from "path";
  * Where the files of a timeline go. Files that were copied or downloaded
  * together have the same file date, and files from different nights are days
  * apart, so a new timeline of either puts the files one after another. The
- * Files chip changes that, and adds a pause between files. Files with
+ * Order chip changes that, and adds a pause between files. Files with
  * different sample rates play on one timeline.
  */
 
@@ -111,7 +111,7 @@ async function openTimeline(page: Page, clips: Clip[]): Promise<string[]> {
 }
 
 const chip = (page: Page) =>
-  page.locator(".layer-btn", { has: page.locator(".layer-btn-category", { hasText: /^Files$/ }) });
+  page.locator(".layer-btn", { has: page.locator(".layer-btn-category", { hasText: /^Order$/ }) });
 
 async function choose(page: Page, option: string) {
   await chip(page).click();
@@ -185,7 +185,7 @@ test.describe("timeline arrangement", () => {
     await choose(page, "One after another, 1 s pause");
     await expect.poll(async () => (await snapshot(page)).timelineStarts).toEqual([0, 3, 7]);
     expect((await snapshot(page)).timelineDuration).toBeCloseTo(8.5, 3);
-    await expect(chip(page).locator(".layer-btn-value")).toHaveText("1 s pause");
+    await expect(chip(page).locator(".layer-btn-value")).toHaveText("One after another, 1\u00a0s pause");
     await expectTones(page, 8.5, 96_000, [
       { at: 1, hz: 20_000 },
       { at: 2.5, hz: 0 },
@@ -201,11 +201,11 @@ test.describe("timeline arrangement", () => {
     await page.getByRole("button", { name: /^Project/ }).first().click();
     await page.locator(".project-timeline-item").click();
     await expect.poll(async () => (await snapshot(page)).timelineStarts).toEqual([0, 3, 7]);
-    await expect(chip(page).locator(".layer-btn-value")).toHaveText("1 s pause");
+    await expect(chip(page).locator(".layer-btn-value")).toHaveText("One after another, 1\u00a0s pause");
 
     // Recorded times are still on offer. These files have the same date, so
     // they all start within a few seconds of each other.
-    await choose(page, "At their recorded times");
+    await choose(page, "Recorded times");
     await expect
       .poll(async () => (await snapshot(page)).timelineDuration ?? 99)
       .toBeLessThan(6);
@@ -244,7 +244,83 @@ test.describe("timeline arrangement", () => {
       .poll(async () => (await snapshot(page)).timelineFiles)
       .toEqual(["alpha.wav", "bravo.wav", "charlie.wav"]);
     expect((await snapshot(page)).timelineStarts).toEqual([0, 4, 9]);
-    await expect(chip(page).locator(".layer-btn-value")).toHaveText("2\u00a0s pause");
+    await expect(chip(page).locator(".layer-btn-value")).toHaveText("One after another, 2\u00a0s pause");
+  });
+
+  test("the Files tab makes a timeline without a project, and its files can be reordered", async ({
+    page,
+  }) => {
+    test.setTimeout(240_000);
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oversample-arrange-"));
+    const paths = SAME_DATE.map((f, i) => {
+      const p = path.join(dir, f.name);
+      fs.writeFileSync(p, toneWav(f.sr, f.secs, f.hz, 100 + i));
+      return p;
+    });
+    await page.goto("/");
+    await page.locator('input[type="file"][accept*=".wav"]').first().setInputFiles(paths);
+    await expect(page.locator(".file-item:not(.loading)")).toHaveCount(3, { timeout: 60_000 });
+    for (const f of SAME_DATE) {
+      await page.locator(".file-item", { hasText: f.name }).click({ modifiers: ["Control"] });
+    }
+    await page.getByRole("button", { name: "Create Timeline" }).click();
+    await expect
+      .poll(async () => (await snapshot(page)).timelineFiles)
+      .toEqual(["alpha.wav", "bravo.wav", "charlie.wav"]);
+    expect((await snapshot(page)).timelineStarts).toEqual([0, 2, 5]);
+
+    // The play order is listed. Move alpha one place later.
+    const rows = page.locator(".timeline-order-row");
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0).getByRole("button", { name: "Play earlier" })).toBeDisabled();
+    await expect(rows.nth(2).getByRole("button", { name: "Play later" })).toBeDisabled();
+    await rows.nth(0).getByRole("button", { name: "Play later" }).click();
+    await expect
+      .poll(async () => (await snapshot(page)).timelineFiles)
+      .toEqual(["bravo.wav", "alpha.wav", "charlie.wav"]);
+    expect((await snapshot(page)).timelineStarts).toEqual([0, 3, 5]);
+    await expect(page.locator(".timeline-order-name")).toHaveText([
+      "bravo.wav",
+      "alpha.wav",
+      "charlie.wav",
+    ]);
+    await expectTones(page, 6.5, 96_000, [
+      { at: 1.5, hz: 40_000 },
+      { at: 4, hz: 20_000 },
+      { at: 5.75, hz: 60_000 },
+    ]);
+    // Playback follows the new order.
+    await page.keyboard.press("Space");
+    await expect.poll(async () => (await snapshot(page)).isPlaying).toBe(true);
+    expect((await snapshot(page)).timelineStreamFiles).toEqual([
+      "bravo.wav",
+      "alpha.wav",
+      "charlie.wav",
+    ]);
+    await page.keyboard.press("Space");
+
+    // Placed at their recorded times, the order list is not shown.
+    await choose(page, "Recorded times");
+    await expect(rows).toHaveCount(0);
+    await choose(page, "One after another, 0.5\u00a0s pause");
+    await expect(rows).toHaveCount(3);
+
+    // Screenshots and the UI audit, at desktop and phone width.
+    const out = process.env.ARRANGE_OUT;
+    if (out) {
+      const audit = fs.readFileSync(process.env.UI_AUDIT!, "utf8");
+      await chip(page).click();
+      await page.screenshot({ path: `${out}/order-1440.png` });
+      fs.writeFileSync(`${out}/audit-1440.json`, JSON.stringify(await page.evaluate(audit), null, 1));
+      await page.keyboard.press("Escape");
+      await page.setViewportSize({ width: 375, height: 812 });
+      await page.waitForTimeout(1500);
+      await page.screenshot({ path: `${out}/order-375.png` });
+      fs.writeFileSync(`${out}/audit-375.json`, JSON.stringify(await page.evaluate(audit), null, 1));
+    }
+    expect(errors).toEqual([]);
   });
 
   test("files recorded days apart play one after another", async ({ page }) => {

@@ -2703,6 +2703,59 @@ a.open-link-btn {
     color: #f88;
 }
 
+/* The open timeline's files in play order, under the banner. Each row has
+   two buttons that move the file one place earlier or later. The arrows
+   point left and right because the timeline runs left to right. */
+.timeline-order {
+    list-style: none;
+    margin: 0 0 6px;
+    padding: 0;
+    font-size: 11px;
+}
+
+.timeline-order-row {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) 24px 24px;
+    align-items: center;
+    gap: 2px;
+    padding: 1px 8px;
+}
+
+.timeline-order-num {
+    color: #888;
+    font-variant-numeric: tabular-nums;
+}
+
+.timeline-order-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.timeline-order-btn {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    border-radius: 3px;
+    color: #bbb;
+    cursor: pointer;
+}
+
+.timeline-order-btn:hover:not(:disabled) {
+    background: #2a2a2a;
+    color: #fff;
+}
+
+.timeline-order-btn:disabled {
+    color: #444;
+    cursor: default;
+}
+
 /* Main area */
 .main {
     grid-row: 2;
@@ -4930,6 +4983,18 @@ a.open-link-btn {
     gap: 5px;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
     overflow: visible;
+}
+
+/* The timeline's Order chip says "One after another, 0.5 s pause", which
+   does not fit one of the three columns. On a phone it gets a row of its
+   own, the last one, so the other buttons keep their places. */
+.bottom-toolbar.mobile .timeline-order-chip {
+    grid-column: 1 / -1;
+    order: 99;
+}
+
+.bottom-toolbar.mobile .timeline-order-chip .layer-btn {
+    width: 100%;
 }
 
 .bottom-toolbar.mobile .layer-btn {

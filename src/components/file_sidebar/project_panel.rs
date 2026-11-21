@@ -532,46 +532,8 @@ fn ProjectView(project: BatProject) -> impl IntoView {
         if runtime_indices.len() < 2 {
             return;
         }
-        let Some(tv) = crate::timeline::open(&state, runtime_indices, None, None) else {
+        if !crate::timeline::create(&state, runtime_indices) {
             return;
-        };
-        // Save to the project, in the order the timeline plays the files.
-        let order = state.timeline.clip_file_indices().get_untracked();
-        let files = state.library.files().get_untracked();
-        let id = crate::annotations::generate_uuid();
-        let mut saved = false;
-        state.project.current().update(|p| {
-            let Some(proj) = p else { return };
-            let entries: Vec<_> = order
-                .iter()
-                .filter_map(|&i| {
-                    let loaded = files.get(i)?;
-                    let proj_idx = proj.find_file(loaded.identity.as_ref()?)?;
-                    let offset = tv
-                        .segment_for_file(i)
-                        .map_or(0.0, |seg| seg.timeline_offset_secs);
-                    Some(crate::project::TimelineEntry {
-                        file_index: proj_idx,
-                        start_epoch_ms: tv.origin_epoch_ms + offset * 1000.0,
-                        duration_secs: loaded.audio.duration_secs,
-                        multitrack_group_id: None,
-                    })
-                })
-                .collect();
-            if !entries.is_empty() {
-                proj.timelines.push(crate::project::TimelineDefinition {
-                    id: id.clone(),
-                    entries,
-                    arrangement: Some(tv.arrangement),
-                    label: None,
-                });
-                proj.touch();
-                saved = true;
-            }
-        });
-        if saved {
-            state.timeline.active_definition_id().set(Some(id));
-            state.project.dirty().set(true);
         }
         selected_proj_indices.set(Vec::new());
     };
