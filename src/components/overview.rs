@@ -877,11 +877,12 @@ fn detection_marks(state: AppState) -> Option<crate::canvas::overview_marks::Ove
             }))
         }
         Some(m) => {
-            use crate::classifier::summary::{colour_order, spans};
+            use crate::classifier::kept_order::colour_order;
+            use crate::classifier::summary::spans;
             let min = crate::classifier::min_confidence(state, m);
             state.classifier.results().with(|results| {
                 let run = results.get(&(file, m))?;
-                Some(classifier_marks(&spans(run, min, true), &colour_order(run)))
+                Some(classifier_marks(&spans(run, min, true), &colour_order(file, m, run, min)))
             })
         }
     }

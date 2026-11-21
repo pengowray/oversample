@@ -223,8 +223,8 @@ pub(super) fn LiveView(
         let order = state.classifier.results().with(|m| {
             current_file
                 .get()
-                .and_then(|f| m.get(&(f, method)))
-                .map(crate::classifier::summary::colour_order)
+                .and_then(|f| m.get(&(f, method)).map(|r| (f, r)))
+                .map(|(f, r)| crate::classifier::kept_order::colour_order(f, method, r, min))
                 .unwrap_or_default()
         });
         let below = r.top.first().is_some_and(|c| c.score < min);

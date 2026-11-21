@@ -268,7 +268,7 @@ pub const AUTO_ROWS: usize = 5;
 
 /// The species that could get a row above the spectrogram without a pin:
 /// those that are some window's best match at `min_confidence` or above,
-/// best first. [`keep_auto_rows`] picks from them.
+/// best first. `kept_order::auto_rows` picks from them.
 pub fn auto_species(run: &ClassifierRun, min_confidence: f32) -> Vec<u16> {
     let mut best: Vec<(u16, f32)> = Vec::new();
     for w in &run.windows {
@@ -283,23 +283,6 @@ pub fn auto_species(run: &ClassifierRun, min_confidence: f32) -> Vec<u16> {
     }
     best.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     best.into_iter().map(|(c, _)| c).collect()
-}
-
-/// Update `kept`, the species (by scientific name) with a row without a pin,
-/// for the results as they are now. A species keeps its row and its place
-/// while it is still among `candidates` ([`auto_species`], as names); new
-/// ones are added after it, up to [`AUTO_ROWS`] rows. So rows do not swap
-/// places or disappear as more of a recording is analysed.
-pub fn keep_auto_rows(kept: &mut Vec<String>, candidates: &[&str]) {
-    kept.retain(|k| candidates.contains(&k.as_str()));
-    for c in candidates {
-        if kept.len() >= AUTO_ROWS {
-            break;
-        }
-        if !kept.iter().any(|k| k == c) {
-            kept.push(c.to_string());
-        }
-    }
 }
 
 // ── Saved picks ─────────────────────────────────────────────────────────────
@@ -555,25 +538,6 @@ mod tests {
             whole_file: true,
             complete: true,
         }
-    }
-
-    #[test]
-    fn auto_rows_keep_their_place() {
-        let mut kept = Vec::new();
-        keep_auto_rows(&mut kept, &["a", "b"]);
-        assert_eq!(kept, ["a", "b"]);
-        // A better species arrives: it goes after the rows already there.
-        keep_auto_rows(&mut kept, &["c", "b", "a"]);
-        assert_eq!(kept, ["a", "b", "c"]);
-        // Full: later species get no row, and the order stays.
-        keep_auto_rows(&mut kept, &["g", "f", "e", "d", "c", "b", "a"]);
-        assert_eq!(kept, ["a", "b", "c", "g", "f"]);
-        // No longer a candidate (the minimum was raised): its row goes.
-        keep_auto_rows(&mut kept, &["g", "c", "a", "d"]);
-        assert_eq!(kept, ["a", "c", "g", "d"]);
-        // New results (Analyse again): the list starts over.
-        keep_auto_rows(&mut kept, &[]);
-        assert!(kept.is_empty());
     }
 
     #[test]

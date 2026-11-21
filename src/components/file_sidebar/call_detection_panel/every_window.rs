@@ -50,13 +50,16 @@ pub(super) fn window_table(
     let rows = Memo::new(move |_| {
         let min = classifier::min_confidence(state, method);
         state.classifier.results().with(|m| {
-            let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
+            let Some((file, run)) = current_file
+                .get()
+                .and_then(|f| m.get(&(f, method)).map(|r| (f, r)))
+            else {
                 return (true, Vec::new());
             };
             // With overlapping windows the numbers change as a run adds
             // windows between others, so the column is left out.
             let numbered = !run.overlapping();
-            let order = summary::colour_order(run);
+            let order = classifier::kept_order::colour_order(file, method, run, min);
             let rows = run
                 .windows
                 .iter()

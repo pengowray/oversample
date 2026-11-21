@@ -62,6 +62,7 @@
 
 pub mod bat_pick;
 pub mod boxes;
+pub mod kept_order;
 pub mod location;
 pub mod method_info;
 pub mod played;

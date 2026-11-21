@@ -155,10 +155,13 @@ pub(super) fn in_recording_section(
     let species_rows = Memo::new(move |_| {
         let min = min_conf();
         state.classifier.results().with(|m| {
-            let Some(run) = current_file.get().and_then(|f| m.get(&(f, method))) else {
+            let Some((file, run)) = current_file
+                .get()
+                .and_then(|f| m.get(&(f, method)).map(|r| (f, r)))
+            else {
                 return (false, Vec::new());
             };
-            let order = summary::colour_order(run);
+            let order = classifier::kept_order::colour_order(file, method, run, min);
             let s = summary::summarise(run, min);
             let rows = s
                 .species

@@ -38,6 +38,10 @@ pub fn window_kind(run: &ClassifierRun, i: usize, min_confidence: f32) -> Window
 /// confidence is at or above the minimum, so the species shown at any minimum
 /// are the start of this list, and raising the minimum never recolours the
 /// species that stay.
+///
+/// The app gives colours out by `kept_order::colour_order`, which keeps a
+/// species' place as results arrive; this order is what a complete run seen
+/// for the first time gets there.
 pub fn colour_order(run: &ClassifierRun) -> Vec<u16> {
     let mut best: Vec<(u16, f32)> = Vec::new();
     for w in &run.windows {

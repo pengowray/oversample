@@ -53,7 +53,7 @@ fn strip_auto(state: AppState, method: Method, scientific: &str) -> bool {
     let min = classifier::min_confidence(state, method);
     state.classifier.results().with(|m| {
         m.get(&(file, method)).is_some_and(|run| {
-            crate::components::score_strips::auto_rows(file, method, run, min)
+            classifier::kept_order::auto_rows(file, method, run, min)
                 .iter()
                 .any(|&c| run.labels[c as usize].scientific == scientific)
         })

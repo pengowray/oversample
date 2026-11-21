@@ -60,14 +60,14 @@ struct SpeciesStrip {
 /// windows with the same top class at or above the minimum confidence, each
 /// species in its own colour. Reactive: call inside the draw effect.
 fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Option<SpeciesStrip> {
-    use crate::classifier::summary::{colour_order, window_kind, WindowKind};
+    use crate::classifier::summary::{window_kind, WindowKind};
     let method = method.classifier()?;
     let file = state.current_file_id_tracked()?;
     let min = crate::classifier::min_confidence(state, method);
     let selected = state.call_detection.selected_window().get();
     state.classifier.results().with(|m| {
         let run = m.get(&(file, method))?;
-        let order = colour_order(run);
+        let order = crate::classifier::kept_order::colour_order(file, method, run, min);
         // Each window is drawn over its cell, so overlapping windows give one
         // box per stretch, not a stack. Ticks mark the window boundaries
         // inside a stretch only for windows end to end; with a shorter step
