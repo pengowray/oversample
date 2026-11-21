@@ -404,25 +404,6 @@ pub(super) fn ConfigPanel() -> impl IntoView {
 
             <super::drive_settings::DriveSettings />
 
-            <div class="setting-group">
-                <div class="setting-group-title">"Beta"</div>
-                <div class="setting-row">
-                    <span class="setting-label">"Enable projects"</span>
-                    <input
-                        type="checkbox"
-                        class="setting-checkbox"
-                        prop:checked=move || state.project.enabled().get()
-                        on:change=move |ev: web_sys::Event| {
-                            let target = ev.target().unwrap();
-                            let input: web_sys::HtmlInputElement = target.unchecked_into();
-                            let checked = input.checked();
-                            state.project.enabled().set(checked);
-                            crate::settings::set_bool(crate::settings::keys::PROJECTS_ENABLED, checked);
-                        }
-                    />
-                </div>
-            </div>
-
         </div>
     }
 }

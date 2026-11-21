@@ -120,7 +120,6 @@ const chip = (page: Page) =>
   page.locator(".layer-btn", { has: page.locator(".layer-btn-category", { hasText: /^Ch$/ }) });
 
 async function openTimelineOfChannel1(page: Page) {
-  await page.addInitScript(() => localStorage.setItem("oversample_projects_enabled", "true"));
   await page.goto("/");
   await page.locator('input[type="file"][accept*=".wav"]').first().setInputFiles(writeFixtures());
   await expect(page.locator(".file-item:not(.loading)")).toHaveCount(FILES.length, {

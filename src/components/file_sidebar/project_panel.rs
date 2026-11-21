@@ -691,11 +691,6 @@ fn ProjectView(project: BatProject) -> impl IntoView {
                 None
             }}
 
-            // WIP notice
-            <div class="project-tauri-hint">
-                "The project feature is still a work in progress. May have bugs and may change in future updates."
-            </div>
-
             // Tauri hint
             {if !state.is_tauri && !has_tauri_metadata {
                 Some(view! {

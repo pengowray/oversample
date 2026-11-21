@@ -130,7 +130,6 @@ async function openTimeline(page: Page, clips: Clip[]): Promise<string[]> {
     if (f.mtime !== undefined) fs.utimesSync(p, f.mtime, f.mtime);
     return p;
   });
-  await page.addInitScript(() => localStorage.setItem("oversample_projects_enabled", "true"));
   await page.goto("/");
   await page.locator('input[type="file"][accept*=".wav"]').first().setInputFiles(paths);
   await expect(page.locator(".file-item:not(.loading)")).toHaveCount(clips.length, {

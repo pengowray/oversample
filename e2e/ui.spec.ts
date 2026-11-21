@@ -277,18 +277,21 @@ test.describe("localStorage persistence", () => {
     await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
 
     await page.evaluate(() => {
-      localStorage.setItem("oversample_show_status_bar", "false");
-      localStorage.setItem("oversample_projects_enabled", "true");
+      localStorage.setItem("oversample_show_status_bar", "true");
     });
 
     await page.reload();
     await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
 
-    // We can't easily observe app state from the outside, but we *can* observe
-    // the side-effect: projects_enabled adds a "Project" tab to the sidebar.
-    await expect(
-      page.locator(".sidebar-header-label", { hasText: "Project" }),
-    ).toBeVisible({ timeout: 10_000 });
+    // The setting is read at startup: with a file open, the status bar is
+    // shown. It is off unless the setting turns it on.
+    await page
+      .locator('input[type="file"][accept*=".wav"]')
+      .first()
+      .setInputFiles("e2e/fixtures/fake-audio.wav");
+    await expect(page.locator(".analysis-panel")).toHaveCount(1, { timeout: 30_000 });
+    // The Project tab is always there.
+    await expect(page.locator(".sidebar-header-label", { hasText: "Project" })).toBeVisible();
   });
 
   test("writes settings to localStorage when toggled", async ({ page }) => {

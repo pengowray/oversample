@@ -686,7 +686,6 @@ test.describe("Google Drive copies", () => {
   // ── Projects ──────────────────────────────────────────────────────────────
 
   async function enableProjects(page: Page) {
-    await page.addInitScript(() => localStorage.setItem("oversample_projects_enabled", "true"));
   }
 
   async function openProjectTab(page: Page) {

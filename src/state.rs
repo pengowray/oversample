@@ -1963,8 +1963,6 @@ pub struct PsdState {
 /// Project (.batproj) state.
 #[derive(Clone, Debug, Store)]
 pub struct ProjectState {
-    /// Whether the Projects beta feature is enabled (persisted to localStorage).
-    pub enabled: bool,
     /// Currently loaded .batproj project (None = no project open).
     pub current: Option<crate::project::BatProject>,
     /// Whether the project has unsaved changes.
@@ -3185,7 +3183,6 @@ impl AppState {
             }),
 
             project: Store::new(ProjectState {
-                enabled: crate::settings::get_bool(crate::settings::keys::PROJECTS_ENABLED, false),
                 current: None,
                 dirty: false,
                 save_status: "",
