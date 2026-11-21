@@ -41,6 +41,7 @@ use oversample_ipc::classifier::{
     attach, live_cut, FromWorker, LiveCut, ToWorker, EMBEDDING_LEN, PERCH_EMBEDDING_LEN,
     V3_EMBEDDING_LEN,
 };
+use std::rc::Rc;
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -1801,31 +1802,51 @@ pub fn top_classes(scores: &[f32], n: usize) -> Vec<(usize, f32)> {
     top
 }
 
-/// Each kept window of `file` that starts within half of [`HISTORY_S`] of
-/// `at` (seconds), as its start from `at` in seconds and then its percentile
-/// on each component: `[-3.0, p1, p2, ...]`. Empty without components, or
-/// before the file has results.
-fn stored_pc_hist(state: AppState, file: u64, method: Method, at: f64) -> Vec<Vec<f32>> {
+thread_local! {
+    /// [`stored_pc_hist`]'s last answer, with what it was made from: the
+    /// file, the method and how many windows and embedding values there
+    /// were. Percentiles for every window of a long file are too much work
+    /// to repeat several times a second while it plays.
+    #[allow(clippy::type_complexity)]
+    static PC_HIST_CACHE: RefCell<Option<((u64, Method, usize, usize), Rc<Vec<Vec<f32>>>)>> =
+        const { RefCell::new(None) };
+}
+
+/// Every kept window of `file`, as its start in seconds and then its
+/// percentile on each component: `[12.0, p1, p2, ...]`, in time order. Empty
+/// without components, or before the file has results.
+fn stored_pc_hist(state: AppState, file: u64, method: Method) -> Rc<Vec<Vec<f32>>> {
     let Some(pcs) = PCS.with(|p| p.borrow().clone()) else {
-        return Vec::new();
+        return Rc::new(Vec::new());
     };
-    let half = HISTORY_S / 2.0;
     state.classifier.results().with_untracked(|m| {
         let Some(run) = m.get(&(file, method)) else {
-            return Vec::new();
+            return Rc::new(Vec::new());
         };
         state.classifier.embeddings().with_untracked(|e| {
             let e = e.get(&(file, method)).map_or(&[][..], |v| &v[..]);
-            run.windows
+            let key = (file, method, run.windows.len(), e.len());
+            if let Some(rows) = PC_HIST_CACHE.with(|c| {
+                c.borrow()
+                    .as_ref()
+                    .filter(|(k, _)| *k == key)
+                    .map(|(_, rows)| rows.clone())
+            }) {
+                return rows;
+            }
+            let rows: Vec<Vec<f32>> = run
+                .windows
                 .iter()
-                .filter(|w| (w.start_s - at).abs() <= half)
                 .filter_map(|w| {
                     let emb = classifier::types::embedding(e, method, w.slot as usize)?;
-                    let mut row = vec![round3((w.start_s - at) as f32)];
+                    let mut row = vec![round3(w.start_s as f32)];
                     row.extend(pcs.percentiles(emb).into_iter().map(round3));
                     Some(row)
                 })
-                .collect()
+                .collect();
+            let rows = Rc::new(rows);
+            PC_HIST_CACHE.with(|c| *c.borrow_mut() = Some((key, rows.clone())));
+            rows
         })
     })
 }
@@ -1990,9 +2011,10 @@ fn draw_view(state: AppState, view: PausedView) {
                 row
             })
             .collect();
-        // For a file, the values kept for its windows instead, before and
-        // after the place shown: the paused reading's window, or the window
-        // ending at the playhead. Only the microphone has no values after.
+        // For a file, the values kept for all its windows instead: the
+        // graphs are then a fixed picture of the whole recording, with a
+        // marker at the place shown (the paused reading's window, or the
+        // window ending at the playhead). Only the microphone's graphs move.
         let file_at = match shown {
             Some(key) => Some((key.0, key.1 as f64 / 1000.0)),
             None if !pending && state.playback.is_playing().get_untracked() => {
@@ -2003,20 +2025,39 @@ fn draw_view(state: AppState, view: PausedView) {
             }
             None => None,
         };
-        let pc_hist = match file_at {
-            Some((file, at)) => stored_pc_hist(state, file, model.method, at),
-            None if pending => Vec::new(),
-            None => pc_hist,
+        let file_len = file_at.and_then(|(file, _)| {
+            state.library.files().with_untracked(|f| {
+                f.iter()
+                    .find(|f| f.id == file)
+                    .map(|f| f.audio.duration_secs)
+            })
+        });
+        // The graphs' time range and the place shown on it, in the rows'
+        // seconds: the recording and a time in it, or the history and now.
+        let (pc_hist, pc_span, pc_at) = match (file_at, file_len) {
+            (Some((file, at)), Some(len)) if len > 0.0 => (
+                stored_pc_hist(state, file, model.method),
+                (0.0, len),
+                at,
+            ),
+            _ if pending => (Rc::new(Vec::new()), (-HISTORY_S, 0.0), 0.0),
+            _ => (Rc::new(pc_hist), (-HISTORY_S, 0.0), 0.0),
         };
         // The value at the place shown: the row nearest to it.
         let pc: Vec<f32> = pc_hist
             .iter()
-            .min_by(|a, b| a[0].abs().total_cmp(&b[0].abs()))
+            .min_by(|a, b| {
+                (a[0] as f64 - pc_at)
+                    .abs()
+                    .total_cmp(&(b[0] as f64 - pc_at).abs())
+            })
             .map_or_else(Vec::new, |r| r[1..].to_vec());
         Some(serde_json::json!({
             "pc": pc,
-            "pcHist": pc_hist,
-            // The graphs are of a file's kept windows round the place shown.
+            "pcHist": &*pc_hist,
+            "pcSpan": [pc_span.0, pc_span.1],
+            "pcAt": pc_at,
+            // The graphs are of a file's kept windows.
             "fileAt": file_at.is_some(),
             "min": min,
             "top": top,
@@ -2028,7 +2069,6 @@ fn draw_view(state: AppState, view: PausedView) {
                 "picked": shown == PICKED_KEY.with(|p| p.get()),
             })),
             "pending": pending,
-            "history": HISTORY_S,
             "ultrasonic": RATE.with(|r| r.get()) >= ULTRASONIC_RATE,
             "model": {
                 "name": model.name,

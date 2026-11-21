@@ -10,12 +10,12 @@
 // (live_view.rs); `top` below is not drawn here.
 // `json` is { min, top: [[name, score, unlikelyHere]...],
 //   trail: [[x, y, secondsAgo, score, umapX, umapY]...] (x, y on the t-SNE layout),
-//   heard (any reading in the history), history (seconds the graphs span),
-//   fileAt (pcHist is of a file),
+//   heard (any reading in the history),
 //   pcHist: [[seconds, percentile on PC1, on PC2, ...]...] (0 to 1): for a
-//     file, its kept windows by their start, in seconds before (negative) or
-//     after the place shown; for the microphone, the readings so far, in
-//     seconds before now,
+//     file (fileAt), every kept window by its start in the recording; for
+//     the microphone, the readings so far, in seconds before now,
+//   pcSpan: [from, to], the seconds the graphs span (the whole recording, or
+//     the microphone's history), pcAt: the place shown, in the same seconds,
 //   preview: null, or while nothing plays the reading of the 3 s Play would
 //     start with: { at: { x, y, ux, uy, s } or null, range ("12.4s to 15.4s") };
 //     `top` is then that reading's,
@@ -78,13 +78,14 @@
     borderColor: '#444',
     textStyle: { color: INK, fontSize: 12 },
   };
-  // A graph row's time: before or after the place shown (a file), or
+  // A graph row's time: its start in the recording (a file), or how long
   // before now (the microphone).
-  const when = (d, s) => {
-    if (Math.abs(s) < 0.05) return d.preview || d.fileAt ? 'here' : 'now';
-    if (s > 0) return `${s.toFixed(1)} s after`;
-    return d.preview || d.fileAt ? `${(-s).toFixed(1)} s before` : `${(-s).toFixed(1)} s ago`;
+  const clock = (t) => {
+    const m = Math.floor(t / 60);
+    const sec = t - m * 60;
+    return m ? `${m}m${sec.toFixed(1).padStart(4, '0')}s` : `${sec.toFixed(1)}s`;
   };
+  const when = (d, s) => (d.fileAt ? `at ${clock(s)}` : s > -0.05 ? 'now' : `${(-s).toFixed(1)} s ago`);
 
   // ── Layout ────────────────────────────────────────────────────────────
   // The species are drawn at their UMAP places (species_umap.py) or their
@@ -918,7 +919,7 @@
         if (e.pointerType !== 'mouse' || !d || !d.pcHist.length) return;
         const r = graph.getBoundingClientRect();
         if (el.__hover) return;
-        const t = ((e.clientX - r.left) / (r.width - KEY_W) - 0.5) * d.history;
+        const t = d.pcSpan[0] + ((e.clientX - r.left) / (r.width - KEY_W)) * (d.pcSpan[1] - d.pcSpan[0]);
         let best = d.pcHist[0];
         for (const row of d.pcHist) if (Math.abs(row[0] - t) < Math.abs(best[0] - t)) best = row;
         const p = best[k + 1];
@@ -1059,22 +1060,31 @@
         }
         return;
       }
-      // The graph: percentile (low at the bottom) over d.history seconds
-      // with the place shown in the middle, each stretch in the colour of
-      // the fifth it is in.
-      const half = d.history / 2;
-      const at = (row) => [(0.5 + row[0] / d.history) * plotW, yOf(row[k + 1])];
-      const rows = d.pcHist.filter((row) => Math.abs(row[0]) <= half);
-      // The place shown.
-      g.fillStyle = '#555555';
-      g.fillRect(Math.round(plotW / 2), 0, 1, h);
+      // The graph: percentile (low at the bottom) over d.pcSpan (the whole
+      // recording for a file, so the picture stays put while it plays),
+      // each stretch in the colour of the fifth it is in.
+      const [t0, t1] = d.pcSpan;
+      const xOf = (t) => ((t - t0) / (t1 - t0)) * plotW;
+      const at = (row) => [xOf(row[0]), yOf(row[k + 1])];
+      const rows = d.pcHist;
+      // Windows further apart than this are not joined: a part of the
+      // recording with no results, or a pause in listening.
+      const steps = [];
+      for (let i = 1; i < rows.length; i++) steps.push(rows[i][0] - rows[i - 1][0]);
+      steps.sort((x, y) => x - y);
+      const joinMax = Math.max(1.5, (steps[Math.floor(steps.length / 2)] || 0) * 1.5);
       g.lineWidth = 1.5 * u;
       g.lineJoin = 'round';
       for (let i = 1; i < rows.length; i++) {
         const a = rows[i - 1];
         const c = rows[i];
-        // A gap (windows not analysed, or listening paused) is not joined.
-        if (c[0] - a[0] > 3.5) continue;
+        if (c[0] - a[0] > joinMax) {
+          // A window on its own is a dot.
+          const [x, y] = at(c);
+          g.fillStyle = PC_COLOURS[Math.min(4, Math.floor(c[k + 1] * 5))];
+          g.fillRect(x - u, y - u, 2 * u, 2 * u);
+          continue;
+        }
         const [x0, y0] = at(a);
         const [x1, y1] = at(c);
         g.strokeStyle = PC_COLOURS[Math.min(4, Math.floor(c[k + 1] * 5))];
@@ -1083,16 +1093,20 @@
         g.lineTo(x1, y1);
         g.stroke();
       }
-      // A single window is a dot.
-      if (rows.length === 1) {
+      if (rows.length) {
         const [x, y] = at(rows[0]);
         g.fillStyle = PC_COLOURS[Math.min(4, Math.floor(rows[0][k + 1] * 5))];
         g.fillRect(x - u, y - u, 2 * u, 2 * u);
       }
+      // The place shown in a file: a light line down the graph.
+      if (d.fileAt) {
+        g.fillStyle = 'rgba(255,255,255,0.75)';
+        g.fillRect(Math.round(xOf(d.pcAt)), 0, Math.max(1, Math.round(u)), h);
+      }
       // The value at the place shown, as a white mark across the key.
       let here = null;
-      for (const row of rows) if (!here || Math.abs(row[0]) < Math.abs(here[0])) here = row;
-      if (here && Math.abs(here[0]) <= 3.5) {
+      for (const row of rows) if (!here || Math.abs(row[0] - d.pcAt) < Math.abs(here[0] - d.pcAt)) here = row;
+      if (here && Math.abs(here[0] - d.pcAt) <= joinMax * 2) {
         g.fillStyle = '#ffffff';
         g.fillRect(w - keyW - 2 * u, at(here)[1] - u, keyW + 2 * u, 2 * u);
       }

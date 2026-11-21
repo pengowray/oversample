@@ -86,6 +86,37 @@ enum TipAt {
     Right(f64),
 }
 
+thread_local! {
+    /// For each file and method, the species (scientific names) with a row
+    /// without a pin, in the order they got it (`strips::keep_auto_rows`).
+    static AUTO_ROWS_KEPT: RefCell<HashMap<(u64, Method), Vec<String>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// The classes of `run` (file `file`'s results for `method`) that have a row
+/// above the spectrogram without a pin, in row order. They keep their rows
+/// and places as more of the recording is analysed.
+pub fn auto_rows(
+    file: u64,
+    method: Method,
+    run: &classifier::ClassifierRun,
+    min_confidence: f32,
+) -> Vec<u16> {
+    let candidates = auto_species(run, min_confidence);
+    let names: Vec<&str> = candidates
+        .iter()
+        .map(|&c| run.labels[c as usize].scientific.as_str())
+        .collect();
+    AUTO_ROWS_KEPT.with(|k| {
+        let mut k = k.borrow_mut();
+        let kept = k.entry((file, method)).or_default();
+        crate::classifier::strips::keep_auto_rows(kept, &names);
+        kept.iter()
+            .filter_map(|name| class_of(run, name))
+            .collect()
+    })
+}
+
 /// The rows for the current file. Reactive.
 fn build(state: AppState) -> Option<ScoreStrips> {
     if state.timeline.active().with(|t| t.is_some()) {
@@ -121,10 +152,10 @@ fn build(state: AppState) -> Option<ScoreStrips> {
         let run = m.get(&(file, method))?;
         let mut rows = Vec::new();
         let order = crate::classifier::summary::colour_order(run);
-        // A row without a pin for each of the best species found
-        // (`auto_species`), as the live view's rows appear by themselves,
-        // apart from those the user removed. Then the pinned species.
-        let mut classes: Vec<u16> = auto_species(run, min)
+        // A row without a pin for the species found (`auto_rows`), as the
+        // live view's rows appeared by themselves, apart from those the
+        // user removed. Then the pinned species.
+        let mut classes: Vec<u16> = auto_rows(file, method, run, min)
             .into_iter()
             .filter(|&c| !hidden.contains(&run.labels[c as usize].scientific))
             .collect();

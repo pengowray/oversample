@@ -103,6 +103,16 @@ pub(super) struct RunInfo {
     pub(super) spacing_secs: f64,
 }
 
+/// The longest recording Analyse starts on by itself, in seconds.
+const AUTO_ANALYSE_MAX_SECS: f64 = 600.0;
+
+thread_local! {
+    /// The files and methods Analyse has started on by itself this session:
+    /// a run the user stopped, or that failed, is not started again.
+    static AUTO_ANALYSED: std::cell::RefCell<std::collections::HashSet<(u64, Method)>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
 /// Download what `choice` still needs (a region's classifier is about 0.1 MB,
 /// all 11 are 1.1 MB),
 /// then analyse the current file with `step_secs` between window starts.
@@ -307,6 +317,33 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             }
         });
     }
+
+    // Analyse runs by itself, once for each file and method, when the model
+    // is on this device and the file has no Analyse yet: results then cover
+    // the whole recording without Play being pressed. Long recordings are
+    // left to the button, since the run takes a while and can heat a phone.
+    Effect::new(move |_| {
+        let Some(file) = current_file.get() else {
+            return;
+        };
+        let Some((rate, secs)) = source_rate.get() else {
+            return;
+        };
+        if action_status.get() != DownloadStatus::Downloaded
+            || analysed.get()
+            || state.classifier.run().with(|r| r.is_busy())
+            || secs > AUTO_ANALYSE_MAX_SECS
+            || method.min_source_rate().is_some_and(|min| rate < min)
+        {
+            return;
+        }
+        let choice = choice();
+        if !AUTO_ANALYSED.with(|a| a.borrow_mut().insert((file, method))) {
+            return;
+        }
+        let step = step_pick.get_untracked().secs(method);
+        analyse(state, file, choice, step);
+    });
 
     // ── 1. The action ────────────────────────────────────────────────────
     // Download, Analyse, or progress; the settings button stays beside it.
