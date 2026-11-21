@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 // Port chosen to avoid clashing with common dev servers on Windows (8080 in use).
 const PORT = Number(process.env.OVERSAMPLE_PORT ?? 21259);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
+const DRIVE_SPECS = "**/google_drive*.spec.ts";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -21,9 +22,18 @@ export default defineConfig({
     screenshot: "only-on-failure",
     ignoreHTTPSErrors: true,
   },
+  // The Google Drive specs wait out the real upload delay in every test, so
+  // they are their own project: `npm test` leaves them out, `npm run
+  // test:drive` runs only them, and `npm run test:all` runs both.
   projects: [
     {
       name: "chromium",
+      testIgnore: DRIVE_SPECS,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "drive",
+      testMatch: DRIVE_SPECS,
       use: { ...devices["Desktop Chrome"] },
     },
   ],

@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "description": "Playwright end-to-end tests for the Oversample web build. Not published.",
   "scripts": {
-    "test": "playwright test",
+    "test": "playwright test --project=chromium",
+    "test:drive": "playwright test --project=drive",
+    "test:all": "playwright test",
     "test:ui": "playwright test --ui",
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
