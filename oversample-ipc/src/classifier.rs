@@ -35,6 +35,7 @@
 use serde::{Deserialize, Serialize};
 
 mod bat_merge;
+pub mod boxes;
 pub mod catalog;
 
 pub use bat_merge::{merge_bat_labels, merge_bat_logits, MergedBatLabels};
@@ -296,6 +297,11 @@ pub enum ModelPart {
     /// classifier and runs in a worker of its own (see `src/denoise.rs` in the
     /// app).
     Denoiser,
+    /// BirdBox's Just-Bird network, which draws a box round each bird sound.
+    /// Either BirdBox's all-in-one demo graph, which the worker cuts the
+    /// network out of, or the release file; float16 weights become float32
+    /// as it loads.
+    JustBird,
 }
 
 /// Where a model sits in the worker.
@@ -309,6 +315,9 @@ pub enum ModelSlot {
     Head,
     /// The denoiser.
     Denoise,
+    /// The bird box detector (BirdBox's Just-Bird), which runs beside
+    /// BirdNET+ V3.0 on the same audio.
+    Boxes,
 }
 
 impl ModelPart {
@@ -319,6 +328,7 @@ impl ModelPart {
             }
             ModelPart::BatHead | ModelPart::PerchClassifier => ModelSlot::Head,
             ModelPart::Denoiser => ModelSlot::Denoise,
+            ModelPart::JustBird => ModelSlot::Boxes,
         }
     }
 
@@ -328,7 +338,8 @@ impl ModelPart {
         match self {
             ModelPart::Backbone | ModelPart::BatHead => Some(ModelFamily::BirdNet),
             ModelPart::PerchEmbedding | ModelPart::PerchClassifier => Some(ModelFamily::Perch),
-            ModelPart::BirdNetV3 => Some(ModelFamily::BirdNetV3),
+            // Its boxes are named by BirdNET+ V3.0, so it shares that worker.
+            ModelPart::BirdNetV3 | ModelPart::JustBird => Some(ModelFamily::BirdNetV3),
             ModelPart::Denoiser => None,
         }
     }
@@ -630,12 +641,18 @@ pub enum ToWorker {
     /// window). Empty or `[0]` is the windows end to end, with the last,
     /// zero-padded window kept when it holds at least a third of a window.
     /// Any other offsets take only the windows that fit inside the audio.
+    ///
+    /// With `boxes` (BirdNET+ V3.0 and the windows end to end only), the
+    /// bird box detector in the boxes slot also runs on the audio, and
+    /// answers `Boxes` for each of its windows and `BoxesDone` before `Done`.
     Start {
         run: u32,
         method: Method,
         source_rate: u32,
         #[serde(default)]
         offsets: Vec<u32>,
+        #[serde(default)]
+        boxes: bool,
     },
     /// The next piece of source-rate mono audio, in [`attach::SAMPLES`].
     /// Answered by `ChunkDone` after the windows it completed.
@@ -750,6 +767,23 @@ pub enum FromWorker {
     },
     /// `Chunk` number `seq` has been used.
     ChunkDone { run: u32, seq: u32 },
+    /// The bird box detector's boxes in its window `index` (3 s from
+    /// `index * 1.5` s), at [`boxes::KEEP_CONF`] or above, after NMS. Sent
+    /// for every window, with no boxes too, so the app can tell how far it
+    /// has got.
+    Boxes {
+        run: u32,
+        index: u32,
+        boxes: Vec<boxes::RawBox>,
+    },
+    /// The bird box detector has done its last window: `windows` windows
+    /// over `samples` samples of 32 kHz audio (a float, as a 64-bit integer
+    /// does not cross to JavaScript as a number).
+    BoxesDone {
+        run: u32,
+        windows: u32,
+        samples: f64,
+    },
     /// The run is complete with `windows` windows.
     Done { run: u32, windows: u32 },
     /// New scores for every stored window, in window order.
@@ -942,7 +976,7 @@ mod tests {
         let msg: ToWorker =
             serde_json::from_str(r#"{"cmd":"Start","run":1,"method":"Perch","source_rate":48000}"#)
                 .unwrap();
-        assert!(matches!(msg, ToWorker::Start { offsets, .. } if offsets.is_empty()));
+        assert!(matches!(msg, ToWorker::Start { offsets, boxes: false, .. } if offsets.is_empty()));
     }
 
     #[test]
@@ -956,6 +990,9 @@ mod tests {
         );
         assert_eq!(ModelPart::Denoiser.family(), None);
         assert_eq!(ModelPart::BirdNetV3.slot(), ModelSlot::Audio);
+        // The box detector sits beside BirdNET+ V3.0, in a slot of its own.
+        assert_eq!(ModelPart::JustBird.family(), Some(ModelFamily::BirdNetV3));
+        assert_eq!(ModelPart::JustBird.slot(), ModelSlot::Boxes);
     }
 
     #[test]

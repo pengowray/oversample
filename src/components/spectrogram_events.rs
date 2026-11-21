@@ -219,6 +219,15 @@ fn strip_window_at(state: AppState, px_y: f64, t: f64, reach: f64) -> Option<f64
     })
 }
 
+/// The bird sound box drawn at `t` seconds and `freq` Hz, while the boxes
+/// are on the spectrogram.
+fn bird_box_at(state: AppState, t: f64, freq: f64) -> Option<(f64, f64)> {
+    if !state.call_detection.overlay_enabled().get_untracked() {
+        return None;
+    }
+    crate::classifier::boxes::box_at(t, freq)
+}
+
 /// Read the file's Nyquist / max frequency — the ceiling for the freq
 /// display range.
 fn file_nyquist(state: AppState) -> f64 {
@@ -789,6 +798,14 @@ pub fn on_pointermove(
         if ix.strip_hover.get_untracked() != on_strip {
             ix.strip_hover.set(on_strip);
         }
+        // The bird sound box under a mouse shows its card. A finger has no
+        // hover; a tap picks the box instead (on_pointerup).
+        let hover = (ev.pointer_type() == "mouse" && !on_strip)
+            .then(|| bird_box_at(state, t, f))
+            .flatten();
+        if state.call_detection.hover_box().get_untracked() != hover {
+            state.call_detection.hover_box().set(hover);
+        }
 
         // Update label hover target + in-label-area state. (Time-axis
         // interactions live on the sibling <TimeGutter/> now.)
@@ -918,6 +935,9 @@ pub fn on_pointermove(
 
 pub fn on_pointerleave(_ev: PointerEvent, ix: SpectInteraction, state: AppState) {
     ix.strip_hover.set(false);
+    if state.call_detection.hover_box().get_untracked().is_some() {
+        state.call_detection.hover_box().set(None);
+    }
     // When pointer is captured (during a drag), pointerleave won't normally fire.
     // But if it does somehow, preserve drag state so the gesture isn't interrupted.
     if state.interaction.is_dragging().get_untracked() {
@@ -990,6 +1010,25 @@ pub fn on_pointerup(
             .get_untracked()
             .filter(|_| was_click || (ev.pointer_type() == "touch" && dx < TAP_SLOP_TOUCH));
 
+        // A click or tap on a bird sound box picks it (its card stays up); one
+        // elsewhere puts the card away.
+        if was_click || (ev.pointer_type() == "touch" && dx < TAP_SLOP_TOUCH) {
+            let picked = strip_tap
+                .is_none()
+                .then(|| {
+                    pointer_to_xtf(
+                        ev.client_x() as f64,
+                        ev.client_y() as f64,
+                        canvas_ref,
+                        &state,
+                    )
+                    .and_then(|(_, _, t, f)| bird_box_at(state, t, f))
+                })
+                .flatten();
+            if state.call_detection.picked_box().get_untracked() != picked {
+                state.call_detection.picked_box().set(picked);
+            }
+        }
         if let Some(i) = strip_tap {
             // A label on the strip is drawn over everything else, so it wins.
             state.call_detection.selected_window().set(Some(i));

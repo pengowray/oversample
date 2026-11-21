@@ -18,6 +18,7 @@
 //! 5. One line about the stored model, and the attribution the model's
 //!    licence asks for.
 
+use super::bird_boxes;
 use super::live_view::LiveView;
 use super::parts::{in_force_line, pin_button, section_head, settings_button, Fold};
 use super::species_map::SpeciesMapDialog;
@@ -252,7 +253,10 @@ pub(super) fn show_window(state: AppState, start_s: f64, end_s: f64) {
 /// then analyse the current file with `step_secs` between window starts.
 fn analyse(state: AppState, file_id: u64, choice: ModelChoice, step_secs: f64) {
     state.call_detection.selected_window().set(None);
-    if classifier::is_ready(state, choice) {
+    state.call_detection.picked_box().set(None);
+    // With bird boxes on, BirdBox's model too.
+    let files = classifier::run_files(state, file_id, choice);
+    if untrack(|| classifier::files_ready(state, &files)) {
         classifier::run(state, file_id, choice, step_secs);
         return;
     }
@@ -262,7 +266,7 @@ fn analyse(state: AppState, file_id: u64, choice: ModelChoice, step_secs: f64) {
         .run()
         .set(RunStatus::LoadingModel { file_id, method });
     spawn_local(async move {
-        match classifier::ensure_downloaded(state, choice).await {
+        match classifier::ensure_files(state, files).await {
             Ok(()) => classifier::run(state, file_id, choice, step_secs),
             Err(error) => state.classifier.run().set(RunStatus::Failed {
                 file_id,
@@ -470,6 +474,27 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
             .downloads()
             .with(|m| combined_status(m, &model_files(method)))
     });
+    // The large files the action stands for: the model's, and with bird
+    // boxes on (BirdNET+ V3.0) BirdBox's model too.
+    let action_files = move || {
+        let mut files = model_files(method);
+        let boxes = method == Method::BirdNetV3
+            && state.call_detection.bird_boxes().get()
+            && current_file
+                .get()
+                .is_some_and(|f| classifier::finds_boxes(state, f, ModelChoice::BirdNetV3));
+        if boxes {
+            files.push(&catalog::JUST_BIRD);
+        }
+        files
+    };
+    let action_status = Memo::new(move |_| {
+        let files = action_files();
+        state
+            .classifier
+            .downloads()
+            .with(|m| combined_status(m, &files))
+    });
     // This file's results for this method.
     let results_info = Memo::new(move |_| {
         let file = current_file.get()?;
@@ -549,8 +574,27 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         let Some(file_id) = current_file.get() else {
             return view! { <div class="cd-no-file">"No file selected"</div> }.into_any();
         };
-        let total_size: u64 = choice().files().iter().map(|f| f.size).sum();
-        match backbone.get() {
+        // What a download fetches: the files the run needs that are not on
+        // this device (with bird boxes on, BirdBox's model too).
+        state.call_detection.bird_boxes().track();
+        let missing = move || {
+            let files = classifier::run_files(state, file_id, choice());
+            state.classifier.downloads().with_untracked(|m| {
+                files
+                    .into_iter()
+                    .filter(|f| m.get(f.id) != Some(&DownloadStatus::Downloaded))
+                    .collect::<Vec<_>>()
+            })
+        };
+        let total_size: u64 = missing().iter().map(|f| f.size).sum();
+        let download = move |_| {
+            let files = missing();
+            spawn_local(async move {
+                let _ = classifier::ensure_files(state, files).await;
+            });
+        };
+        let shown_size: u64 = action_files().iter().map(|f| f.size).sum();
+        match action_status.get() {
             DownloadStatus::Unknown => {
                 return view! { <div class="detection-status"></div> }.into_any();
             }
@@ -558,19 +602,19 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                 return view! {
                     <button
                         class="sidebar-btn detection-primary-btn"
-                        on:click=move |_| classifier::download(state, choice())
+                        on:click=download
                     >{format!("Download model ({})", mb(total_size))}</button>
                     <div class="detection-status-note">"Runs on this device. Recordings are not uploaded."</div>
                 }
                 .into_any();
             }
             DownloadStatus::Downloading { fraction } => {
-                let done = (fraction * model_size as f64 / MB).round();
+                let done = (fraction * shown_size as f64 / MB).round();
                 let pct = fraction * 100.0;
                 return view! {
                     <div class="cd-progress-text">{format!(
                         "Downloading model: {done:.0} of {:.0} MB",
-                        model_size as f64 / MB
+                        shown_size as f64 / MB
                     )}</div>
                     <div class="detection-progress">
                         <div class="detection-progress-fill" style=format!("width:{pct:.1}%")></div>
@@ -583,7 +627,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                     <div class="detection-error">{format!("Download failed. {e}")}</div>
                     <button
                         class="sidebar-btn detection-primary-btn"
-                        on:click=move |_| classifier::download(state, choice())
+                        on:click=download
                     >{format!("Retry download ({})", mb(total_size))}</button>
                 }
                 .into_any();
@@ -607,10 +651,26 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
 
         if busy_here() {
             let (text, pct) = match run_status() {
-                RunStatus::LoadingModel { .. } => ("Loading the model\u{2026}".to_string(), None),
+                RunStatus::LoadingModel { .. } => (
+                    bird_boxes::download_text(state)
+                        .unwrap_or_else(|| "Loading the model\u{2026}".to_string()),
+                    None,
+                ),
                 RunStatus::Rescoring { scope, .. } => {
                     (format!("Relabelling for {}\u{2026}", scope.label()), None)
                 }
+                // The pass that scores the windows that name the bird boxes.
+                RunStatus::Running {
+                    fraction,
+                    naming_boxes: true,
+                    ..
+                } => (
+                    format!(
+                        "Naming bird sound boxes: {:.0}%",
+                        (fraction * 100.0).floor()
+                    ),
+                    Some(fraction * 100.0),
+                ),
                 // A later pass of a run with a shorter step: the step it
                 // brings the whole recording to.
                 RunStatus::Running {
@@ -743,6 +803,9 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
         if let Some(p) = place_fact(state, method, current_file.get()) {
             f.push(p);
         }
+        if method == Method::BirdNetV3 {
+            f.extend(bird_boxes::facts(state));
+        }
         f
     };
     // "Use my location" in the Place row: None idle, Some(None) waiting,
@@ -775,6 +838,7 @@ pub(super) fn ClassifierSection(method: Method) -> impl IntoView {
                         />
                     </div>
                     {move || place_rows(state, method, current_file, locating, has_results)}
+                    {(method == Method::BirdNetV3).then(|| bird_boxes::settings_rows(state, current_file))}
                     <div class="setting-row detection-annotate-row">
                         <label class="setting-label">
                             <input
@@ -965,6 +1029,11 @@ fn in_recording_section(
         }
         if let Some(region) = r.region.filter(|g| *g != bat_scope.get()) {
             return Some(format!("Results for {}", region.label()));
+        }
+        if method == Method::BirdNetV3 {
+            if let Some(note) = bird_boxes::analyse_again_note(state, current_file.get()) {
+                return Some(note.to_string());
+            }
         }
         let picked = step_pick.get().secs(method);
         let differs = !summary::step_choices(method).is_empty()
@@ -1232,6 +1301,7 @@ fn in_recording_section(
                     </tr>
                 </thead>
                 <tbody>
+                    {(method == Method::BirdNetV3).then(|| bird_boxes::list_row(state, current_file, cols))}
                     <For each=move || species_rows.with(|r| r.1.clone()) key=SpeciesListRow::key children=species_row />
                     <For each=move || missing_rows.get() key=|r: &MissingRow| (r.scientific.clone(), r.in_model) children=missing_row />
                     {crate::components::sound_groups::list_rows(state, method, current_file, save_strips, cols, clusters_pin)}
@@ -1333,6 +1403,13 @@ fn model_line(
     };
     // BirdNET's backbone is shared with BattyBirdNET.
     let shared = matches!(method, Method::BirdNet | Method::Bats);
+    // BirdBox's model, beside BirdNET+ V3.0: its size, Delete and its
+    // licence (AGPL-3.0) go on the same lines.
+    let v3 = method == Method::BirdNetV3;
+    let boxes_stored = v3 && bird_boxes::model_stored(state);
+    let boxes_credited = v3 && (boxes_stored || state.call_detection.bird_boxes().get());
+    let boxes_size = catalog::JUST_BIRD.size;
+    let b = catalog::JUST_BIRD_ATTRIBUTION;
     // The link text is the site, e.g. "birdnet.cornell.edu".
     let site = a
         .powered_by_url
@@ -1347,24 +1424,36 @@ fn model_line(
                     // the line says so where Delete is.
                     {if shared {
                         format!("Model on this device, {}, used by BirdNET and BattyBirdNET. ", mb(model_size))
+                    } else if boxes_stored {
+                        format!("Models on this device, {} and {}. ", mb(model_size), mb(boxes_size))
                     } else {
                         format!("Model on this device, {}. ", mb(model_size))
                     }}
                     <button
                         class="detection-link-btn"
                         on:click=move |_| {
+                            let question = if boxes_stored {
+                                format!(
+                                    "Delete BirdNET+ V3.0 ({}) and BirdBox Just-Bird ({}) from this device? Neither model can run until it is downloaded again. Results already shown stay.",
+                                    mb(model_size),
+                                    mb(boxes_size)
+                                )
+                            } else {
+                                format!(
+                                    "Delete the model ({}) from this device? {cant_run} can't run until it is downloaded again. Results already shown stay.",
+                                    mb(model_size)
+                                )
+                            };
                             let ok = web_sys::window()
-                                .and_then(|w| {
-                                    w.confirm_with_message(&format!(
-                                        "Delete the model ({}) from this device? {cant_run} can't run until it is downloaded again. Results already shown stay.",
-                                        mb(model_size)
-                                    ))
-                                    .ok()
-                                })
+                                .and_then(|w| w.confirm_with_message(&question).ok())
                                 .unwrap_or(false);
                             if ok {
                                 classifier::cancel(state);
-                                classifier::delete_files(state, deletable_files(method));
+                                let mut files = deletable_files(method);
+                                if boxes_stored {
+                                    files.push(&catalog::JUST_BIRD);
+                                }
+                                classifier::delete_files(state, files);
                             }
                         }
                     >"Delete"</button>
@@ -1374,6 +1463,11 @@ fn model_line(
                 {byline}" "
                 <a href=a.licence_url target="_blank" rel="noopener">{a.licence}</a>
                 ". "
+                {boxes_credited.then(|| view! {
+                    "Boxes by BirdBox Just-Bird. "
+                    <a href=b.licence_url target="_blank" rel="noopener">{b.licence}</a>
+                    ". "
+                })}
                 <button
                     class="detection-link-btn"
                     aria-expanded=move || show_credits.get().to_string()
@@ -1387,6 +1481,15 @@ fn model_line(
                     <p>
                         <a href=a.powered_by_url target="_blank" rel="noopener">{site}</a>
                     </p>
+                    {boxes_credited.then(|| view! {
+                        {b.credits.iter().map(|c| view! { <p>{*c}</p> }).collect::<Vec<_>>()}
+                        <p>{b.citation}</p>
+                        <p>
+                            <a href=b.source_url target="_blank" rel="noopener">"github.com/birdnet-team/BirdBox"</a>
+                            " "
+                            <a href=b.licence_url target="_blank" rel="noopener">"AGPL-3.0 licence text"</a>
+                        </p>
+                    })}
                 </div>
             })}
         </div>

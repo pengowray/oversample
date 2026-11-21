@@ -46,6 +46,10 @@ pub enum FileKind {
     /// gain for every bin out. Not a classifier; it has its own worker
     /// (`src/denoise.rs`).
     Denoiser,
+    /// BirdBox's Just-Bird box detector, as BirdBox's all-in-one demo graph
+    /// (audio in, boxes out). The worker cuts the network out of it in
+    /// memory and makes the image and the boxes itself.
+    JustBird,
 }
 
 /// One downloadable file.
@@ -71,6 +75,7 @@ impl ModelFile {
             FileKind::PerchClassifier => Some(ModelPart::PerchClassifier),
             FileKind::BirdNetV3 => Some(ModelPart::BirdNetV3),
             FileKind::Denoiser => Some(ModelPart::Denoiser),
+            FileKind::JustBird => Some(ModelPart::JustBird),
             // Run on its own, outside the worker's two slots.
             FileKind::Geomodel => None,
             FileKind::BirdNetLabels
@@ -185,6 +190,22 @@ pub const BIRDNET_V3: ModelFile = ModelFile {
     size: 72_317_224,
     sha256: "feadeccc84feb021aeb9c51ec5288f6f5bd7065fe3773e2d48a69ea8a26b412a",
     kind: FileKind::BirdNetV3,
+};
+
+/// BirdBox's Just-Bird box detector, v2.1.0 (weights AGPL-3.0), unchanged:
+/// the all-in-one graph of BirdBox's browser demo, from the repository at the
+/// tag. raw.githubusercontent.com sends `Access-Control-Allow-Origin: *`; the
+/// release asset (`Just-Bird_fp16.onnx`, 18,947,043 bytes) does not, so a
+/// browser cannot fetch it. Both hold the same network
+/// (`research/birdbox-bench/README.md`). To serve the release file from a
+/// mirror instead, change `url`, `size` and `sha256`: the worker takes either.
+/// The tag could be moved, so the SHA-256 is checked.
+pub const JUST_BIRD: ModelFile = ModelFile {
+    id: "birdbox-just-bird-v2.1.0-demo-fp16.onnx",
+    url: "https://raw.githubusercontent.com/birdnet-team/BirdBox/v2.1.0/docs/models/Just-Bird_fp16.onnx",
+    size: 21_150_203,
+    sha256: "34b5720cb4fb65d5201d9e9d7cecd3b670d4838552d2a84a6843964407f7e057",
+    kind: FileKind::JustBird,
 };
 
 /// BirdNET+ V3.0's labels, served next to the app (index.html copies it from
@@ -351,6 +372,7 @@ pub fn all_files() -> impl Iterator<Item = &'static ModelFile> {
     birdnet_files()
         .chain(PERCH_FILES)
         .chain(std::iter::once(&BIRDNET_V3))
+        .chain(std::iter::once(&JUST_BIRD))
         .chain(GEOMODEL_FILES)
         .chain(std::iter::once(&DENOISER))
 }
@@ -430,6 +452,23 @@ const BIRDNET_V3_CREDITS: &[&str] = &[
 ];
 
 const BIRDNET_V3_CITATION: &str = "Lasseck, M., Eibl, M., Klinck, H., & Kahl, S. (2026). BirdNET+ V3.0 model files (Version 3.0.1). Zenodo. doi:10.5281/zenodo.24362980.";
+
+/// Licence and credit for the bird boxes (BirdBox's Just-Bird), shown with
+/// BirdNET+ V3.0's when boxes are on. Credits from BirdBox's `CITATION.cff`.
+pub const JUST_BIRD_ATTRIBUTION: Attribution = Attribution {
+    name: "BirdBox Just-Bird",
+    powered_by: "Bird boxes by BirdBox",
+    powered_by_url: "https://github.com/birdnet-team/BirdBox",
+    licence: "AGPL-3.0",
+    licence_url: "https://www.gnu.org/licenses/agpl-3.0.html",
+    credits: &[
+        "Bird boxes: BirdBox Just-Bird model, version 2.1.0, by Elias Schlosser, Stefan Kahl and Maximilian Eibl (BirdNET Team). Model weights licensed under the GNU AGPL-3.0; trained with Ultralytics YOLO11 (Jocher and Qiu, 2024). Source: github.com/birdnet-team/BirdBox.",
+        "Oversample downloads the model file of BirdBox's browser demo, version 2.1.0, unchanged from GitHub, and takes the network out of it and converts it to float32 on this device.",
+    ],
+    citation: "Schlosser, E., Kahl, S., & Eibl, M. BirdBox (Version 2.1.0). github.com/birdnet-team/BirdBox.",
+    source_url: "https://github.com/birdnet-team/BirdBox/tree/v2.1.0",
+    revision: "v2.1.0",
+};
 
 /// The Zenodo record version BirdNET+ V3.0 comes from.
 pub const BIRDNET_V3_REVISION: &str = "3.0.1";
@@ -564,6 +603,15 @@ mod tests {
             assert!(f.url.ends_with(f.id));
         }
         assert!(PERCH_LABELS.url.contains(PERCH_LABELS_REVISION));
+    }
+
+    #[test]
+    fn just_bird_is_pinned_and_not_part_of_a_v3_run() {
+        assert_eq!(file_by_id(JUST_BIRD.id), Some(&JUST_BIRD));
+        assert_eq!(JUST_BIRD.part(), Some(ModelPart::JustBird));
+        assert!(JUST_BIRD.url.contains("/v2.1.0/"));
+        assert_eq!(JUST_BIRD.sha256.len(), 64);
+        assert!(!ModelChoice::BirdNetV3.files().contains(&&JUST_BIRD));
     }
 
     #[test]

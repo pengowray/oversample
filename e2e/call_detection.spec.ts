@@ -188,3 +188,117 @@ test("folds stay open across a reload", async ({ page }) => {
   await expect(page.locator('.cd-fold[data-fold="windows"] .cd-fold-head')).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator('.cd-fold[data-fold="annotate"] .cd-fold-head')).toHaveAttribute("aria-expanded", "false");
 });
+
+/** BirdNET+ V3.0 windows every 1.5 s: a robin in the one at 1.5 s. */
+const V3_SEED = JSON.stringify({
+  method: "birdnet-v3",
+  labels: ["Turdus merula_Common Blackbird", "Erithacus rubecula_European Robin"],
+  windows: [
+    [0, 3, [[0, 0.8]]],
+    [1.5, 4.5, [[1, 0.6], [0, 0.2]]],
+    [3, 6, [[0, 0.1]]],
+    [4.5, 7.5, [[1, 0.2]]],
+    [6, 9, [[0, 0.4]]],
+  ],
+});
+
+/**
+ * Window boxes, as BirdBox's model gives them: [window start, t0, t1, f0, f1,
+ * confidence]. The robin's window names the first; the second's window
+ * scores only a blackbird at 0.10, so it has no name; the third is below the
+ * default minimum box confidence of 0.30.
+ */
+const BOX_SEED = JSON.stringify({
+  raw: [
+    [1.5, 2.4, 2.8, 2000, 4000, 0.7],
+    [3.0, 3.9, 4.2, 5000, 7000, 0.5],
+    [6.0, 7.0, 7.4, 3000, 6000, 0.2],
+  ],
+  samples: 12 * 32000,
+});
+
+type Hook = { seed: (j: string) => string; seedBoxes: (j: string) => string; boxes: () => string };
+
+/** Pixels of the spectrogram in the bird boxes' lime. */
+async function limePixels(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const c = document.querySelector(".chart-stage canvas") as HTMLCanvasElement;
+    const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (Math.abs(d[i] - 180) < 12 && Math.abs(d[i + 1] - 240) < 12 && Math.abs(d[i + 2] - 60) < 16) n++;
+    }
+    return n;
+  });
+}
+
+test("bird sound boxes are drawn and named from BirdNET+ V3.0", async ({ page }) => {
+  await page.addInitScript(() => localStorage.removeItem("oversample_bird_boxes"));
+  await openFile(page);
+  await pickMethod(page, "BirdNET+ V3.0");
+  const errs = await page.evaluate(
+    ([a, b]) => {
+      const h = (window as unknown as { __oversample_classifier: Hook }).__oversample_classifier;
+      return [h.seed(a), h.seedBoxes(b)];
+    },
+    [V3_SEED, BOX_SEED],
+  );
+  expect(errs).toEqual(["", ""]);
+  const hook = () =>
+    page.evaluate(() => JSON.parse((window as unknown as { __oversample_classifier: Hook }).__oversample_classifier.boxes()));
+  // Off by default: nothing drawn, nothing listed.
+  expect(await hook()).toEqual([]);
+  await expect(page.locator(".cd-list tr", { hasText: "Bird sounds" })).toHaveCount(0);
+  await page.locator(".cd-gear").click();
+  const settings = page.locator(".cd-settings");
+  await settings.getByLabel("Draw a box round each bird sound").check();
+  await settings.getByLabel("Boxes on the spectrogram").check();
+  await expect(page.locator(".cd-in-force")).toContainText("One box per phrase");
+  await expect(page.locator(".cd-in-force")).toContainText("Min box confidence 0.30");
+  await expect(settings).toContainText("Minimum box confidence");
+  const row = page.locator(".cd-list tr", { hasText: "Bird sounds" });
+  await expect(row).toContainText("Bird sounds: 2 boxes");
+  await expect(row).toContainText("0.70");
+  const boxes = await hook();
+  expect(boxes.map((b: { name: string | null }) => b.name)).toEqual(["European Robin", null]);
+  expect(boxes[0].species.map((s: [string, number]) => s[0])).toEqual(["European Robin", "Common Blackbird"]);
+  expect(boxes[1].species.map((s: [string, number]) => s[0])).toEqual(["Common Blackbird"]);
+  await expect.poll(() => limePixels(page)).toBeGreaterThan(50);
+  // A lower minimum keeps the third box.
+  await settings.getByLabel("Minimum box confidence").fill("0.15");
+  await expect(row).toContainText("Bird sounds: 3 boxes");
+  await settings.getByRole("button", { name: "Call", exact: true }).click();
+  await expect(page.locator(".cd-in-force")).toContainText("One box per call");
+  await expect(page.locator(".cd-in-force")).toContainText("Min box confidence 0.15");
+  // The row shows the best box and opens its card.
+  await row.click();
+  await expect.poll(() => limePixels(page)).toBeGreaterThan(50);
+  // The setting is saved; turning it off hides the boxes.
+  expect(await page.evaluate(() => localStorage.getItem("oversample_bird_boxes"))).toBe("true");
+  await settings.getByLabel("Draw a box round each bird sound").uncheck();
+  await expect(row).toHaveCount(0);
+  await expect.poll(() => limePixels(page)).toBe(0);
+});
+
+test("a file analysed without bird boxes asks for another Analyse", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("oversample_bird_boxes", "true"));
+  await openFile(page);
+  await pickMethod(page, "BirdNET+ V3.0");
+  // With the box model missing, the download includes it: 72 MB + 21 MB.
+  await expect(page.locator(".detection-primary-btn")).toHaveText("Download model (93 MB)");
+  const seedErr = await page.evaluate(
+    (a) => (window as unknown as { __oversample_classifier: Hook }).__oversample_classifier.seed(a),
+    V3_SEED,
+  );
+  expect(seedErr).toBe("");
+  await expect(page.locator(".cd-recording")).toContainText("Analyse again to add bird sound boxes to this file.");
+  // No boxes found: the row says so and has no best confidence.
+  const err = await page.evaluate(
+    () => (window as unknown as { __oversample_classifier: Hook }).__oversample_classifier.seedBoxes('{"raw":[],"samples":384000}'),
+  );
+  expect(err).toBe("");
+  await expect(page.locator(".cd-recording")).not.toContainText("Analyse again to add bird sound boxes");
+  const row = page.locator(".cd-list tr", { hasText: "Bird sounds" });
+  await expect(row).toContainText("Bird sounds: 0 boxes");
+  await expect(row.locator(".detection-col-num")).toHaveText("–");
+});

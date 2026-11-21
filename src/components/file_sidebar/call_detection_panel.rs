@@ -11,6 +11,7 @@
 //! `AppState::call_detection`, so they survive closing the tab and the overlay keeps
 //! showing them.
 
+mod bird_boxes;
 mod classifier_section;
 mod live_view;
 mod parts;

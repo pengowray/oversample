@@ -13,9 +13,11 @@
 //! - [`engine`]: BirdNET's backbone and the regional heads in tract.
 //! - [`perch`]: Perch's embedding model in tract and its classifier.
 //! - [`v3`]: BirdNET+ V3.0 in tract, patched to float32 as it loads.
+//! - [`birdbox`]: BirdBox's Just-Bird box detector, which runs beside V3.0.
 //! - [`session`]: the worker's state and message handling, browser-free so the
 //!   native tests run it.
 
+pub mod birdbox;
 pub mod denoise;
 pub mod engine;
 pub mod geomodel;

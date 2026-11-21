@@ -328,6 +328,9 @@ pub fn Spectrogram() -> impl IntoView {
         ));
         cb.forget();
     }
+    // The bird sound boxes, merged and named once per change of their inputs,
+    // not on every frame.
+    let bird_boxes = Memo::new(move |_| crate::classifier::boxes::drawn(state));
     Effect::new({
         let disposed = disposed.clone();
         move || {
@@ -390,6 +393,12 @@ pub fn Spectrogram() -> impl IntoView {
             let detection_method = state.call_detection.method().get();
             let detection_overlay = state.boxes_on();
             let species_strip = species_strip(state, detection_method);
+            let bird_box_focus = state
+                .call_detection
+                .hover_box()
+                .get()
+                .or(state.call_detection.picked_box().get());
+            bird_boxes.track();
             let detection_file = state
                 .call_detection
                 .scanned()
@@ -1411,6 +1420,29 @@ pub fn Spectrogram() -> impl IntoView {
                     });
                 }
                 if detection_overlay {
+                    bird_boxes.with_untracked(|boxes| {
+                        use crate::classifier::boxes as bb;
+                        spectrogram_renderer::draw_bird_boxes(
+                            &ctx,
+                            boxes,
+                            bird_box_focus,
+                            bb::UNNAMED,
+                            &bb::card_first,
+                            bb::CARD_NONE,
+                            min_freq,
+                            max_freq,
+                            scroll,
+                            time_res,
+                            zoom,
+                            display_w as f64,
+                            display_h as f64,
+                            if species_strip.is_some() {
+                                spectrogram_renderer::SPECIES_STRIP_H
+                            } else {
+                                0.0
+                            },
+                        );
+                    });
                     if let Some(strip) = &species_strip {
                         spectrogram_renderer::draw_species_strip(
                             &ctx,

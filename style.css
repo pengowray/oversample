@@ -10912,6 +10912,16 @@ body.hfr-nudge-on .hfr-switch {
 .map-key.cd-swatch-pc {
     border: 1px solid #888;
 }
+/* The bird sound boxes' row: an outline in the boxes' lime
+   (BIRD_BOX_STROKE in overlays.rs), as each box is drawn. */
+.map-key.cd-swatch-box {
+    background: transparent;
+    border: 1.5px solid rgb(180, 240, 60);
+}
+/* The two bird box options, nested under their checkbox. */
+.cd-settings .setting-row.cd-box-sub {
+    padding-left: 30px;
+}
 .cd-name-line .unlikely-flag {
     margin-left: 0;
 }

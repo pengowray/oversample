@@ -1858,6 +1858,24 @@ pub struct CallDetectionState {
     pub sound_groups: bool,
     /// Number of sound groups: 2, 3 or 4. Saved with the strips.
     pub sound_group_count: usize,
+    /// BirdNET+ V3.0: Analyse also finds bird boxes (BirdBox's Just-Bird) and
+    /// names each from V3.0's windows (`crate::classifier::boxes`). Saved
+    /// (`settings::keys::BIRD_BOXES`); off until picked, since it downloads
+    /// another 21 MB and makes Analyse slower.
+    pub bird_boxes: bool,
+    /// Window boxes below this are left out before they are merged, as
+    /// BirdBox's `--conf` does. BirdBox's default is 0.15; 0.30 leaves out
+    /// rain and most of the false boxes on voices
+    /// (`research/birdbox-bench/README.md`, "What the boxes show").
+    pub box_min_confidence: f32,
+    /// Boxes of single calls (phrase gap 0) rather than of phrases (BirdBox's
+    /// default gap of 0.05 s, which joins calls in one band into one box).
+    pub box_calls: bool,
+    /// The bird box under the pointer, and the one picked by a click or tap,
+    /// by start time and lowest frequency (a box's place in the list changes
+    /// with the settings). Both show the box's species scores.
+    pub hover_box: Option<(f64, f64)>,
+    pub picked_box: Option<(f64, f64)>,
 }
 
 /// The methods in the Call detection tab.
@@ -1915,6 +1933,9 @@ pub struct ClassifierState {
     pub device_position: Option<(f32, f32)>,
     /// Bumped by each run, rescore and cancel; older tasks stop when it changes.
     pub generation: u32,
+    /// Bird boxes per file id (`crate::classifier::boxes`), from the last
+    /// BirdNET+ V3.0 Analyse that found them.
+    pub boxes: std::collections::HashMap<u64, crate::classifier::boxes::BoxRun>,
     /// What the live view is doing, for its status line.
     pub live: crate::live_embedding::LiveStatus,
     /// The file and method whose results the live view is adding readings to
@@ -3112,6 +3133,11 @@ impl AppState {
                 strip_components: saved_strips.components,
                 sound_groups: saved_strips.sound_groups,
                 sound_group_count: saved_strips.groups,
+                bird_boxes: crate::settings::get_bool(crate::settings::keys::BIRD_BOXES, false),
+                box_min_confidence: 0.3,
+                box_calls: false,
+                hover_box: None,
+                picked_box: None,
             }),
 
             classifier: Store::new(ClassifierState::default()),

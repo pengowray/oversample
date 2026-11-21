@@ -1,6 +1,7 @@
 //! The worker's state and message handling, without any browser types, so the
 //! native tests drive the same code the Web Worker runs.
 
+use crate::birdbox;
 use crate::denoise::stream::StreamDenoiser;
 use crate::denoise::{check_smooth_frames, Denoiser, TractMask};
 use crate::engine::{sigmoid, top_confidences, top_scores, Backbone, Head, MergedHeads};
@@ -36,6 +37,8 @@ struct Run {
     id: u32,
     method: Method,
     windower: Windower,
+    /// The bird box detector's images, when the run asked for boxes.
+    boxes: Option<birdbox::BoxStream>,
 }
 
 /// The model that takes the audio.
@@ -72,6 +75,8 @@ impl HeadModel {
 pub struct Session {
     audio: Option<(String, AudioModel)>,
     head: Option<(String, HeadModel)>,
+    /// The bird box detector, beside BirdNET+ V3.0.
+    boxer: Option<(String, birdbox::Network)>,
     run: Option<Run>,
     /// The denoiser's model, and the recording it is working through.
     denoiser: Option<(String, TractMask)>,
@@ -99,6 +104,7 @@ impl Session {
                 match part.slot() {
                     ModelSlot::Audio => self.audio = None,
                     ModelSlot::Head => self.head = None,
+                    ModelSlot::Boxes => self.boxer = None,
                     ModelSlot::Denoise => {
                         self.denoiser = None;
                         self.denoising = None;
@@ -122,6 +128,9 @@ impl Session {
                         .map_err(|e| format!("{e:#}")),
                     ModelPart::PerchClassifier => perch::Classifier::from_bytes(bytes)
                         .map(|m| self.head = Some((key.clone(), HeadModel::Perch(m)))),
+                    ModelPart::JustBird => birdbox::Network::load(&bytes)
+                        .map(|m| self.boxer = Some((key.clone(), m)))
+                        .map_err(|e| format!("{e:#}")),
                     ModelPart::Denoiser => TractMask::load(bytes)
                         .map(|m| self.denoiser = Some((key.clone(), m)))
                         .map_err(|e| format!("{e:#}")),
@@ -165,6 +174,7 @@ impl Session {
                 method,
                 source_rate,
                 offsets,
+                boxes,
             } => {
                 self.run = None;
                 if let Some(min) = method.min_source_rate() {
@@ -189,10 +199,22 @@ impl Session {
                     );
                     return;
                 }
+                // Boxes come with the windows end to end of BirdNET+ V3.0, whose
+                // audio is the box detector's: 32 kHz, in the same order.
+                let boxes = boxes && method == Method::BirdNetV3 && offsets.iter().all(|&o| o == 0);
+                if boxes && self.boxer.is_none() {
+                    out.send(
+                        inference_error(run, "the bird box model is not loaded".into()),
+                        None,
+                    );
+                    return;
+                }
+                let windower = Windower::with_offsets(method, source_rate, &offsets);
                 self.run = Some(Run {
                     id: run,
                     method,
-                    windower: Windower::with_offsets(method, source_rate, &offsets),
+                    windower: if boxes { windower.tap() } else { windower },
+                    boxes: boxes.then(birdbox::BoxStream::new),
                 });
             }
             ToWorker::Chunk { run, seq } => {
@@ -200,7 +222,7 @@ impl Session {
                     return;
                 };
                 let windows = r.windower.push(att.samples.as_deref().unwrap_or_default());
-                if self.score_windows(run, windows, out) {
+                if self.find_boxes(run, false, out) && self.score_windows(run, windows, out) {
                     out.send(FromWorker::ChunkDone { run, seq }, None);
                 }
             }
@@ -209,7 +231,7 @@ impl Session {
                     return;
                 };
                 let windows = r.windower.finish();
-                if self.score_windows(run, windows, out) {
+                if self.find_boxes(run, true, out) && self.score_windows(run, windows, out) {
                     let count = self.run.as_ref().map_or(0, |r| r.windower.windows());
                     self.run = None;
                     out.send(
@@ -498,6 +520,60 @@ impl Session {
                     Ok(scores) => out.send(FromWorker::Occurrence { req, scores }, None),
                     Err(e) => out.send(load_error(format!("{e:#}")), None),
                 }
+            }
+        }
+    }
+
+    /// Give the bird box detector the audio the windower made since the last
+    /// call (all of it, with `finish`), and send the boxes of each window it
+    /// completes; with `finish`, then `BoxesDone`. Returns false (and ends the
+    /// run) after an error. Does nothing for a run without boxes.
+    fn find_boxes(&mut self, run: u32, finish: bool, out: &mut dyn Outbox) -> bool {
+        let Some(r) = self.run.as_mut() else {
+            return true;
+        };
+        let Some(stream) = r.boxes.as_mut() else {
+            return true;
+        };
+        let audio = r.windower.take_tapped();
+        let mut clips = stream.push(&audio);
+        if finish {
+            clips.extend(stream.finish());
+        }
+        let Some((_, net)) = self.boxer.as_ref() else {
+            self.run = None;
+            out.send(
+                inference_error(run, "the bird box model is not loaded".into()),
+                None,
+            );
+            return false;
+        };
+        match birdbox::boxes_of(net, clips) {
+            Ok(found) => {
+                for (index, boxes) in found {
+                    out.send(FromWorker::Boxes { run, index, boxes }, None);
+                }
+                if finish {
+                    let (windows, samples) = self
+                        .run
+                        .as_ref()
+                        .and_then(|r| r.boxes.as_ref())
+                        .map_or((0, 0), |s| (s.clips() as u32, s.samples()));
+                    out.send(
+                        FromWorker::BoxesDone {
+                            run,
+                            windows,
+                            samples: samples as f64,
+                        },
+                        None,
+                    );
+                }
+                true
+            }
+            Err(e) => {
+                self.run = None;
+                out.send(inference_error(run, format!("{e:#}")), None);
+                false
             }
         }
     }

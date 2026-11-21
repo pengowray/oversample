@@ -71,6 +71,9 @@ pub mod keys {
     /// Folds in the Call detection tab that are open, as a comma-separated
     /// list of fold names ("map,windows"). Folds start closed.
     pub const CALL_DETECTION_FOLDS: &str = "oversample_call_detection_folds";
+    /// "true" when "Find bird boxes" is on in the Call detection tab's
+    /// BirdNET+ V3.0 settings.
+    pub const BIRD_BOXES: &str = "oversample_bird_boxes";
     /// Developer override for the proxy base URL (e.g. `http://localhost:8080`).
     /// No UI; set it from the browser console. Unset means the build default.
     pub const XC_API_BASE_OVERRIDE: &str = "oversample_xc_api_base";
