@@ -68,10 +68,12 @@ pub fn auto_scope(file: Option<&LoadedFile>) -> AutoScope {
             note: "This recording has no location".to_string(),
         };
     };
-    if let (Some(scope), Some((lat, lon))) = (place.area.and_then(scope_for_area), place.position) {
+    if let (Some(scope), Some(position)) =
+        (place.area.and_then(scope_for_area), place.position_phrase())
+    {
         return AutoScope {
             scope,
-            note: format!("From GPS position {lat:.2}, {lon:.2}"),
+            note: format!("From {position}"),
         };
     }
     let book = country_to_region(&place.country).map(|m| m.region);

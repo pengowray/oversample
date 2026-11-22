@@ -9,9 +9,10 @@
 //! - [`countries`]: which country a position is in, offline.
 //!
 //! Sources, first found wins:
-//! - Place: GUANO `Loc Position` ("lat lon"), or `Loc|Lat` with `Loc|Lon`;
-//!   then a Wildlife Acoustics `wamd` chunk's GPS position; then Xeno-Canto's
-//!   "Coordinates" ("lat, lon").
+//! - Place ([`file_position`]): GUANO `Loc Position` ("lat lon"), or `Loc|Lat`
+//!   with `Loc|Lon`; then a Wildlife Acoustics `wamd` chunk's GPS position; a
+//!   Pettersson D500X block's LAT and LON; an Anabat header's GPS text; then
+//!   the source website's "Coordinates" ("lat, lon").
 //! - Date: GUANO `Timestamp`, then the `wamd` timestamp, then Xeno-Canto's
 //!   "Date" (all start "YYYY-MM-DD"). Without a date the whole year is used (week 0). A file's
 //!   modified time is not used: copying a file changes it.
@@ -74,12 +75,46 @@ fn wamd_fields(file: &LoadedFile) -> Option<&[(String, String)]> {
     wav.wamd.as_ref().map(|b| b.fields.as_slice())
 }
 
-/// The recording's position from its own metadata, in decimal degrees. The
-/// first of these that gives a position is used: GUANO, a Wildlife Acoustics
-/// `wamd` chunk, a Pettersson D500X block (which the owner types in), an Anabat
-/// zero-crossing header, then the source website's coordinates. The Info
-/// panel's maps are drawn from the same parsers.
-pub fn file_position(file: &LoadedFile) -> Option<(f64, f64)> {
+/// Where a recording's position was read from.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PositionSource {
+    /// A position the recorder wrote: GUANO, a Wildlife Acoustics `wamd`
+    /// chunk, an Anabat header.
+    Recorder,
+    /// A position the recorder's owner typed into it (a Pettersson D500X,
+    /// which has no GPS).
+    TypedIn,
+    /// The coordinates on the website the recording came from.
+    Site(SourceSite),
+}
+
+impl PositionSource {
+    /// The position with what it is, to follow "From ": "GPS position 52.48,
+    /// -1.90", "Xeno-canto coordinates 52.48, -1.90", "position typed into
+    /// the recorder: 52.48, -1.90".
+    pub fn phrase(&self, lat: f32, lon: f32) -> String {
+        match self {
+            Self::Recorder => format!("GPS position {lat:.2}, {lon:.2}"),
+            Self::TypedIn => format!("position typed into the recorder: {lat:.2}, {lon:.2}"),
+            Self::Site(site) => format!("{} coordinates {lat:.2}, {lon:.2}", site.name()),
+        }
+    }
+}
+
+/// A recording's position in decimal degrees, and where it was read from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilePosition {
+    pub lat: f64,
+    pub lon: f64,
+    pub source: PositionSource,
+}
+
+/// The recording's position from its own metadata. The first of these that
+/// gives a position is used: GUANO, a Wildlife Acoustics `wamd` chunk, a
+/// Pettersson D500X block, an Anabat zero-crossing header, then the source
+/// website's coordinates. The Info panel's maps are drawn from the same
+/// parsers.
+pub fn file_position(file: &LoadedFile) -> Option<FilePosition> {
     let meta = &file.audio.metadata;
     let wav = meta.wav.as_ref();
     let from_guano = || {
@@ -104,22 +139,26 @@ pub fn file_position(file: &LoadedFile) -> Option<(f64, f64)> {
         oversample_core::audio::zc::gps_position(&zc.metadata.gps)
     };
     let from_site = || {
-        let site = file.site_metadata.as_ref()?.fields.as_slice();
-        field(site, "Coordinates").and_then(parse_lat_lon)
+        let site = file.site_metadata.as_ref()?;
+        let position = field(&site.fields, "Coordinates").and_then(parse_lat_lon)?;
+        Some((position, PositionSource::Site(site.site.clone())))
     };
-    from_guano()
+    let recorder = |p| (p, PositionSource::Recorder);
+    let ((lat, lon), source) = from_guano()
         .or_else(from_wamd)
-        .or_else(from_d500x)
-        .or_else(from_zc)
-        .or_else(from_site)
+        .map(recorder)
+        .or_else(|| from_d500x().map(|p| (p, PositionSource::TypedIn)))
+        .or_else(|| from_zc().map(recorder))
+        .or_else(from_site)?;
+    Some(FilePosition { lat, lon, source })
 }
 
 /// The recording's place and week from its own metadata, if it has a place.
 pub fn file_place(file: &LoadedFile) -> Option<Place> {
-    let (lat, lon) = file_position(file)?;
+    let position = file_position(file)?;
     Some(Place {
-        lat: lat as f32,
-        lon: lon as f32,
+        lat: position.lat as f32,
+        lon: position.lon as f32,
         week: file_week(file),
     })
 }
@@ -148,7 +187,7 @@ pub fn file_week(file: &LoadedFile) -> u32 {
 /// Where a recording's country came from.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaceSource {
-    /// Its GPS position (GUANO or source-site coordinates), looked up offline.
+    /// Its position ([`file_position`]), looked up offline.
     Gps { lat: f32, lon: f32 },
     /// The "Country" field of the site the recording came from.
     Metadata { site: SourceSite },
@@ -162,29 +201,35 @@ pub struct RecordingPlace {
     /// Latitude and longitude, when the recording has them (it can have a
     /// country from its source site and no position).
     pub position: Option<(f32, f32)>,
+    /// Where `position` was read from.
+    pub position_source: Option<PositionSource>,
     /// The area of the country the position is in, where one is outlined.
     pub area: Option<Area>,
 }
 
 impl RecordingPlace {
+    /// The position with what it is, to follow "From ": "GPS position 52.48,
+    /// -1.90" ([`PositionSource::phrase`]).
+    pub fn position_phrase(&self) -> Option<String> {
+        let (lat, lon) = self.position?;
+        Some(self.position_source.as_ref()?.phrase(lat, lon))
+    }
+
     /// Where the place came from, for a reader who is shown `region` (a
     /// region's name) beside it: "From GPS position 52.48, -1.90", with the
     /// country added when `region` is not the country itself, or "From
     /// iNaturalist country: Australia" (with ", GPS position -37.80, 145.01"
     /// added when the position is in an outlined area).
     pub fn detail(&self, region: &str) -> String {
+        let position = self.position_phrase().unwrap_or_default();
         match &self.source {
-            &PlaceSource::Gps { lat, lon } if self.country == region => {
-                format!("From GPS position {lat:.2}, {lon:.2}")
-            }
-            &PlaceSource::Gps { lat, lon } => {
-                format!("From GPS position {lat:.2}, {lon:.2} ({})", self.country)
-            }
+            PlaceSource::Gps { .. } if self.country == region => format!("From {position}"),
+            PlaceSource::Gps { .. } => format!("From {position} ({})", self.country),
             PlaceSource::Metadata { site } => {
                 let mut text = format!("From {} country: {}", site.name(), self.country);
                 // The position is what found an area inside the country.
-                if let (Some(_), Some((lat, lon))) = (self.area, self.position) {
-                    text.push_str(&format!(", GPS position {lat:.2}, {lon:.2}"));
+                if self.area.is_some() && !position.is_empty() {
+                    text.push_str(&format!(", {position}"));
                 }
                 text
             }
@@ -198,7 +243,9 @@ impl RecordingPlace {
 /// the one the bat book's region map knows is used. With a position, also the
 /// area of the country it is in ([`areas::area_at`]).
 pub fn recording_place(file: &LoadedFile) -> Option<RecordingPlace> {
-    let position = file_place(file).map(|p| (p.lat, p.lon));
+    let found = file_position(file);
+    let position = found.as_ref().map(|p| (p.lat as f32, p.lon as f32));
+    let position_source = found.map(|p| p.source);
     let from_site = file.site_metadata.as_ref().and_then(|m| {
         let country = m
             .fields
@@ -228,6 +275,7 @@ pub fn recording_place(file: &LoadedFile) -> Option<RecordingPlace> {
         source,
         country,
         position,
+        position_source,
         area,
     })
 }
