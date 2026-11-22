@@ -1,4 +1,5 @@
 pub mod guano;
+pub mod guano_edit;
 pub mod live_schedule;
 pub mod loader;
 pub mod source;
