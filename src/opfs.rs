@@ -303,7 +303,7 @@ fn sync_noise_profile_from_state(
 /// Produce YAML for a file-adjacent sidecar with `file_path` stripped from the identity.
 /// The sidecar sits next to the audio file, so the full path is redundant (and `filename` already
 /// stores the basename). Central annotations keep the full path for re-finding.
-fn sidecar_yaml_without_full_path(set: &crate::annotations::AnnotationSet) -> String {
+pub(crate) fn sidecar_yaml_without_full_path(set: &crate::annotations::AnnotationSet) -> String {
     let mut sidecar_set = set.clone();
     sidecar_set.file_identity.file_path = None;
     yaml_serde::to_string(&sidecar_set).unwrap_or_default()

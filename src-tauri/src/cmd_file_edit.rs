@@ -173,7 +173,8 @@ mod tests {
     }
 
     fn temp_file(name: &str, bytes: &[u8]) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("oversample-edit-{}-{name}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("oversample-edit-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("rec.wav");
         std::fs::write(&path, bytes).unwrap();
@@ -191,7 +192,10 @@ mod tests {
         assert_eq!(outcome.changed, hashes(&changed));
         assert!(changed.ends_with(b"GUANO|Version: 1.0\nTE: 10\n"));
         // No temporary file is left beside it.
-        assert_eq!(std::fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+            1
+        );
 
         let restored = undo_on_disk(&path, &outcome.undo, &outcome.original).unwrap();
         assert_eq!(restored, outcome.original);

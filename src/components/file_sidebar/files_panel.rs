@@ -89,7 +89,7 @@ pub(crate) fn reconcile_after_file_removed(state: &AppState, removed: usize) {
 ///
 /// Used for the synchronous close-button path and for the post-stop close
 /// path that runs after an async stop_listening / stop_recording.
-fn remove_file_at(state: &AppState, i: usize) {
+pub(crate) fn remove_file_at(state: &AppState, i: usize) {
     if state.playback.is_playing().get_untracked()
         && state.library.current_index().get_untracked() == Some(i)
     {

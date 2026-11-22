@@ -1,4 +1,4 @@
-use super::rate_notes_view::{note_selector, RateNotes, TimeExpansionRow};
+use super::rate_notes_view::{note_selector, GuanoControls, RateNotes, TimeExpansionRow};
 use crate::rate_notes::{file_rate_notes, NoteKind};
 use crate::state::store_fields::*;
 use crate::state::{AppState, MetadataView, RightSidebarTab};
@@ -1893,6 +1893,18 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                     stored_rate=f.audio.stored_rate()
                                     loading=f.loading_id.is_some()
                                     kept=crate::rate_notes::Kept::of(f)
+                                />
+                                <GuanoControls
+                                    file_id=f.id
+                                    name=f.name.clone()
+                                    action=crate::guano_write::action_for(&crate::guano_write::GuanoFacts::of(
+                                        state.is_tauri,
+                                        f,
+                                        state.annotations.store().with(|store| {
+                                            store.get(f.id).and_then(|set| set.file_edits.last().cloned())
+                                        }),
+                                    ))
+                                    loading=f.loading_id.is_some()
                                 />
                                 {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
                                 {inline_row("Bit depth".into(), bit_depth_text(meta), None)}

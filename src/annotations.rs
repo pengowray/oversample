@@ -406,6 +406,26 @@ pub struct SavedTimeExpansion {
     pub set_by_user: Option<f64>,
 }
 
+/// A change the app made to the audio file itself, saved so it can be seen
+/// and taken back: which field was set, the file's size and hashes before
+/// and after, and the bytes that put the original file back.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FileEdit {
+    /// What was changed. [`crate::guano_write::KIND_GUANO_TE`]: the TE field
+    /// of the file's GUANO metadata.
+    pub what: String,
+    /// The time expansion factor written.
+    pub factor: f64,
+    /// When the file was changed (ISO 8601).
+    pub made_at: String,
+    /// The file before the change.
+    pub original: oversample_ipc::file_edit::FileHashes,
+    /// The file after the change.
+    pub changed: oversample_ipc::file_edit::FileHashes,
+    /// Applied to the changed file, gives the original file's bytes.
+    pub undo: Vec<oversample_ipc::file_edit::SavedSplice>,
+}
+
 /// Current `.batm` sidecar on-disk format version. A file whose `version`
 /// exceeds this was written by a newer app: still loaded best-effort (serde fills
 /// defaults), but unknown fields may be dropped or misread.
@@ -448,6 +468,11 @@ pub struct AnnotationSet {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub time_expansion: Option<SavedTimeExpansion>,
 
+    /// Changes the app made to the audio file, oldest first
+    /// ([`crate::guano_write`]).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub file_edits: Vec<FileEdit>,
+
     /// The site the recording was loaded from, when it was (Xeno-canto,
     /// Wikimedia Commons, ...). Written when the set is saved for any other
     /// reason; loading a site recording does not by itself create a file.
@@ -488,6 +513,7 @@ impl AnnotationSet {
             annotations: Vec::new(),
             lowest_bat_hz: None,
             time_expansion: None,
+            file_edits: Vec::new(),
             source: None,
             noise_profile: None,
         }
@@ -754,6 +780,7 @@ mod tests {
             annotations: Vec::new(),
             lowest_bat_hz: None,
             time_expansion: None,
+            file_edits: Vec::new(),
             source: None,
             noise_profile: None,
         };

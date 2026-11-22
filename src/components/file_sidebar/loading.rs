@@ -874,7 +874,7 @@ pub(crate) async fn load_single_demo(
     .await
 }
 
-async fn read_file_bytes(file: &File) -> Result<Vec<u8>, String> {
+pub(crate) async fn read_file_bytes(file: &File) -> Result<Vec<u8>, String> {
     let reader = FileReader::new().map_err(|e| format!("FileReader: {e:?}"))?;
     let reader_clone = reader.clone();
 

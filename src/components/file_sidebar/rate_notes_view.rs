@@ -125,6 +125,92 @@ pub(crate) fn TimeExpansionRow(
     }
 }
 
+/// The button that writes the time expansion factor into the audio file's
+/// GUANO metadata, or takes that change back ([`crate::guano_write`]). It is
+/// drawn after the notes under the Sample rate row, in a note of its own
+/// (`data-note="guano"`), with the look of the notes' other buttons. The
+/// Undo button has a line above it saying what Oversample changed.
+///
+/// The desktop app asks before it changes the file on disk. The button is
+/// disabled while the file loads and while the change is being made. A
+/// change to the file on disk ends with the file opened again, which
+/// rebuilds the panel.
+#[component]
+pub(crate) fn GuanoControls(
+    file_id: u64,
+    name: String,
+    action: Option<crate::guano_write::GuanoAction>,
+    loading: bool,
+) -> impl IntoView {
+    use crate::guano_write::GuanoAction;
+    let state = expect_context::<AppState>();
+    let busy = RwSignal::new(false);
+    action.map(|action| {
+        let note = action.note();
+        let label = action.label();
+        let tip = action.tooltip();
+        let key = action.key();
+        let on_click = move |_: web_sys::MouseEvent| {
+            if busy.get_untracked() {
+                return;
+            }
+            if let Some(question) = action.confirm_text(&name) {
+                let confirmed = web_sys::window()
+                    .and_then(|w| w.confirm_with_message(&question).ok())
+                    .unwrap_or(false);
+                if !confirmed {
+                    return;
+                }
+            }
+            busy.set(true);
+            let action = action.clone();
+            let name = name.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let te = |f: f64| oversample_core::audio::guano_edit::te_value(f);
+                let result = match &action {
+                    GuanoAction::WriteInPlace { factor } => {
+                        crate::guano_write::write_in_place(state, file_id, *factor)
+                            .await
+                            .map(|_| {
+                                format!("Set TE to {} in the GUANO metadata of {name}", te(*factor))
+                            })
+                            .map_err(|e| format!("Could not change {name}: {e}"))
+                    }
+                    GuanoAction::Undo { .. } => crate::guano_write::undo_in_place(state, file_id)
+                        .await
+                        .map(|_| format!("Put back the original bytes of {name}"))
+                        .map_err(|e| format!("Could not change {name}: {e}")),
+                    GuanoAction::SaveCopy { factor } => {
+                        crate::guano_write::save_copy(state, file_id, *factor)
+                            .await
+                            .map(|copy| format!("Saved a copy as {copy}"))
+                            .map_err(|e| format!("Could not save a copy of {name}: {e}"))
+                    }
+                };
+                match result {
+                    Ok(done) => state.show_info_toast(done),
+                    Err(why) => state.show_error_toast(why),
+                }
+                busy.try_set(false);
+            });
+        };
+        view! {
+            <div class="metadata-note rate-note" data-note="guano">
+                {note.map(|text| view! { <div class="rate-note-muted">{text}</div> })}
+                <button
+                    class="hash-calc-btn rate-note-action"
+                    data-action=key
+                    title=tip
+                    disabled=move || loading || busy.get()
+                    on:click=on_click
+                >
+                    {label}
+                </button>
+            </div>
+        }
+    })
+}
+
 /// The button of a note. The change runs in the click handler. It rebuilds
 /// the Info panel, this button included, but the rebuild runs after the
 /// handler returns, before the next click can arrive.

@@ -1324,3 +1324,49 @@ test.describe("a factor from Wikimedia Commons", () => {
     await expect(page.locator(TE_NOTE)).not.toContainText("You set this factor");
   });
 });
+
+test.describe("the factor in the audio file's GUANO", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("the browser saves a copy with TE set, which opens corrected", async ({ page }) => {
+    const audio = wav(25_600, 2);
+    await page.goto("/");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    await page.waitForFunction(
+      () => typeof (window as { __oversample_test?: unknown }).__oversample_test === "function",
+    );
+    const input = page.locator('input[type="file"]').first();
+    await input.setInputFiles([{ name: "plain.wav", mimeType: "audio/wav", buffer: audio }]);
+    await expect(page.locator(".file-item:not(.loading)")).toHaveCount(1, { timeout: 30_000 });
+    await showInfo(page);
+    // Nothing to write while the file is read at the rate in its header.
+    await expect(page.locator('.rate-note[data-note="guano"]')).toHaveCount(0);
+    await page.locator(".te-factor-input").fill("10");
+    await page.locator(".te-factor-input").press("Enter");
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+
+    const save = page.locator('button[data-action="guano-copy"]');
+    await expect(save).toHaveText("Save a copy with TE 10 in its GUANO");
+    expect((await save.boundingBox())!.height).toBeGreaterThanOrEqual(24);
+    const [download] = await Promise.all([page.waitForEvent("download"), save.click()]);
+    expect(download.suggestedFilename()).toBe("plain TE10.wav");
+    const copy = fs.readFileSync((await download.path())!);
+    // The audio is the same, a guan chunk follows it, and the RIFF size fits.
+    expect(copy.subarray(8, audio.length).equals(audio.subarray(8))).toBe(true);
+    expect(copy.subarray(audio.length).toString("latin1")).toMatch(
+      /^guan....GUANO\|Version: 1\.0\nTE: 10\n$/s,
+    );
+    expect(copy.readUInt32LE(4)).toBe(copy.length - 8);
+
+    // The copy states the factor itself.
+    await page.locator(".file-item-close").first().click();
+    await expect(page.locator(".file-item")).toHaveCount(0);
+    await input.setInputFiles([{ name: "plain TE10.wav", mimeType: "audio/wav", buffer: copy }]);
+    await expect(page.locator(".file-item:not(.loading)")).toHaveCount(1, { timeout: 30_000 });
+    await showInfo(page);
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    await expect(page.locator(TE_NOTE)).toContainText("Corrected for ×10 time expansion.");
+    await expect(page.locator(TE_NOTE)).not.toContainText("You set this factor");
+    await expect(page.locator('.rate-note[data-note="guano"]')).toHaveCount(0);
+  });
+});

@@ -327,6 +327,12 @@ pub fn merge3(
         (b, a)
     };
     out.time_expansion = later.time_expansion.or(earlier.time_expansion);
+    // The record of changes to the audio file goes with the same copy.
+    out.file_edits = if later.file_edits.is_empty() {
+        earlier.file_edits.clone()
+    } else {
+        later.file_edits.clone()
+    };
     if let Some(kept) = lo_conflict {
         report.conflicts.push(Conflict::LowestBatHz { kept });
     }

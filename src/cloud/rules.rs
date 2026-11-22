@@ -194,6 +194,9 @@ pub fn merge_annotation_sets(drive: AnnotationSet, local: &AnnotationSet) -> Ann
     if merged.time_expansion.is_none() {
         merged.time_expansion = local.time_expansion;
     }
+    if merged.file_edits.is_empty() {
+        merged.file_edits = local.file_edits.clone();
+    }
     if merged.noise_profile.is_none() {
         merged.noise_profile = local.noise_profile.clone();
     }

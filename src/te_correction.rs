@@ -1002,6 +1002,7 @@ mod tests {
             annotations: kinds.into_iter().map(annotation).collect(),
             lowest_bat_hz: None,
             time_expansion: None,
+            file_edits: Vec::new(),
             source: None,
             noise_profile: None,
         }
