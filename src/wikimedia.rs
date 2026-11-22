@@ -45,8 +45,9 @@ const ALLOWED_SUFFIXES: &[&str] = &[
 /// File extensions worth offering. The decoder handles WAV, FLAC, OGG
 /// (Vorbis), MP3 and M4A; Opus and WebM are listed because Commons hosts
 /// them and a decode failure is a clearer answer than silently hiding them.
+/// An Ogg video (.ogv) is listed for its Vorbis sound track.
 const AUDIO_EXTS: &[&str] = &[
-    "wav", "flac", "mp3", "ogg", "oga", "opus", "m4a", "mp4", "aac", "webm",
+    "wav", "flac", "mp3", "ogg", "oga", "ogv", "opus", "m4a", "mp4", "aac", "webm",
 ];
 
 /// What the user's pasted text resolved to.
@@ -330,51 +331,156 @@ const FILE_PARAMS: &[(&str, &str)] = &[
 ];
 
 /// The MediaInfo slot, where structured-data statements (P14424) live. Only
-/// Commons has that slot — asking any other wiki for it earns a warning and
-/// nothing else.
-const MEDIAINFO_PARAMS: &[(&str, &str)] = &[("rvprop", "content"), ("rvslots", "mediainfo")];
+/// Commons has that slot.
+///
+/// It is asked for on its own, never with `imageinfo`: Commons lets its CDN
+/// and the browser keep an `imageinfo` answer for an hour, so a statement
+/// added in that hour would be missing. An answer to a `revisions` query
+/// alone is not kept (`cache-control: private, max-age=0`).
+const MEDIAINFO_PARAMS: &[(&str, &str)] = &[
+    ("prop", "revisions"),
+    ("rvprop", "content"),
+    ("rvslots", "mediainfo"),
+];
 
-/// Build a parameter list for `host`, asking for structured data only from
-/// the wiki that has it.
-fn params_for<'a>(host: &str, extra: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
-    let mut v: Vec<(&str, &str)> = vec![if host == COMMONS {
-        ("prop", "imageinfo|revisions")
-    } else {
-        ("prop", "imageinfo")
-    }];
+/// Build an `imageinfo` parameter list.
+fn params_for<'a>(extra: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+    let mut v: Vec<(&str, &str)> = vec![("prop", "imageinfo")];
     v.extend_from_slice(FILE_PARAMS);
-    if host == COMMONS {
-        v.extend_from_slice(MEDIAINFO_PARAMS);
-    }
     v.extend_from_slice(extra);
     v
 }
 
-/// Pull P14424 out of a MediaInfo slot's JSON content.
-fn time_expansion_from_mediainfo(page: &serde_json::Value) -> Option<f64> {
+/// Put `row` in `fields` before the first row with one of the labels in
+/// `before`, or at the end. A row already there with the same label goes.
+fn insert_field(fields: &mut Vec<(String, String)>, row: (&str, String), before: &[&str]) {
+    fields.retain(|(label, _)| label != row.0);
+    let at = fields
+        .iter()
+        .position(|(label, _)| before.contains(&label.as_str()))
+        .unwrap_or(fields.len());
+    fields.insert(at, (row.0.to_string(), row.1));
+}
+
+impl WikiFile {
+    /// Take the time expansion factor, the coordinates and (when the file
+    /// page gave none) the date from the file's structured data.
+    fn apply_statements(&mut self, statements: &serde_json::Value) {
+        const TAIL: &[&str] = &["License", "License URL", "Time expansion", "URL"];
+        if !self.fields.iter().any(|(label, _)| label == "Date") {
+            if let Some(date) = date_from(statements) {
+                insert_field(&mut self.fields, ("Date", date), TAIL);
+            }
+        }
+        // The label the recording search uses, which the map reads.
+        if let Some(v) = coordinates_from(statements) {
+            insert_field(&mut self.fields, ("Coordinates", v), TAIL);
+        }
+        self.time_expansion = time_expansion_from(statements);
+        self.fields.retain(|(label, _)| label != "Time expansion");
+        if let Some(te) = self.time_expansion {
+            let row = format!("{} (P14424)", format_factor(te));
+            insert_field(&mut self.fields, ("Time expansion", row), &["URL"]);
+        }
+    }
+}
+
+/// Fetch the structured data of the Commons files in `files` and apply it
+/// ([`WikiFile::apply_statements`]). A file Commons does not answer for keeps
+/// what it has.
+async fn add_structured_data(mut files: Vec<WikiFile>) -> Vec<WikiFile> {
+    let titles: Vec<String> = files
+        .iter()
+        .filter(|f| f.on_commons())
+        .map(|f| f.title.clone())
+        .collect();
+    for chunk in titles.chunks(TITLE_BATCH) {
+        let joined = chunk.join("|");
+        let mut params = MEDIAINFO_PARAMS.to_vec();
+        params.push(("titles", &joined));
+        match api_get(COMMONS, &params).await {
+            Ok(json) => {
+                for page in pages_of(&json) {
+                    let Some(statements) = mediainfo_statements(&page) else {
+                        continue;
+                    };
+                    let title = page["title"].as_str().unwrap_or_default();
+                    for file in files
+                        .iter_mut()
+                        .filter(|f| f.on_commons() && f.title == title)
+                    {
+                        file.apply_statements(&statements);
+                    }
+                }
+            }
+            Err(e) => log::warn!("Commons structured data lookup failed: {e}"),
+        }
+    }
+    files
+}
+
+/// The structured-data statements of a file page, from its MediaInfo slot.
+/// `None` when the page came without one (any wiki other than Commons).
+fn mediainfo_statements(page: &serde_json::Value) -> Option<serde_json::Value> {
     let content = page["revisions"][0]["slots"]["mediainfo"]["content"]
         .as_str()
         .or_else(|| page["revisions"][0]["slots"]["mediainfo"]["*"].as_str())?;
-    let mediainfo: serde_json::Value = serde_json::from_str(content).ok()?;
-    let statements = mediainfo["statements"][P_TIME_EXPANSION].as_array()?;
-    // Prefer a preferred-rank statement, else the first normal one; skip
-    // deprecated values and `somevalue`/`novalue` snaks.
-    let pick = statements
-        .iter()
-        .filter(|s| s["rank"].as_str() != Some("deprecated"))
+    let mut mediainfo: serde_json::Value = serde_json::from_str(content).ok()?;
+    Some(mediainfo["statements"].take())
+}
+
+/// The value of property `prop`: a preferred-rank statement, else the first
+/// that is not deprecated. `None` for a `somevalue` or `novalue` statement.
+fn statement_value<'a>(
+    statements: &'a serde_json::Value,
+    prop: &str,
+) -> Option<&'a serde_json::Value> {
+    let list = statements[prop].as_array()?;
+    let live = || {
+        list.iter()
+            .filter(|s| s["rank"].as_str() != Some("deprecated"))
+    };
+    let pick = live()
         .find(|s| s["rank"].as_str() == Some("preferred"))
-        .or_else(|| {
-            statements
-                .iter()
-                .find(|s| s["rank"].as_str() != Some("deprecated"))
-        })?;
+        .or_else(|| live().next())?;
     let snak = &pick["mainsnak"];
-    if snak["snaktype"].as_str() != Some("value") {
-        return None;
-    }
+    (snak["snaktype"].as_str() == Some("value")).then(|| &snak["datavalue"]["value"])
+}
+
+/// P14424 from a page's structured data.
+#[cfg(test)]
+fn time_expansion_from_mediainfo(page: &serde_json::Value) -> Option<f64> {
+    time_expansion_from(&mediainfo_statements(page)?)
+}
+
+fn time_expansion_from(statements: &serde_json::Value) -> Option<f64> {
     // Quantities arrive as a signed decimal string, e.g. "+10" or "+2.5".
-    let amount = snak["datavalue"]["value"]["amount"].as_str()?;
+    let amount = statement_value(statements, P_TIME_EXPANSION)?["amount"].as_str()?;
     amount.trim_start_matches('+').parse::<f64>().ok()
+}
+
+/// Where the recording was made, as "lat, lon": the recorder's position
+/// (P1259), else the place recorded (P9149), else P625.
+fn coordinates_from(statements: &serde_json::Value) -> Option<String> {
+    let value = ["P1259", "P9149", "P625"]
+        .iter()
+        .find_map(|p| statement_value(statements, p))?;
+    let (lat, lon) = (value["latitude"].as_f64()?, value["longitude"].as_f64()?);
+    Some(format!("{lat}, {lon}"))
+}
+
+/// The date the recording was made (P571), cut to the precision it states:
+/// a day, a month or a year.
+fn date_from(statements: &serde_json::Value) -> Option<String> {
+    let value = statement_value(statements, "P571")?;
+    let time = value["time"].as_str()?.trim_start_matches('+');
+    let len = match value["precision"].as_u64()? {
+        9 => 4,
+        10 => 7,
+        11.. => 10,
+        _ => return None,
+    };
+    time.get(..len).map(str::to_string)
 }
 
 /// Strip the HTML that `extmetadata` descriptions and credits are wrapped in.
@@ -435,7 +541,6 @@ fn parse_file_page(page: &serde_json::Value, api_host: &str) -> Option<WikiFile>
     let size = ii["size"].as_u64().unwrap_or(0);
     let duration_secs = ii["duration"].as_f64();
     let description_url = ii["descriptionurl"].as_str().unwrap_or("").to_string();
-    let time_expansion = time_expansion_from_mediainfo(page);
 
     let ext = |key: &str| {
         ii["extmetadata"][key]["value"]
@@ -465,17 +570,11 @@ fn parse_file_page(page: &serde_json::Value, api_host: &str) -> Option<WikiFile>
     if let Some(v) = ext("LicenseUrl") {
         fields.push(("License URL".to_string(), v));
     }
-    if let Some(te) = time_expansion {
-        fields.push((
-            "Time expansion".to_string(),
-            format!("{} (P14424)", format_factor(te)),
-        ));
-    }
     if !description_url.is_empty() {
         fields.push(("URL".to_string(), description_url.clone()));
     }
 
-    Some(WikiFile {
+    let mut file = WikiFile {
         name: strip_namespace(&title),
         title,
         url,
@@ -483,10 +582,16 @@ fn parse_file_page(page: &serde_json::Value, api_host: &str) -> Option<WikiFile>
         size,
         duration_secs,
         description_url,
-        time_expansion,
+        time_expansion: None,
         fields,
         host: stored_on(api_host, page),
-    })
+    };
+    // A page fetched with its MediaInfo slot. The app's own queries leave
+    // the slot out and add it afterwards (`add_structured_data`).
+    if let Some(statements) = mediainfo_statements(page) {
+        file.apply_statements(&statements);
+    }
+    Some(file)
 }
 
 /// Render a factor the way people write it: `\u{00D7}10`, `\u{00D7}2.5`.
@@ -508,11 +613,11 @@ fn pages_of(json: &serde_json::Value) -> Vec<serde_json::Value> {
 /// Look up one file. When the link came from another wiki, ask that wiki
 /// first: its own upload takes the title's place there, even when Commons has
 /// a different file of the same name. A Commons file is fetched from Commons,
-/// which also returns its structured data (P14424). When the wiki can't be
-/// reached, Commons is still asked.
+/// with its structured data (P14424). When the wiki can't be reached, Commons
+/// is still asked.
 pub async fn fetch_file(api_host: &str, title: &str) -> Result<WikiFile, String> {
     if api_host != COMMONS {
-        match api_get(api_host, &params_for(api_host, &[("titles", title)])).await {
+        match api_get(api_host, &params_for(&[("titles", title)])).await {
             Ok(json) => {
                 let file = pages_of(&json)
                     .first()
@@ -524,12 +629,12 @@ pub async fn fetch_file(api_host: &str, title: &str) -> Result<WikiFile, String>
             Err(e) => log::warn!("Looking up {title} on {api_host} failed: {e}"),
         }
     }
-    let json = api_get(COMMONS, &params_for(COMMONS, &[("titles", title)])).await?;
+    let json = api_get(COMMONS, &params_for(&[("titles", title)])).await?;
     if let Some(file) = pages_of(&json)
         .first()
         .and_then(|p| parse_file_page(p, COMMONS))
     {
-        return Ok(file);
+        return Ok(add_structured_data(vec![file]).await.remove(0));
     }
     Err(if api_host == COMMONS {
         format!("{title} isn't on Wikimedia Commons")
@@ -540,40 +645,6 @@ pub async fn fetch_file(api_host: &str, title: &str) -> Result<WikiFile, String>
 
 /// How many titles one `titles=` query may name.
 const TITLE_BATCH: usize = 50;
-
-/// Re-query Commons for the Commons files in `files`, listed by another wiki,
-/// so they pick up the structured data (P14424 above all) that only Commons
-/// serves. The wiki's own uploads keep the description they came with, and so
-/// does any file the Commons lookup misses.
-async fn enrich_from_commons(files: Vec<WikiFile>) -> Vec<WikiFile> {
-    let shared: Vec<&WikiFile> = files.iter().filter(|f| f.on_commons()).collect();
-    let mut looked_up = Vec::new();
-    for chunk in shared.chunks(TITLE_BATCH) {
-        let titles = chunk
-            .iter()
-            .map(|f| f.title.as_str())
-            .collect::<Vec<_>>()
-            .join("|");
-        match api_get(COMMONS, &params_for(COMMONS, &[("titles", &titles)])).await {
-            Ok(json) => looked_up.extend(
-                pages_of(&json)
-                    .iter()
-                    .filter_map(|p| parse_file_page(p, COMMONS)),
-            ),
-            Err(e) => log::warn!("Commons lookup for article files failed: {e}"),
-        }
-    }
-    files
-        .iter()
-        .map(|file| {
-            file.on_commons()
-                .then(|| looked_up.iter().find(|c| c.title == file.title))
-                .flatten()
-                .cloned()
-                .unwrap_or_else(|| file.clone())
-        })
-        .collect()
-}
 
 fn collect_audio(json: &serde_json::Value, api_host: &str) -> Vec<WikiFile> {
     let mut files: Vec<WikiFile> = pages_of(json)
@@ -587,36 +658,31 @@ fn collect_audio(json: &serde_json::Value, api_host: &str) -> Vec<WikiFile> {
 
 /// List the audio files an article uses.
 pub async fn list_page_audio(api_host: &str, title: &str) -> Result<Vec<WikiFile>, String> {
-    let params = params_for(
-        api_host,
-        &[
-            ("generator", "images"),
-            ("gimlimit", "500"),
-            ("titles", title),
-        ],
-    );
+    let params = params_for(&[
+        ("generator", "images"),
+        ("gimlimit", "500"),
+        ("titles", title),
+    ]);
     let json = api_get(api_host, &params).await?;
     let files = collect_audio(&json, api_host);
-    if api_host == COMMONS || files.is_empty() {
+    if files.is_empty() {
         return Ok(files);
     }
-    Ok(enrich_from_commons(files).await)
+    // Files another wiki lists from Commons get their structured data too.
+    Ok(add_structured_data(files).await)
 }
 
 /// Search Commons for audio files matching free text.
 pub async fn search_audio(query: &str) -> Result<Vec<WikiFile>, String> {
     let search = format!("filetype:audio {query}");
-    let params = params_for(
-        COMMONS,
-        &[
-            ("generator", "search"),
-            ("gsrsearch", &search),
-            ("gsrnamespace", "6"),
-            ("gsrlimit", "40"),
-        ],
-    );
+    let params = params_for(&[
+        ("generator", "search"),
+        ("gsrsearch", &search),
+        ("gsrnamespace", "6"),
+        ("gsrlimit", "40"),
+    ]);
     let json = api_get(COMMONS, &params).await?;
-    Ok(collect_audio(&json, COMMONS))
+    Ok(add_structured_data(collect_audio(&json, COMMONS)).await)
 }
 
 /// Resolve whatever the user typed. A file resolves to a single-entry list;
@@ -634,24 +700,60 @@ pub async fn resolve(target: &WikiTarget) -> Result<Vec<WikiFile>, String> {
 /// Download a file and hand it to the normal loader, correcting the sample
 /// rate when the file declares a time expansion factor.
 pub async fn load_file(state: AppState, file: &WikiFile) -> Result<(), String> {
+    use crate::state::store_fields::*;
+    use leptos::prelude::*;
+
     let load_id = state.loading_start(&file.name);
     let result = load_file_inner(state, file, load_id).await;
     state.loading_done(load_id);
-    if let Err(ref e) = result {
-        state.show_error_toast(format!("Could not load {}: {e}", file.name));
-    } else if let Some(te) = file.time_expansion {
-        state.show_info_toast(format!(
-            "{} \u{2014} corrected for {} time expansion",
-            file.name,
-            format_factor(te)
-        ));
+    match result {
+        Err(ref e) => state.show_error_toast(format!("Could not load {}: {e}", file.name)),
+        Ok(file_id) => {
+            // The factor the file was read with, which is not P14424 when
+            // the loader could not use it.
+            let applied = state.library.files().with_untracked(|files| {
+                files
+                    .iter()
+                    .find(|f| f.id == file_id)
+                    .and_then(|f| f.audio.metadata.time_expansion)
+            });
+            match (file.time_expansion, applied) {
+                (Some(_), Some(te)) => state.show_info_toast(format!(
+                    "{} \u{2014} corrected for {} time expansion",
+                    file.name,
+                    format_factor(te.factor)
+                )),
+                (Some(te), None) => state.show_error_toast(format!(
+                    "{}: the {} time expansion Commons gives could not be applied",
+                    file.name,
+                    format_factor(te)
+                )),
+                (None, _) => {}
+            }
+        }
     }
-    result
+    result.map(|_| ())
 }
 
-async fn load_file_inner(state: AppState, file: &WikiFile, load_id: u64) -> Result<(), String> {
+/// The time expansion factor (P14424) Commons holds for the file at
+/// `page_url`, a Commons file page. `None` when the page is not a file page,
+/// has no factor, or Commons can't be reached.
+pub async fn time_expansion_for_page(page_url: &str) -> Option<f64> {
+    let WikiTarget::File { api_host, title } = parse_input(page_url).ok()? else {
+        return None;
+    };
+    match fetch_file(&api_host, &title).await {
+        Ok(file) => file.time_expansion,
+        Err(e) => {
+            log::warn!("No structured data for {page_url}: {e}");
+            None
+        }
+    }
+}
+
+async fn load_file_inner(state: AppState, file: &WikiFile, load_id: u64) -> Result<u64, String> {
     let bytes = crate::components::file_sidebar::fetch_bytes(&file.url).await?;
-    crate::components::file_sidebar::load_named_bytes(
+    crate::components::file_sidebar::load_named_bytes_id(
         file.name.clone(),
         &bytes,
         Some(SiteMetadata::new(file.site(), file.fields.clone())),
@@ -1009,6 +1111,36 @@ mod tests {
             r#"{"statements":{"P14424":[{"mainsnak":{"snaktype":"somevalue"},"rank":"normal"}]}}"#
         }}}] });
         assert_eq!(time_expansion_from_mediainfo(&somevalue), None);
+    }
+
+    /// Statements as Commons returns them for File:Chirps190918-22s.mp3.
+    #[test]
+    fn reads_the_date_and_coordinates_from_structured_data() {
+        let statements = serde_json::json!({
+            "P571": [{ "mainsnak": { "snaktype": "value", "datavalue": { "value": {
+                "time": "+2018-09-19T00:00:00Z", "precision": 11 } } }, "rank": "normal" }],
+            "P1259": [{ "mainsnak": { "snaktype": "value", "datavalue": { "value": {
+                "latitude": 49.510472, "longitude": 10.959275 } } }, "rank": "normal" }],
+            "P14424": [{ "mainsnak": { "snaktype": "value", "datavalue": { "value": {
+                "amount": "+256", "unit": "1" } } }, "rank": "normal" }],
+        });
+        assert_eq!(date_from(&statements).as_deref(), Some("2018-09-19"));
+        assert_eq!(
+            coordinates_from(&statements).as_deref(),
+            Some("49.510472, 10.959275")
+        );
+        assert_eq!(time_expansion_from(&statements), Some(256.0));
+
+        let year = serde_json::json!({ "P571": [{ "mainsnak": { "snaktype": "value",
+            "datavalue": { "value": { "time": "+1998-00-00T00:00:00Z", "precision": 9 } } },
+            "rank": "normal" }] });
+        assert_eq!(date_from(&year).as_deref(), Some("1998"));
+        assert_eq!(coordinates_from(&year), None);
+    }
+
+    #[test]
+    fn an_ogg_video_counts_as_a_file_with_sound() {
+        assert!(has_audio_ext("Bats.sv001.ogv"));
     }
 
     #[test]

@@ -499,12 +499,25 @@ async fn load_item(state: AppState, item: RecordingItem) -> Result<(), String> {
             let name = file_name(&item);
             let load_id = state.loading_start(&label);
             let site = SourceSite::from_search_key(&item.source);
+            // The search server reads a factor from the file's header only.
+            // Commons holds one as structured data (P14424), which wins.
+            let mut time_expansion = item.time_expansion;
+            let mut fields = item_metadata(&item);
+            if site == SourceSite::WikimediaCommons {
+                if let Some(te) = crate::wikimedia::time_expansion_for_page(&item.page_url).await {
+                    time_expansion = Some(te);
+                    fields.push((
+                        "Time expansion".to_string(),
+                        format!("{} (P14424)", crate::wikimedia::format_factor(te)),
+                    ));
+                }
+            }
             let result = load_named_bytes(
                 name,
                 &bytes,
-                Some(SiteMetadata::new(site, item_metadata(&item))),
+                Some(SiteMetadata::new(site, fields)),
                 None,
-                item.time_expansion,
+                time_expansion,
                 state,
                 load_id,
                 false,

@@ -720,7 +720,15 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
     use lewton::inside_ogg::OggStreamReader;
 
     let cursor = Cursor::new(bytes);
-    let mut reader = OggStreamReader::new(cursor).map_err(|e| format!("OGG error: {e}"))?;
+    let mut reader = match OggStreamReader::new(cursor) {
+        Ok(reader) => reader,
+        // lewton reads only a file whose first stream is Vorbis. A video
+        // file (.ogv) starts with its Theora stream, so its Vorbis track is
+        // read with symphonia, which skips the streams it has no decoder for.
+        Err(e) => {
+            return load_ogg_multiplexed(bytes).map_err(|_| format!("OGG error: {e}"));
+        }
+    };
 
     let sample_rate = reader.ident_hdr.audio_sample_rate;
     let channels = reader.ident_hdr.audio_channels as u32;
@@ -764,13 +772,111 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
     })
 }
 
-fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
+/// The first audio track of an Ogg file that holds other streams too, such as
+/// the Vorbis track of an .ogv video.
+fn load_ogg_multiplexed(bytes: &[u8]) -> Result<AudioData, String> {
+    let (all_samples, channels, sample_rate) = symphonia_decode_all(bytes, "OGG")?;
+    let (samples, source) = build_source(all_samples, channels, sample_rate);
+    let duration_secs = samples.len() as f64 / sample_rate as f64;
+    let (data_offset, data_size) = ogg_page_region(bytes);
+    Ok(AudioData {
+        samples,
+        source,
+        sample_rate,
+        channels,
+        duration_secs,
+        metadata: FileMetadata {
+            file_size: bytes.len(),
+            format: AudioFormat::Ogg,
+            bits_per_sample: FileMetadata::LOSSY_BITS,
+            is_float: false,
+            guano: None,
+            data_offset,
+            data_size,
+            zc_data: None,
+            time_expansion: None,
+            wav: None,
+        },
+    })
+}
+
+/// Decode every packet of a file's default audio track with symphonia.
+/// Returns the interleaved samples, the channel count and the sample rate.
+/// `label` names the format in error messages ("MP3", "OGG").
+fn symphonia_decode_all(bytes: &[u8], label: &str) -> Result<(Vec<f32>, u32, u32), String> {
     use symphonia::core::codecs::audio::AudioDecoderOptions;
     use symphonia::core::errors::Error as SymphoniaError;
     use symphonia::core::formats::{probe::Hint, FormatOptions, TrackType};
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
 
+    let cursor = Cursor::new(bytes.to_vec());
+    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+
+    let hint = Hint::new();
+    let mut format = symphonia::default::get_probe()
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
+        .map_err(|e| format!("{label} probe error: {e}"))?;
+
+    let track = format
+        .default_track(TrackType::Audio)
+        .ok_or_else(|| format!("No audio track found in {label}"))?;
+    let audio_params = track
+        .codec_params
+        .as_ref()
+        .and_then(|cp| cp.audio())
+        .ok_or_else(|| format!("{label} missing audio codec parameters"))?;
+
+    let sample_rate = audio_params
+        .sample_rate
+        .ok_or_else(|| format!("{label} missing sample rate"))?;
+    let channels = audio_params
+        .channels
+        .as_ref()
+        .ok_or_else(|| format!("{label} missing channel info"))?
+        .count() as u32;
+    let track_id = track.id;
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(audio_params, &AudioDecoderOptions::default())
+        .map_err(|e| format!("{label} decoder error: {e}"))?;
+
+    let mut all_samples: Vec<f32> = Vec::new();
+    let mut scratch: Vec<f32> = Vec::new();
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(Some(p)) => p,
+            Ok(None) => break,
+            Err(SymphoniaError::ResetRequired) => {
+                decoder.reset();
+                continue;
+            }
+            Err(e) => return Err(format!("{label} packet error: {e}")),
+        };
+
+        if packet.track_id != track_id {
+            continue;
+        }
+
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                decoded.copy_to_vec_interleaved(&mut scratch);
+                all_samples.extend_from_slice(&scratch);
+            }
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(e) => return Err(format!("{label} decode error: {e}")),
+        }
+    }
+    Ok((all_samples, channels, sample_rate))
+}
+
+fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
     // Parse header for data_offset and estimated size before decoding
     let mp3_header = parse_mp3_header(bytes, bytes.len() as u64).ok();
     let mp3_data_offset = mp3_header.as_ref().map(|h| h.data_offset).unwrap_or(0);
@@ -790,67 +896,7 @@ fn load_mp3(bytes: &[u8]) -> Result<AudioData, String> {
         }
     }
 
-    let cursor = Cursor::new(bytes.to_vec());
-    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
-
-    let hint = Hint::new();
-    let mut format = symphonia::default::get_probe()
-        .probe(
-            &hint,
-            mss,
-            FormatOptions::default(),
-            MetadataOptions::default(),
-        )
-        .map_err(|e| format!("MP3 probe error: {e}"))?;
-
-    let track = format
-        .default_track(TrackType::Audio)
-        .ok_or("No audio track found in MP3")?;
-    let audio_params = track
-        .codec_params
-        .as_ref()
-        .and_then(|cp| cp.audio())
-        .ok_or("MP3 missing audio codec parameters")?;
-
-    let sample_rate = audio_params.sample_rate.ok_or("MP3 missing sample rate")?;
-    let channels = audio_params
-        .channels
-        .as_ref()
-        .ok_or("MP3 missing channel info")?
-        .count() as u32;
-    let track_id = track.id;
-
-    let mut decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(audio_params, &AudioDecoderOptions::default())
-        .map_err(|e| format!("MP3 decoder error: {e}"))?;
-
-    let mut all_samples: Vec<f32> = Vec::new();
-    let mut scratch: Vec<f32> = Vec::new();
-
-    loop {
-        let packet = match format.next_packet() {
-            Ok(Some(p)) => p,
-            Ok(None) => break,
-            Err(SymphoniaError::ResetRequired) => {
-                decoder.reset();
-                continue;
-            }
-            Err(e) => return Err(format!("MP3 packet error: {e}")),
-        };
-
-        if packet.track_id != track_id {
-            continue;
-        }
-
-        match decoder.decode(&packet) {
-            Ok(decoded) => {
-                decoded.copy_to_vec_interleaved(&mut scratch);
-                all_samples.extend_from_slice(&scratch);
-            }
-            Err(SymphoniaError::DecodeError(_)) => continue,
-            Err(e) => return Err(format!("MP3 decode error: {e}")),
-        }
-    }
+    let (all_samples, channels, sample_rate) = symphonia_decode_all(bytes, "MP3")?;
 
     let (samples, source) = build_source(all_samples, channels, sample_rate);
     let duration_secs = samples.len() as f64 / sample_rate as f64;

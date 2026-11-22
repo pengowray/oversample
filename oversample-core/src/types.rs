@@ -4,9 +4,10 @@ use crate::audio::zc::ZcData;
 use std::sync::Arc;
 
 /// Ceiling on the rate a time-expansion correction may produce. A 384 kHz
-/// recording expanded 10x lands at 3.84 MHz, so the limit only rejects
-/// factors that are clearly bad metadata rather than an unusual detector.
-pub const MAX_CORRECTED_SAMPLE_RATE: f64 = 10_000_000.0;
+/// recording expanded 10x lands at 3.84 MHz, and a 44.1 kHz file slowed 256
+/// times (Commons has one) at 11.3 MHz, so the limit only rejects factors
+/// that are clearly bad metadata.
+pub const MAX_CORRECTED_SAMPLE_RATE: f64 = 50_000_000.0;
 
 /// A metadata block a recorder wrote in its own layout rather than as a
 /// standard chunk. Fields keep the recorder's own key names.
@@ -205,10 +206,16 @@ impl FileMetadata {
     }
 }
 
-/// A time expansion factor that is worth applying: a number from 0.01 to 100, and not
-/// 1, which means the recording was made in real time.
-fn usable_factor(factor: f64) -> Option<f64> {
-    (factor.is_finite() && (0.01..=100.0).contains(&factor) && (factor - 1.0).abs() > 1e-9)
+/// The largest time expansion factor the app applies.
+pub const MAX_TIME_EXPANSION_FACTOR: f64 = 1000.0;
+
+/// A time expansion factor that is worth applying: a number from 0.01 to
+/// [`MAX_TIME_EXPANSION_FACTOR`], and not 1, which means the recording was made in
+/// real time.
+pub fn usable_factor(factor: f64) -> Option<f64> {
+    (factor.is_finite()
+        && (0.01..=MAX_TIME_EXPANSION_FACTOR).contains(&factor)
+        && (factor - 1.0).abs() > 1e-9)
         .then_some(factor)
 }
 
@@ -745,6 +752,16 @@ mod tests {
             assert_eq!(audio.sample_rate, 44_100);
             assert_eq!(audio.duration_secs, 1.0);
         }
+    }
+
+    /// Commons File:Keoka_pip_times256.ogg: 44.1 kHz slowed 256 times.
+    #[test]
+    fn a_256_times_expansion_of_a_44_1_khz_file_applies() {
+        let mut audio = dummy_audio(44_100);
+        let meta = audio.metadata.clone();
+        let (factor, origin) = time_expansion_to_apply(Some(256.0), &meta).unwrap();
+        assert!(audio.apply_time_expansion(factor, origin));
+        assert_eq!(audio.sample_rate, 11_289_600);
     }
 
     #[test]
