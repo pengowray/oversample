@@ -5372,58 +5372,6 @@ a.open-link-btn {
     .layer-panel-slider-row input[type="range"] {
         height: 28px; /* taller hit zone for the thumb */
     }
-    /* Carriers row, factor preset row, etc. — small inline buttons. */
-    .factor-preset {
-        font-size: 14px;
-        padding: 8px 6px;
-        min-height: 40px;
-        min-width: 36px;
-        box-sizing: border-box;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-    }
-    .factor-presets {
-        gap: 6px;
-        padding: 4px 10px 6px 12px;
-    }
-    .auto-toggle {
-        width: 40px;
-        height: 40px;
-        font-size: 14px;
-        margin-left: 6px;
-    }
-    .factor-input {
-        font-size: 14px;
-        padding: 6px 6px;
-        min-height: 40px;
-        box-sizing: border-box;
-        width: 48px;
-        min-width: 48px;
-    }
-    /* "Fine output adjustment": its heading, buttons and Snap list. */
-    .fine-out-head {
-        min-height: 40px;
-        font-size: 13px;
-    }
-    .fine-out-row {
-        font-size: 13px;
-        gap: 8px;
-        padding: 6px 10px;
-    }
-    .fine-out-seg button {
-        padding: 10px 10px;
-        font-size: 13px;
-    }
-    .fine-out-btn {
-        min-height: 40px;
-        padding: 8px 12px;
-        font-size: 13px;
-    }
-    .fine-out-snap select {
-        min-height: 40px;
-        width: 110px;
-    }
 }
 
 /* Popups positioned above multi-row toolbar on mobile */
@@ -11397,4 +11345,64 @@ body.hfr-nudge-on .hfr-switch {
 .cd-model a {
     display: inline-block;
     line-height: 24px;
+}
+
+/* ── Touch sizes for the mode panels' small controls ───────────────────────
+ * These belong with "Touch-friendly mode menus" above, and are at the end of
+ * the file because the rules they override come after that block. While they
+ * were inside it they had no effect.
+ */
+@media (pointer: coarse), (max-width: 640px) {
+    /* Carriers row, factor preset row, etc. — small inline buttons. */
+    .factor-preset {
+        font-size: 14px;
+        padding: 8px 6px;
+        min-height: 40px;
+        min-width: 36px;
+        box-sizing: border-box;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .factor-presets {
+        gap: 6px;
+        padding: 4px 10px 6px 12px;
+    }
+    .auto-toggle {
+        width: 40px;
+        height: 40px;
+        font-size: 14px;
+        margin-left: 6px;
+    }
+    .factor-input {
+        font-size: 14px;
+        padding: 6px 6px;
+        min-height: 40px;
+        box-sizing: border-box;
+        width: 48px;
+        min-width: 48px;
+    }
+    /* "Fine output adjustment": its heading, buttons and Snap list. */
+    .fine-out-head {
+        min-height: 40px;
+        font-size: 13px;
+    }
+    .fine-out-row {
+        font-size: 13px;
+        gap: 8px;
+        padding: 6px 10px;
+    }
+    .fine-out-seg button {
+        padding: 10px 10px;
+        font-size: 13px;
+    }
+    .fine-out-btn {
+        min-height: 40px;
+        padding: 8px 12px;
+        font-size: 13px;
+    }
+    .fine-out-snap select {
+        min-height: 40px;
+        width: 110px;
+    }
 }
