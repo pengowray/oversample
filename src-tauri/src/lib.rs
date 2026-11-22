@@ -1,6 +1,7 @@
 mod cmd_annotations;
 mod cmd_audio_files;
 mod cmd_denoise;
+mod cmd_file_edit;
 mod cmd_google;
 mod cmd_mic;
 mod cmd_models;
@@ -88,6 +89,8 @@ pub fn run() {
             cmd_audio_files::read_file_bytes,
             cmd_audio_files::read_file_range,
             cmd_audio_files::read_fd_range,
+            cmd_file_edit::guano_set_te,
+            cmd_file_edit::file_edit_undo,
             cmd_save::save_open_dialog,
             cmd_save::save_open_recording,
             cmd_save::save_adopt_fd,
