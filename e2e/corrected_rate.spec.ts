@@ -19,23 +19,24 @@ const MARK = ".file-badge-corrected";
 /** Set TE_SHOT_DIR to save screenshots there. */
 const SHOT_DIR = process.env.TE_SHOT_DIR;
 
-/** A WAV file: mono 8-bit, 16-bit or 32-bit float, with a GUANO chunk after
- * the data when given. The samples are a quiet 4 kHz tone, in the frame
- * ranges `tones` when given, else throughout, and silence elsewhere. */
+/** A WAV file: mono 8-bit, 16-bit, 24-bit or 32-bit float, with a GUANO
+ * chunk after the data when given. The samples are a quiet 4 kHz tone, in the
+ * frame ranges `tones` when given, else throughout, and silence elsewhere. */
 function wav(opts: {
   rate: number;
   frames: number;
-  format: "u8" | "16" | "float";
+  format: "u8" | "16" | "24" | "float";
   guano?: string;
   tones?: [number, number][];
 }): Buffer {
   const { rate, frames, format } = opts;
-  const bps = format === "u8" ? 1 : format === "16" ? 2 : 4;
+  const bps = { u8: 1, "16": 2, "24": 3, float: 4 }[format];
   const data = Buffer.alloc(frames * bps, format === "u8" ? 0x80 : 0);
   for (const [start, end] of opts.tones ?? [[0, frames]]) {
     for (let i = start; i < Math.min(end, frames); i++) {
       const s = Math.sin((2 * Math.PI * 4000 * i) / rate) * 0.25;
       if (format === "float") data.writeFloatLE(s, i * 4);
+      else if (format === "24") data.writeIntLE(Math.round(s * 8_388_607), i * 3, 3);
       else if (format === "16") data.writeInt16LE(Math.round(s * 32767), i * 2);
       else data.writeUInt8(128 + Math.round(s * 127), i);
     }
@@ -638,7 +639,6 @@ function badgeLines(page: Page, selector: string) {
 }
 
 test.describe("a corrected rate in a phone's heading", () => {
-  test.skip(!DEMO_DIR, "no local bat-demo-sounds checkout");
   test.use({
     viewport: { width: 375, height: 812 },
     isMobile: true,
@@ -650,6 +650,7 @@ test.describe("a corrected rate in a phone's heading", () => {
   test("keeps the heading's height, and the licence label is whole or not shown", async ({
     page,
   }) => {
+    test.skip(!DEMO_DIR, "no local bat-demo-sounds checkout");
     await openDemo(page, "XC892810");
     await expect(page.locator(`.toolbar-badge-row ${MARK}`)).toBeVisible();
     expect((await page.locator(".toolbar").boundingBox())!.height).toBe(49);
@@ -661,6 +662,81 @@ test.describe("a corrected rate in a phone's heading", () => {
     expect(cut).toBe(false);
     // The licence button stays, and opens the licence dialog.
     await expect(page.locator(".toolbar-cc-badge .toolbar-cc-icon")).toBeVisible();
+
+    // Without the badge the whole label fits again, and with it, it goes.
+    await page.locator('button[title="Show info panel"]').first().tap();
+    await page.locator(REMOVE).tap();
+    await expect(page.locator(`.toolbar-badge-row ${MARK}`)).toHaveCount(0);
+    await expect(label).toBeVisible();
+    await expect(label).toHaveText("BY-NC-SA 4.0");
+    expect(await label.evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(false);
+    await page.locator(APPLY).tap();
+    await expect(page.locator(`.toolbar-badge-row ${MARK}`)).toBeVisible();
+    await expect(label).toBeHidden();
+  });
+
+  /** Opens demo XC815138 as a corrected recording (GUANO TE 10 at 38.4 kHz)
+   * of the given bit depth, with a CC BY-NC-SA 4.0 licence. */
+  async function openLicensedDemo(page: Page, format: "24" | "float") {
+    const sidecar = {
+      id: "815138",
+      en: "Test bat",
+      gen: "Myotis",
+      sp: "fimbriatus",
+      rec: "Test",
+      cnt: "Brazil",
+      method: "field recording",
+      rmk: "",
+      type: "social call",
+      url: "https://xeno-canto.org/815138",
+      lic: "//creativecommons.org/licenses/by-nc-sa/4.0/",
+    };
+    const audio = wav({ rate: 38_400, frames: 115_200, format, guano: GUANO_TE10 });
+    const handler = (route: Route) => {
+      const url = route.request().url();
+      if (url.endsWith("/index.json")) {
+        return json(route, {
+          version: 1,
+          sounds: [
+            {
+              en: "Test bat",
+              filename: "XC815138 demo.wav",
+              metadata: "XC815138 demo.xc.json",
+              source: "xeno-canto",
+              species: "Myotis fimbriatus",
+              xc_id: 815138,
+            },
+          ],
+        });
+      }
+      if (url.endsWith(".xc.json")) return json(route, sidecar);
+      if (url.endsWith(".wav")) return route.fulfill({ contentType: "audio/wav", body: audio });
+      return route.fulfill({ status: 404, body: "" });
+    };
+    await page.route("https://archive.oversample.com/**", handler);
+    await page.route("https://cdn.jsdelivr.net/gh/pengowray/bat-demo-sounds@main/**", handler);
+    await page.goto("/#XC815138");
+    await expect(page.locator(`.toolbar-badge-row ${MARK}`)).toBeVisible({ timeout: 30_000 });
+  }
+
+  test("a 24-bit file keeps one line of badges, with the licence as its icon", async ({
+    page,
+  }) => {
+    await openLicensedDemo(page, "24");
+    await expect(page.locator(".toolbar-badge-row .badge-bit-depth")).toHaveText("24 bit");
+    await expect(page.locator(".toolbar-cc-badge .toolbar-cc-label")).toBeHidden();
+    expect(await badgeLines(page, ".toolbar-badge-row")).toBe(1);
+    expect((await page.locator(".toolbar").boundingBox())!.height).toBe(49);
+  });
+
+  test("a 32-bit float file has the whole licence on a line of its own", async ({ page }) => {
+    // "384kHz · 32 bit float · 3.0s" and the badge leave no room for even the
+    // licence icon.
+    await openLicensedDemo(page, "float");
+    const label = page.locator(".toolbar-cc-badge .toolbar-cc-label");
+    await expect(label).toBeVisible();
+    expect(await label.evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(false);
+    expect(await badgeLines(page, ".toolbar-badge-row")).toBe(2);
   });
 });
 
