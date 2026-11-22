@@ -130,6 +130,12 @@ fn times(factor: f64) -> String {
 const UNDO_LABEL: &str = "Restore original audio file";
 
 impl GuanoAction {
+    /// The action that restores a file Oversample changed. The Info panel
+    /// shows it under File Identity, and the others under Sample rate.
+    pub fn is_undo(&self) -> bool {
+        matches!(self, GuanoAction::Undo { .. })
+    }
+
     /// The button's label. The factor is written "×10", as in the "Remove
     /// ×10 correction" button above it. The tooltips, the questions and the
     /// note name the GUANO line itself, "TE: 10", which is what the reader

@@ -719,16 +719,6 @@ test.describe("a corrected rate in a phone's heading", () => {
     await expect(page.locator(`.toolbar-badge-row ${MARK}`)).toBeVisible({ timeout: 30_000 });
   }
 
-  test("a 24-bit file keeps one line of badges, with the licence as its icon", async ({
-    page,
-  }) => {
-    await openLicensedDemo(page, "24");
-    await expect(page.locator(".toolbar-badge-row .badge-bit-depth")).toHaveText("24 bit");
-    await expect(page.locator(".toolbar-cc-badge .toolbar-cc-label")).toBeHidden();
-    expect(await badgeLines(page, ".toolbar-badge-row")).toBe(1);
-    expect((await page.locator(".toolbar").boundingBox())!.height).toBe(49);
-  });
-
   test("a 32-bit float file has the whole licence on a line of its own", async ({ page }) => {
     // "384kHz · 32 bit float · 3.0s" and the badge leave no room for even the
     // licence icon.

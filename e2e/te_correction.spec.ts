@@ -1325,6 +1325,88 @@ test.describe("a factor from Wikimedia Commons", () => {
   });
 });
 
+test.describe("annotations saved before Commons stated a factor", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("stay on the same sounds when the file later opens corrected", async ({ page }) => {
+    const audio = wav(25_600, 20);
+    const filePage = { pageid: 2, ns: 6, title: "File:Old notes.wav", imagerepository: "local" };
+    const cors = { "access-control-allow-origin": "*" };
+    let statesFactor = false;
+    await page.route("https://commons.wikimedia.org/w/api.php**", (route) => {
+      const structured = route.request().url().includes("prop=revisions");
+      const statements = statesFactor
+        ? {
+            P14424: [
+              {
+                mainsnak: { snaktype: "value", datavalue: { value: { amount: "+10", unit: "1" } } },
+                rank: "normal",
+              },
+            ],
+          }
+        : {};
+      const body = structured
+        ? { ...filePage, revisions: [{ slots: { mediainfo: { content: JSON.stringify({ statements }) } } }] }
+        : {
+            ...filePage,
+            imageinfo: [
+              {
+                url: "https://upload.wikimedia.org/wikipedia/commons/a/ab/Old_notes.wav",
+                size: audio.length,
+                mime: "audio/wav",
+                descriptionurl: "https://commons.wikimedia.org/wiki/File:Old_notes.wav",
+                extmetadata: {},
+              },
+            ],
+          };
+      return route.fulfill({
+        contentType: "application/json",
+        headers: cors,
+        body: JSON.stringify({ query: { pages: [body] } }),
+      });
+    });
+    await page.route("https://upload.wikimedia.org/**", (route) =>
+      route.fulfill({ contentType: "audio/wav", headers: cors, body: audio }),
+    );
+    const open = async () => {
+      await page.goto("/#commons:File:Old_notes.wav");
+      await page.reload();
+      await expect(page.locator(".file-item:not(.loading)")).toHaveCount(1, { timeout: 60_000 });
+      await page.waitForFunction(
+        () => typeof (window as { __oversample_test?: unknown }).__oversample_test === "function",
+      );
+    };
+    // No factor yet: the file is at the rate in its header.
+    await open();
+    await expect.poll(async () => (await snap(page)).sampleRate).toBe(25_600);
+    await annotate(page, 0.3, 0.5, 0.3, 0.6);
+    const made = (await snap(page)).regions[0];
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async () => {
+            const root = await navigator.storage.getDirectory();
+            const dir = await root.getDirectoryHandle("oversample-annotations", { create: true });
+            for await (const [, handle] of (dir as any).entries()) {
+              const text = await (await (handle as FileSystemFileHandle).getFile()).text();
+              if (text.includes("Region")) return true;
+            }
+            return false;
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+
+    // Commons now states x10. The file opens corrected, and the annotation
+    // saved at 25.6 kHz is converted from that rate.
+    statesFactor = true;
+    await open();
+    await expect.poll(async () => (await snap(page)).sampleRate, { timeout: 15_000 }).toBe(256_000);
+    await expect.poll(async () => (await snap(page)).regions.length, { timeout: 15_000 }).toBe(1);
+    expectRange((await snap(page)).regions[0], scaled(made, 10));
+  });
+});
+
 test.describe("the factor in the audio file's GUANO", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 

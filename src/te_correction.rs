@@ -291,26 +291,38 @@ pub fn to_file_units_at(state: AppState, file_idx: usize, set: AnnotationSet) ->
 }
 
 /// A set read from an annotation file (a sidecar, autosave or an imported
-/// .batm), in the seconds and Hz the file opens in, converted to the rate
-/// the file is read at now.
+/// .batm), converted to the rate the file is read at now.
 ///
-/// A set whose audio metadata states the current rate is already in the
-/// current units and is left as it is. Only an "Export .batm" made while
-/// the user's correction was on, before exports were converted, can be one.
+/// The set says which seconds and Hz it is in: the sample rate in its audio
+/// metadata, when that metadata counts the same number of samples as the
+/// file. A rate that differs from the current one for the same samples is
+/// the same audio read at another rate, so times and frequencies scale by
+/// the ratio. This covers a set saved before the file's time expansion
+/// factor was known (a Commons file that got its P14424 statement later), a
+/// set that reached this device through Google Drive for a file whose own
+/// metadata differs here, and a set saved with another factor.
+///
+/// A set with no audio metadata, or with a different number of samples, is
+/// taken to be in the seconds and Hz the file opens in, as every set the app
+/// saves is ([`to_file_units`]). A set whose metadata states the current rate
+/// is left as it is.
 pub fn from_file_units(
     audio: &AudioData,
     opened: Option<TimeExpansion>,
     mut set: AnnotationSet,
 ) -> AnnotationSet {
-    let Some(rc) = to_opening_rate(audio, opened) else {
+    let meta = set.audio_metadata.as_ref();
+    if meta.is_some_and(|m| m.sample_rate == audio.sample_rate) {
         return set;
-    };
-    let in_current_units = set
-        .audio_metadata
-        .as_ref()
-        .is_some_and(|m| m.sample_rate == audio.sample_rate);
-    if !in_current_units {
-        rc.inverse().annotation_set(&mut set);
+    }
+    let stated = meta
+        .filter(|m| m.sample_rate > 0 && m.total_samples == audio.source.total_samples())
+        .map(|m| m.sample_rate);
+    let from = stated.unwrap_or_else(|| {
+        to_opening_rate(audio, opened).map_or(audio.sample_rate, |rc| rc.new_rate)
+    });
+    if from != audio.sample_rate {
+        RateChange::new(from, audio.sample_rate).annotation_set(&mut set);
     }
     set
 }
@@ -1337,6 +1349,37 @@ mod tests {
             file_units(Some(metadata(25_600, 1.0))),
         ));
         assert_eq!(t, 0.5);
+    }
+
+    /// A Commons file annotated before its P14424 statement existed: the
+    /// set is in the header rate's units, and the file now opens corrected.
+    #[test]
+    fn a_set_saved_at_another_rate_of_the_same_samples_is_converted_from_that_rate() {
+        let mut audio = case_t_audio();
+        assert!(audio.apply_time_expansion(TENFOLD, TimeExpansionOrigin::Source));
+        let opened = audio.metadata.time_expansion;
+        let saved_at = |rate: u32, total_samples: u64| {
+            let mut set = set_with(vec![region(0.5, 0.6, Some(4_000.0), None)]);
+            let mut meta = metadata(rate, 25_600.0 / f64::from(rate));
+            meta.total_samples = total_samples;
+            set.audio_metadata = Some(meta);
+            set
+        };
+        // Saved at 25.6 kHz for these 25 600 samples: converted to 256 kHz.
+        let (t, f) = region_start(&from_file_units(&audio, opened, saved_at(25_600, 25_600)));
+        assert!(close(t, 0.05) && close(f.unwrap(), 40_000.0));
+        // Saved with another factor (x20, 512 kHz): converted from that.
+        let (t, f) = region_start(&from_file_units(&audio, opened, saved_at(512_000, 25_600)));
+        assert!(close(t, 1.0) && close(f.unwrap(), 2_000.0));
+        // Another number of samples: not this file's sample grid, so the set
+        // is taken to be in the units the file opens in, and stays.
+        let (t, f) = region_start(&from_file_units(&audio, opened, saved_at(25_600, 30_000)));
+        assert_eq!((t, f), (0.5, Some(4_000.0)));
+        // The file read at its header rate again: a set in the corrected
+        // units is converted down, whatever the file opened at.
+        assert!(audio.set_time_expansion(None, TimeExpansionOrigin::User));
+        let (t, f) = region_start(&from_file_units(&audio, opened, saved_at(256_000, 25_600)));
+        assert!(close(t, 5.0) && close(f.unwrap(), 400.0));
     }
 
     #[test]

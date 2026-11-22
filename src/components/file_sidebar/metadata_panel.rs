@@ -1344,6 +1344,26 @@ thread_local! {
 /// The File Identity group: the file's size in bytes, its main hash, and its
 /// other hashes in a list that opens. Which hash is the main one, and what
 /// each row's state is, come from `crate::file_identity`.
+/// What the Info panel offers for file `f`'s GUANO
+/// ([`crate::guano_write::action_for`]). Reads the file's saved changes, so
+/// the panel is drawn again when one is added or taken back.
+fn guano_action(
+    state: AppState,
+    f: &crate::state::LoadedFile,
+) -> Option<crate::guano_write::GuanoAction> {
+    crate::guano_write::action_for(&crate::guano_write::GuanoFacts::of(
+        // The desktop app only: Android reaches recordings through the
+        // media store.
+        state.is_tauri && !state.status.is_mobile().get_untracked(),
+        f,
+        state.annotations.store().with(|store| {
+            store
+                .get(f.id)
+                .and_then(|set| set.file_edits.last().cloned())
+        }),
+    ))
+}
+
 fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
     use crate::file_identity::{HashKind, HashState, SavedSource};
 
@@ -1524,6 +1544,15 @@ fn file_identity_section(f: &crate::state::LoadedFile) -> impl IntoView {
             <div class="setting-group file-identity">
                 <div class="setting-group-title setting-group-title-major">"File Identity"</div>
                 {items}
+                // A file Oversample changed: what it changed, and the button
+                // that puts the original bytes back, under the size and
+                // hashes that the change altered.
+                <GuanoControls
+                    file_id=file_id
+                    name=f.name.clone()
+                    action=guano_action(state, f).filter(|a| a.is_undo())
+                    loading=f.loading_id.is_some()
+                />
             </div>
         }
         .into_any()
@@ -1894,18 +1923,13 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                     loading=f.loading_id.is_some()
                                     kept=crate::rate_notes::Kept::of(f)
                                 />
+                                // Writing the factor to the file goes with the
+                                // factor. Restoring a changed file is under
+                                // File Identity, beside the hashes it changes.
                                 <GuanoControls
                                     file_id=f.id
                                     name=f.name.clone()
-                                    action=crate::guano_write::action_for(&crate::guano_write::GuanoFacts::of(
-                                        // The desktop app only: Android reaches
-                                        // recordings through the media store.
-                                        state.is_tauri && !state.status.is_mobile().get_untracked(),
-                                        f,
-                                        state.annotations.store().with(|store| {
-                                            store.get(f.id).and_then(|set| set.file_edits.last().cloned())
-                                        }),
-                                    ))
+                                    action=guano_action(state, f).filter(|a| !a.is_undo())
                                     loading=f.loading_id.is_some()
                                 />
                                 {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
