@@ -1875,7 +1875,9 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {inline_row("Name".into(), f.name.clone(), None)}
                                 {inline_row("Format".into(), format_text(meta), None)}
                                 {inline_row("Duration".into(), crate::format_time::format_duration(f.audio.duration_secs, 3), None)}
-                                {f.audio.can_set_time_expansion().then(|| view! {
+                                // Not for a live recording: its length is still growing, and
+                                // its rate is the microphone's.
+                                {(f.audio.can_set_time_expansion() && !f.is_recording && !f.is_live_listen).then(|| view! {
                                     <TimeExpansionRow
                                         file_id=f.id
                                         factor=f.audio.metadata.time_expansion.map_or(1.0, |te| te.factor)

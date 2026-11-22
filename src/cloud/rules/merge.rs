@@ -940,6 +940,33 @@ mod tests {
     }
 
     #[test]
+    fn time_expansion_factors_come_from_the_copy_changed_later() {
+        use crate::annotations::SavedTimeExpansion;
+        let user = |f: f64| {
+            Some(SavedTimeExpansion {
+                from_source: None,
+                set_by_user: Some(f),
+            })
+        };
+        let (b, base) = base_of(vec![region("r1", 1.0, "one", T0)]);
+        // Only one copy has a factor: it is kept, whichever copy is later.
+        let mut a = b.clone();
+        a.time_expansion = user(10.0);
+        a.modified_at = Some(T1.into());
+        let mut c = b.clone();
+        c.modified_at = Some(T2.into());
+        assert_eq!(merge3(&base, &a, &c).0.time_expansion, user(10.0));
+        assert_eq!(merge3(&base, &c, &a).0.time_expansion, user(10.0));
+        // Two factors: the later copy's.
+        c.time_expansion = user(20.0);
+        assert_eq!(merge3(&base, &a, &c).0.time_expansion, user(20.0));
+        assert_eq!(merge3(&base, &c, &a).0.time_expansion, user(20.0));
+        // A factor the user took off is saved as 1, and wins when later.
+        c.time_expansion = user(1.0);
+        assert_eq!(merge3(&base, &a, &c).0.time_expansion, user(1.0));
+    }
+
+    #[test]
     fn lowest_bat_frequency_follows_the_side_that_changed_it() {
         let (b, base) = base_of(vec![region("r1", 1.0, "one", T0)]);
         let mut a = b.clone();

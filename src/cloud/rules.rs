@@ -268,8 +268,10 @@ pub fn annotation_fingerprint(set: &AnnotationSet) -> String {
     struct Content<'a> {
         annotations: &'a [Annotation],
         lowest_bat_hz: Option<f32>,
+        /// Only the factor the user set: the source's factor is the site's
+        /// data, and saving it is not an edit.
         #[serde(skip_serializing_if = "Option::is_none")]
-        time_expansion: Option<crate::annotations::SavedTimeExpansion>,
+        user_time_expansion: Option<f64>,
         noise_profile: Option<crate::dsp::notch::NoiseProfile>,
     }
     let noise_profile = set.noise_profile.clone().map(|mut p| {
@@ -279,7 +281,7 @@ pub fn annotation_fingerprint(set: &AnnotationSet) -> String {
     let content = Content {
         annotations: &set.annotations,
         lowest_bat_hz: set.lowest_bat_hz,
-        time_expansion: set.time_expansion,
+        user_time_expansion: set.time_expansion.and_then(|t| t.set_by_user),
         noise_profile,
     };
     hash_json(&content)

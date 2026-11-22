@@ -82,6 +82,10 @@ pub struct ProjectFile {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub lowest_bat_hz: Option<f32>,
 
+    /// The time expansion factors the file is read with (from its .batm).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub time_expansion: Option<crate::annotations::SavedTimeExpansion>,
+
     /// Date/time adjustment in seconds. Added to the file's detected recording
     /// start time. Useful when the recorder's clock was wrong.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -292,6 +296,9 @@ impl BatProject {
         if pf.lowest_bat_hz.is_none() {
             pf.lowest_bat_hz = set.lowest_bat_hz;
         }
+        if pf.time_expansion.is_none() {
+            pf.time_expansion = set.time_expansion;
+        }
 
         // Update audio metadata if missing
         if pf.audio_metadata.is_none() {
@@ -338,6 +345,7 @@ impl BatProject {
             annotations: Vec::new(),
             noise_profile: None,
             lowest_bat_hz: None,
+            time_expansion: None,
             time_offset_secs: 0.0,
             recording_start_override_ms: None,
             metadata_from_tauri: false,
@@ -382,13 +390,17 @@ mod tests {
             annotations: Vec::new(),
             noise_profile: None,
             lowest_bat_hz: None,
+            time_expansion: None,
             time_offset_secs: 0.0,
             recording_start_override_ms: None,
             metadata_from_tauri: false,
             creation_time_ms: None,
             origin_clip,
         };
-        let files = vec![file("clip.flac", Some(clip.clone())), file("other.wav", None)];
+        let files = vec![
+            file("clip.flac", Some(clip.clone())),
+            file("other.wav", None),
+        ];
         let yaml = yaml_serde::to_string(&files).unwrap();
         let loaded: Vec<ProjectFile> = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(loaded[0].origin_clip, Some(clip));

@@ -649,6 +649,13 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashSet::new());
 }
 
+thread_local! {
+    /// Files that [`restore_source_factor`] gave a correction to open with,
+    /// until [`apply_saved`] has set their rate.
+    static SOURCE_RESTORED: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
 /// The factors to save with `file`'s annotations
 /// ([`SavedTimeExpansion`]), or `None` when the file is read as its own
 /// metadata says.
@@ -680,7 +687,18 @@ pub fn sync_saved_from_file(state: AppState, file_idx: usize, set: &mut Annotati
         let pending = SAVED_PENDING.with(|p| p.borrow().contains(&f.id));
         (!pending && f.audio.can_set_time_expansion()).then(|| saved_time_expansion(f))
     });
-    if let Some(saved) = saved {
+    if let Some(mut saved) = saved {
+        // A set that has held the user's factor keeps the field after the
+        // user goes back to the rate the file opens at, as 1. Without it a
+        // Google Drive copy that still has the old factor would bring the
+        // factor back when the copies are merged.
+        let had_user_factor = set.time_expansion.is_some_and(|t| t.set_by_user.is_some());
+        if had_user_factor && saved.is_none_or(|t| t.set_by_user.is_none()) {
+            saved = Some(SavedTimeExpansion {
+                from_source: saved.and_then(|t| t.from_source),
+                set_by_user: Some(1.0),
+            });
+        }
         set.time_expansion = saved;
     }
 }
@@ -711,6 +729,7 @@ pub fn restore_source_factor(state: AppState, file_id: u64, saved: Option<SavedT
     if !wanted {
         return;
     }
+    SOURCE_RESTORED.with(|r| r.borrow_mut().insert(file_id));
     state.library.files().update(|files| {
         if let Some(f) = files.iter_mut().find(|f| f.id == file_id) {
             f.opened_time_expansion = Some(crate::types::TimeExpansion {
@@ -751,6 +770,26 @@ pub fn apply_saved(state: AppState, file_id: u64, saved: Option<SavedTimeExpansi
                     apply_saved_now(state, file_id, saved);
                     break;
                 }
+            }
+        }
+        // The source's correction was to be made and was not (the file never
+        // finished loading, or its rate could not be set): the file is not
+        // one opened with that correction. Left as it is, the note would say
+        // the user removed the correction, and the next save would record
+        // that.
+        let restored = SOURCE_RESTORED.with(|r| r.borrow_mut().remove(&file_id));
+        if restored && saved.is_some_and(|s| s.set_by_user.is_none()) {
+            let not_made = state.library.files().with_untracked(|files| {
+                files
+                    .iter()
+                    .any(|f| f.id == file_id && f.audio.metadata.time_expansion.is_none())
+            });
+            if not_made {
+                state.library.files().update(|files| {
+                    if let Some(f) = files.iter_mut().find(|f| f.id == file_id) {
+                        f.opened_time_expansion = None;
+                    }
+                });
             }
         }
         SAVED_PENDING.with(|p| p.borrow_mut().remove(&file_id));

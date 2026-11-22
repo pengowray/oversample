@@ -1223,3 +1223,104 @@ test.describe("x10 correction and Google Drive", () => {
     await expect(notice).not.toContainText("Changed in both copies");
   });
 });
+
+test.describe("a factor from Wikimedia Commons", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("is applied again when the recording is opened from disk", async ({ page }) => {
+    const audio = wav(25_600, 20);
+    const filePage = { pageid: 1, ns: 6, title: "File:Te test.wav", imagerepository: "local" };
+    const cors = { "access-control-allow-origin": "*" };
+    await page.route("https://commons.wikimedia.org/w/api.php**", (route) => {
+      const structured = route.request().url().includes("prop=revisions");
+      const body = structured
+        ? {
+            ...filePage,
+            revisions: [
+              {
+                slots: {
+                  mediainfo: {
+                    content: JSON.stringify({
+                      statements: {
+                        P14424: [
+                          {
+                            mainsnak: {
+                              snaktype: "value",
+                              datavalue: { value: { amount: "+10", unit: "1" } },
+                            },
+                            rank: "normal",
+                          },
+                        ],
+                      },
+                    }),
+                  },
+                },
+              },
+            ],
+          }
+        : {
+            ...filePage,
+            imageinfo: [
+              {
+                url: "https://upload.wikimedia.org/wikipedia/commons/a/ab/Te_test.wav",
+                size: audio.length,
+                mime: "audio/wav",
+                descriptionurl: "https://commons.wikimedia.org/wiki/File:Te_test.wav",
+                extmetadata: {},
+              },
+            ],
+          };
+      return route.fulfill({
+        contentType: "application/json",
+        headers: cors,
+        body: JSON.stringify({ query: { pages: [body] } }),
+      });
+    });
+    await page.route("https://upload.wikimedia.org/**", (route) =>
+      route.fulfill({ contentType: "audio/wav", headers: cors, body: audio }),
+    );
+    await page.goto("/#commons:File:Te_test.wav");
+    await expect(page.locator(".file-item:not(.loading)")).toHaveCount(1, { timeout: 60_000 });
+    await page.waitForFunction(
+      () => typeof (window as { __oversample_test?: unknown }).__oversample_test === "function",
+    );
+    await showInfo(page);
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    await expect(page.locator(".te-factor-input")).toHaveValue("10");
+    await annotate(page, 0.3, 0.5, 0.3, 0.6);
+    const made = (await snap(page)).regions[0];
+
+    // Saved with the factor Commons gave.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async () => {
+            const root = await navigator.storage.getDirectory();
+            const dir = await root.getDirectoryHandle("oversample-annotations", { create: true });
+            for await (const [, handle] of (dir as any).entries()) {
+              const text = await (await (handle as FileSystemFileHandle).getFile()).text();
+              if (text.includes("Region")) return /from_source: 10(\.0)?\b/.test(text);
+            }
+            return false;
+          }),
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+
+    // The same bytes opened from disk: no site, so only the saved factor
+    // says the recording is time-expanded.
+    await page.locator(".file-item-close").first().click();
+    await expect(page.locator(".file-item")).toHaveCount(0);
+    await page
+      .locator('input[type="file"]')
+      .first()
+      .setInputFiles([{ name: "Te test.wav", mimeType: "audio/wav", buffer: audio }]);
+    await expect(page.locator(".file-item:not(.loading)")).toHaveCount(1, { timeout: 30_000 });
+    await expect.poll(async () => (await snap(page)).sampleRate, { timeout: 15_000 }).toBe(256_000);
+    await expect.poll(async () => (await snap(page)).regions.length, { timeout: 15_000 }).toBe(1);
+    expectRange((await snap(page)).regions[0], made);
+    await showInfo(page);
+    await expect(page.locator(TE_NOTE)).toContainText("Corrected for ×10 time expansion.");
+    await expect(page.locator(TE_NOTE)).not.toContainText("You set this factor");
+  });
+});
