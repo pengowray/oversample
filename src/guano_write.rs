@@ -213,7 +213,6 @@ pub fn copy_name(name: &str, factor: f64) -> String {
 
 /// What both desktop actions need to know about the open file.
 struct OnDisk {
-    idx: usize,
     path: String,
     name: String,
     /// The rate the file's header states.
@@ -227,6 +226,9 @@ struct OnDisk {
     full_blake3: Option<String>,
     /// The key the file's annotations are stored under now.
     old_key: Option<String>,
+    /// The key under the file's name and size, where they are stored for a
+    /// file opened before its hash was known, or moved here by this module.
+    old_fallback_key: String,
     set: AnnotationSet,
 }
 
@@ -244,7 +246,6 @@ fn on_disk(state: AppState, file_id: u64) -> Result<OnDisk, String> {
         let id = f.identity.as_ref()?;
         let stored_rate = f.audio.stored_rate();
         Some(OnDisk {
-            idx,
             path: id.file_path.clone()?,
             name: f.name.clone(),
             stored_rate,
@@ -256,6 +257,10 @@ fn on_disk(state: AppState, file_id: u64) -> Result<OnDisk, String> {
             content_hash: id.content_hash.clone(),
             full_blake3: id.full_blake3.clone(),
             old_key: Some(crate::opfs::opfs_key(id)),
+            old_fallback_key: crate::opfs::opfs_fallback_key(
+                &f.name,
+                f.audio.metadata.file_size as u64,
+            ),
             set: AnnotationSet::new_with_metadata(
                 id.clone(),
                 &f.audio,
@@ -279,18 +284,19 @@ fn on_disk(state: AppState, file_id: u64) -> Result<OnDisk, String> {
     found.ok_or_else(|| "The file is not a file on disk.".to_string())
 }
 
-/// Store `set` for the file as it is on disk now (`file_size` bytes, opening
-/// at `opening_rate`), remove the copy stored for the file as it was, and
-/// open the file again so the app reads it and the set from disk.
-async fn move_set_and_reopen(
-    state: AppState,
-    file: OnDisk,
+/// Store `set` for the file as it is on disk now: `file_size` bytes,
+/// opening at `opening_rate`. The set is converted to those seconds and Hz
+/// and stored under the changed file's name and size, where the loader
+/// looks when it finds nothing under the file's hash, and under `also_key`
+/// when given. The copy stored for the file as it was is removed: it is out
+/// of date, and it would be found first if the file had those bytes again.
+async fn save_moved_set(
+    file: &OnDisk,
     mut set: AnnotationSet,
     file_size: u64,
     opening_rate: u32,
+    also_key: Option<&str>,
 ) -> Result<(), String> {
-    use crate::state::store_fields::*;
-    use leptos::prelude::*;
     if opening_rate != file.opening_rate {
         RateChange::new(file.opening_rate, opening_rate).annotation_set(&mut set);
     }
@@ -303,26 +309,62 @@ async fn move_set_and_reopen(
     set.touch();
 
     let new_key = crate::opfs::opfs_fallback_key(&file.name, file_size);
+    let mut kept = vec![new_key.clone()];
     if !file.beside_only {
         let yaml = yaml_serde::to_string(&set).map_err(|e| e.to_string())?;
         crate::opfs::tauri_save_central(&new_key, &yaml).await?;
+        if let Some(key) = also_key.filter(|k| *k != new_key) {
+            crate::opfs::tauri_save_central(key, &yaml).await?;
+            kept.push(key.to_string());
+        }
     }
     if file.had_sidecar || file.beside_only {
         let yaml = crate::opfs::sidecar_yaml_without_full_path(&set);
         crate::opfs::tauri_save_sidecar(&file.path, &yaml).await?;
     }
-    // The copy under the old file's key would be found first if the file
-    // ever had those bytes again, and it is out of date now.
-    if let Some(old_key) = file.old_key.filter(|k| *k != new_key) {
-        if let Err(e) = crate::opfs::tauri_delete_central(&old_key).await {
+    for old_key in file.old_key.iter().chain([&file.old_fallback_key]) {
+        if kept.contains(old_key) {
+            continue;
+        }
+        if let Err(e) = crate::opfs::tauri_delete_central(old_key).await {
             log::warn!("Could not remove the annotations stored under {old_key}: {e}");
         }
     }
+    Ok(())
+}
 
-    crate::components::file_sidebar::files_panel::remove_file_at(&state, file.idx);
-    let load_id = state.loading_start(&file.name);
-    let loaded =
-        crate::components::file_sidebar::load_native_file(file.path.clone(), state, load_id).await;
+/// Close the open file without saving anything more for it. Its set is
+/// already stored for the file as it is on disk now, and a save made as it
+/// closes would write the old set back.
+fn close_without_saving(state: AppState, file_id: u64) {
+    use crate::state::store_fields::*;
+    use leptos::prelude::*;
+    state.library.files().update(|files| {
+        if let Some(f) = files.iter_mut().find(|f| f.id == file_id) {
+            f.read_only = true;
+        }
+    });
+    if let Some(idx) = state.file_idx_for_id(file_id) {
+        crate::components::file_sidebar::files_panel::remove_file_at(&state, idx);
+    }
+    state.annotations.store().update(|store| {
+        store.remove(file_id);
+    });
+}
+
+/// Open the file at `path` (`file_size` bytes) again and make it the
+/// current file, so the app reads it and its set from disk.
+async fn reopen(state: AppState, path: &str, name: &str, file_size: u64) -> Result<(), String> {
+    use crate::state::store_fields::*;
+    use leptos::prelude::*;
+    let load_id = state.loading_start(name);
+    let loaded = crate::components::file_sidebar::load_native_wav(
+        path.to_string(),
+        file_size,
+        state,
+        load_id,
+    )
+    .await;
     state.loading_done(load_id);
     loaded?;
     let count = state.library.files().with_untracked(|f| f.len());
@@ -345,10 +387,40 @@ struct UndoArgs<'a> {
     original: &'a FileHashes,
 }
 
+async fn undo_on_disk(
+    path: &str,
+    undo: &[SavedSplice],
+    original: &FileHashes,
+) -> Result<FileHashes, String> {
+    crate::tauri_bridge::tauri_invoke_typed_args(
+        "file_edit_undo",
+        &UndoArgs {
+            path,
+            undo,
+            original,
+        },
+    )
+    .await
+}
+
+/// What a change to the file on disk came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Done {
+    /// The file was changed and is open again.
+    Reopened,
+    /// The file was changed and its annotations stored, but it could not be
+    /// opened again. Holds why.
+    NotReopened(String),
+}
+
 /// Desktop: set GUANO's TE field of file `file_id` on disk to `factor`,
 /// record the change with the file's annotations, and open the file again.
 /// The caller has asked the user ([`GuanoAction::confirm_text`]).
-pub async fn write_in_place(state: AppState, file_id: u64, factor: f64) -> Result<(), String> {
+///
+/// If the annotations can't be stored for the changed file, the file is put
+/// back as it was, so the bytes that undo the change are never held only in
+/// memory. `Err` says which of the two states the file is in.
+pub async fn write_in_place(state: AppState, file_id: u64, factor: f64) -> Result<Done, String> {
     let file = on_disk(state, file_id)?;
     let outcome: FileEditOutcome = crate::tauri_bridge::tauri_invoke_typed_args(
         "guano_set_te",
@@ -367,43 +439,74 @@ pub async fn write_in_place(state: AppState, file_id: u64, factor: f64) -> Resul
         made_at: crate::annotations::now_iso8601(),
         original,
         changed: outcome.changed.clone(),
-        undo: outcome.undo,
+        undo: outcome.undo.clone(),
+        opened_rate: file.opening_rate,
+        key_before: file.old_key.clone(),
     });
     // The file's own metadata gives the factor from now on.
     set.time_expansion = None;
     let opening_rate = (f64::from(file.stored_rate) * factor).round() as u32;
     let size = outcome.changed.file_size;
-    move_set_and_reopen(state, file, set, size, opening_rate).await
+    if let Err(why) = save_moved_set(&file, set, size, opening_rate, None).await {
+        return Err(
+            match undo_on_disk(&file.path, &outcome.undo, &outcome.original).await {
+                Ok(_) => format!(
+                    "its annotations could not be saved ({why}), so the audio file was put \
+                     back as it was"
+                ),
+                Err(undo_why) => format!(
+                    "the audio file was changed, but its annotations could not be saved \
+                     ({why}) and the file could not be put back ({undo_why})"
+                ),
+            },
+        );
+    }
+    close_without_saving(state, file_id);
+    Ok(match reopen(state, &file.path, &file.name, size).await {
+        Ok(()) => Done::Reopened,
+        Err(why) => Done::NotReopened(why),
+    })
 }
 
 /// Desktop: put back the bytes file `file_id` had before the latest change
 /// Oversample made to it. The recording keeps the factor, as one the user
-/// set, so it is read the same way afterwards.
-pub async fn undo_in_place(state: AppState, file_id: u64) -> Result<(), String> {
+/// set, so it is read the same way afterwards. The annotations go back to
+/// the seconds and Hz the original file opened in, under the key they had.
+pub async fn undo_in_place(state: AppState, file_id: u64) -> Result<Done, String> {
     let file = on_disk(state, file_id)?;
     let edit = file
         .set
         .file_edits
         .last()
         .cloned()
-        .ok_or("No change to this file is saved with its annotations.")?;
-    let restored: FileHashes = crate::tauri_bridge::tauri_invoke_typed_args(
-        "file_edit_undo",
-        &UndoArgs {
-            path: &file.path,
-            undo: &edit.undo,
-            original: &edit.original,
-        },
-    )
-    .await?;
+        .ok_or("no change to this file is saved with its annotations")?;
+    let restored = undo_on_disk(&file.path, &edit.undo, &edit.original).await?;
     let mut set = file.set.clone();
     set.file_edits.pop();
     set.time_expansion = Some(SavedTimeExpansion {
         from_source: None,
         set_by_user: Some(edit.factor),
     });
-    let opening_rate = file.stored_rate;
-    move_set_and_reopen(state, file, set, restored.file_size, opening_rate).await
+    // A record from before the rate was saved: the rate in the header.
+    let opening_rate = if edit.opened_rate > 0 {
+        edit.opened_rate
+    } else {
+        file.stored_rate
+    };
+    let size = restored.file_size;
+    save_moved_set(&file, set, size, opening_rate, edit.key_before.as_deref())
+        .await
+        .map_err(|why| {
+            format!(
+                "the audio file has its original bytes again, but its annotations could \
+                 not be saved ({why})"
+            )
+        })?;
+    close_without_saving(state, file_id);
+    Ok(match reopen(state, &file.path, &file.name, size).await {
+        Ok(()) => Done::Reopened,
+        Err(why) => Done::NotReopened(why),
+    })
 }
 
 /// Browser: download a copy of file `file_id` with GUANO's TE field set to
@@ -462,6 +565,8 @@ mod tests {
                 ..Default::default()
             },
             undo: Vec::new(),
+            opened_rate: 38_400,
+            key_before: None,
         }
     }
 

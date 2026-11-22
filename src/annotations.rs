@@ -424,6 +424,14 @@ pub struct FileEdit {
     pub changed: oversample_ipc::file_edit::FileHashes,
     /// Applied to the changed file, gives the original file's bytes.
     pub undo: Vec<oversample_ipc::file_edit::SavedSplice>,
+    /// The sample rate the original file opened at, which its saved
+    /// annotations were in: the rate in its header, or that rate corrected
+    /// by a factor in its own metadata. 0 in a record without it.
+    #[serde(default)]
+    pub opened_rate: u32,
+    /// The key the original file's annotations were stored under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_before: Option<String>,
 }
 
 /// Current `.batm` sidecar on-disk format version. A file whose `version`
@@ -788,6 +796,53 @@ mod tests {
         assert!(!yaml.contains("lowest_bat_hz"), "written only when set");
         let back: AnnotationSet = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(back.lowest_bat_hz, None);
+
+        // A change to the audio file reads back as it was written. Hex that
+        // is all digits, or looks like a number, must stay text: undo needs
+        // the exact bytes.
+        use oversample_ipc::file_edit::{FileHashes, SavedSplice};
+        let edit = FileEdit {
+            what: "guano_te".to_string(),
+            factor: 2.5,
+            made_at: "2026-11-22T05:00:00.000Z".to_string(),
+            original: FileHashes {
+                file_size: 966,
+                sha256: Some("0123456789".repeat(6) + "0123"),
+                blake3: None,
+            },
+            changed: FileHashes {
+                file_size: 1000,
+                sha256: Some("1e5".to_string()),
+                blake3: Some("00".to_string()),
+            },
+            undo: vec![
+                SavedSplice {
+                    offset: 4,
+                    old: "e0030000".to_string(),
+                    new: "24000000".to_string(),
+                },
+                SavedSplice {
+                    offset: 966,
+                    old: "00".to_string(),
+                    new: String::new(),
+                },
+                SavedSplice {
+                    offset: 970,
+                    old: "1e5".to_string(),
+                    new: "0x10".to_string(),
+                },
+            ],
+            opened_rate: 38_400,
+            key_before: Some("b3_0123.batm".to_string()),
+        };
+        let with_edit = AnnotationSet {
+            file_edits: vec![edit.clone()],
+            ..set.clone()
+        };
+        let yaml = yaml_serde::to_string(&with_edit).unwrap();
+        let back: AnnotationSet = yaml_serde::from_str(&yaml).unwrap();
+        assert_eq!(back.file_edits, vec![edit], "{yaml}");
+        assert!(!yaml_serde::to_string(&set).unwrap().contains("file_edits"));
 
         // The time expansion factors are written only when there are some.
         assert!(!yaml.contains("time_expansion"));

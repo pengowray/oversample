@@ -1898,7 +1898,9 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                     file_id=f.id
                                     name=f.name.clone()
                                     action=crate::guano_write::action_for(&crate::guano_write::GuanoFacts::of(
-                                        state.is_tauri,
+                                        // The desktop app only: Android reaches
+                                        // recordings through the media store.
+                                        state.is_tauri && !state.status.is_mobile().get_untracked(),
                                         f,
                                         state.annotations.store().with(|store| {
                                             store.get(f.id).and_then(|set| set.file_edits.last().cloned())

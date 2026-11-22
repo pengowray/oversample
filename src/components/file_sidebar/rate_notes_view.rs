@@ -167,19 +167,34 @@ pub(crate) fn GuanoControls(
             let name = name.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 let te = |f: f64| oversample_core::audio::guano_edit::te_value(f);
+                use crate::guano_write::Done;
+                let reopened = |done: Done, said: String| match done {
+                    Done::Reopened => Ok(said),
+                    Done::NotReopened(why) => Err(format!(
+                        "{said}, but the file could not be opened again: {why}"
+                    )),
+                };
                 let result = match &action {
                     GuanoAction::WriteInPlace { factor } => {
-                        crate::guano_write::write_in_place(state, file_id, *factor)
-                            .await
-                            .map(|_| {
-                                format!("Set TE to {} in the GUANO metadata of {name}", te(*factor))
-                            })
-                            .map_err(|e| format!("Could not change {name}: {e}"))
+                        match crate::guano_write::write_in_place(state, file_id, *factor).await {
+                            Ok(done) => reopened(
+                                done,
+                                format!(
+                                    "Set TE to {} in the GUANO metadata of {name}",
+                                    te(*factor)
+                                ),
+                            ),
+                            Err(why) => Err(format!("Could not change {name}: {why}")),
+                        }
                     }
-                    GuanoAction::Undo { .. } => crate::guano_write::undo_in_place(state, file_id)
-                        .await
-                        .map(|_| format!("Put back the original bytes of {name}"))
-                        .map_err(|e| format!("Could not change {name}: {e}")),
+                    GuanoAction::Undo { .. } => {
+                        match crate::guano_write::undo_in_place(state, file_id).await {
+                            Ok(done) => {
+                                reopened(done, format!("Put back the original bytes of {name}"))
+                            }
+                            Err(why) => Err(format!("Could not undo the change to {name}: {why}")),
+                        }
+                    }
                     GuanoAction::SaveCopy { factor } => {
                         crate::guano_write::save_copy(state, file_id, *factor)
                             .await

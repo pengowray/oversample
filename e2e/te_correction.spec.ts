@@ -1370,3 +1370,214 @@ test.describe("the factor in the audio file's GUANO", () => {
     await expect(page.locator('.rate-note[data-note="guano"]')).toHaveCount(0);
   });
 });
+
+/** Runs the page as the desktop app with one WAV file on a fake disk at
+ * /rec/plain.wav. The fake answers the file, annotation and GUANO commands;
+ * `guano_set_te` appends a guan chunk as the real command does, and
+ * `file_edit_undo` checks the undo data it is given before putting the
+ * original bytes back. `window.__disk` holds the state. */
+async function desktopWithFile(page: Page, audio: Buffer) {
+  await page.addInitScript((b64: string) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const hex = (u: Uint8Array) => Array.from(u, (x) => x.toString(16).padStart(2, "0")).join("");
+    const u32 = (n: number) => new Uint8Array([n & 255, (n >> 8) & 255, (n >> 16) & 255, n >>> 24]);
+    const st = {
+      file: bytes,
+      original: bytes,
+      central: {} as Record<string, string>,
+      deleted: [] as string[],
+      lastUndo: null as unknown,
+      undoChecked: false,
+    };
+    (window as unknown as { __disk: typeof st }).__disk = st;
+    const hashes = (u: Uint8Array, tag: string) => ({ file_size: u.length, sha256: tag.repeat(32) });
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      transformCallback: () => 0,
+      metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+      invoke: (cmd: string, args: Record<string, any>) => {
+        switch (cmd) {
+          case "google_status":
+            return Promise.resolve({ available: false, signedIn: false, persistent: true });
+          case "open_file_dialog":
+            return Promise.resolve(["/rec/plain.wav"]);
+          case "read_file_range": {
+            const part = st.file.slice(args.offset, args.offset + args.length);
+            return Promise.resolve(part.buffer);
+          }
+          case "read_file_bytes":
+            return Promise.resolve(st.file.slice().buffer);
+          case "list_central_annotations":
+            return Promise.resolve(Object.keys(st.central));
+          case "read_central_annotations":
+            return Promise.resolve(st.central[args.fileKey] ?? null);
+          case "write_central_annotations":
+            st.central[args.fileKey] = args.yaml;
+            return Promise.resolve(null);
+          case "delete_central_annotations":
+            st.deleted.push(args.fileKey);
+            delete st.central[args.fileKey];
+            return Promise.resolve(null);
+          case "guano_set_te": {
+            const text = new TextEncoder().encode(`GUANO|Version: 1.0\nTE: ${args.factor}\n`);
+            const pad = text.length % 2;
+            const added = new Uint8Array(8 + text.length + pad);
+            added.set([0x67, 0x75, 0x61, 0x6e]);
+            added.set(u32(text.length), 4);
+            added.set(text, 8);
+            const before = st.file;
+            const after = new Uint8Array(before.length + added.length);
+            after.set(before);
+            after.set(added, before.length);
+            after.set(u32(after.length - 8), 4);
+            st.file = after;
+            st.lastUndo = [
+              { offset: 4, old: hex(after.slice(4, 8)), new: hex(before.slice(4, 8)) },
+              { offset: before.length, old: hex(added) },
+            ];
+            return Promise.resolve({
+              original: hashes(before, "a1"),
+              changed: hashes(after, "b2"),
+              undo: st.lastUndo,
+            });
+          }
+          case "file_edit_undo": {
+            // What the app saved and read back must be what it was given.
+            const same =
+              JSON.stringify(args.undo.map((s: any) => ({ offset: s.offset, old: s.old ?? "", new: s.new ?? "" }))) ===
+              JSON.stringify((st.lastUndo as any[]).map((s) => ({ offset: s.offset, old: s.old ?? "", new: s.new ?? "" })));
+            if (!same || args.original.sha256 !== "a1".repeat(32) || args.original.file_size !== st.original.length) {
+              return Promise.reject("undo data differs");
+            }
+            st.undoChecked = true;
+            st.file = st.original;
+            return Promise.resolve(hashes(st.original, "a1"));
+          }
+          default:
+            return Promise.resolve(null);
+        }
+      },
+    };
+  }, audio.toString("base64"));
+}
+
+const disk = (page: Page) =>
+  page.evaluate(() => {
+    const st = (window as any).__disk;
+    return {
+      size: st.file.length as number,
+      isOriginal: st.file === st.original,
+      tail: new TextDecoder("latin1").decode(st.file.slice(-34)),
+      central: st.central as Record<string, string>,
+      deleted: st.deleted as string[],
+      undoChecked: st.undoChecked as boolean,
+    };
+  });
+
+test.describe("the factor in the audio file's GUANO, in the desktop app", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("writes TE to the file, keeps annotations on the same sounds, and undoes it", async ({
+    page,
+  }) => {
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(String(e)));
+    const questions: string[] = [];
+    page.on("dialog", (d) => {
+      questions.push(d.message());
+      void d.accept();
+    });
+    const audio = wav(25_600, 20);
+    await desktopWithFile(page, audio);
+    await page.goto("/");
+    await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
+    await page.waitForFunction(
+      () => typeof (window as { __oversample_test?: unknown }).__oversample_test === "function",
+    );
+    await page.getByText("+ Open files").click();
+    await expect(page.locator(".file-item:not(.loading)")).toHaveCount(1, { timeout: 30_000 });
+    await showInfo(page);
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    await page.locator(".te-factor-input").fill("10");
+    await page.locator(".te-factor-input").press("Enter");
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz");
+    await annotate(page, 0.3, 0.5, 0.3, 0.6);
+    const made = (await snap(page)).regions[0];
+    await expect
+      .poll(async () => Object.values((await disk(page)).central).some((y) => y.includes("Region")), {
+        timeout: 15_000,
+      })
+      .toBe(true);
+    const keysBefore = Object.keys((await disk(page)).central);
+
+    // Write TE to the file on disk.
+    const write = page.locator('button[data-action="guano-write"]');
+    await expect(write).toHaveText("Write TE 10 to the audio file");
+    await write.click();
+    await expect(page.locator('button[data-action="guano-undo"]')).toBeVisible({ timeout: 30_000 });
+    expect(questions[0]).toContain('Change the audio file "plain.wav"?');
+    let d = await disk(page);
+    expect(d.size).toBe(audio.length + 34);
+    expect(d.tail).toContain("GUANO|Version: 1.0\nTE: 10\n");
+    // The changed file opens corrected from its own metadata, with the
+    // annotation on the same sounds.
+    await expect.poll(async () => (await snap(page)).sampleRate, { timeout: 15_000 }).toBe(256_000);
+    await expect.poll(async () => (await snap(page)).regions.length, { timeout: 15_000 }).toBe(1);
+    expectRange((await snap(page)).regions[0], made);
+    await showInfo(page);
+    await expect(page.locator(TE_NOTE)).toContainText("Corrected for ×10 time expansion.");
+    await expect(page.locator(TE_NOTE)).not.toContainText("You set this factor");
+    await expect(page.locator('.rate-note[data-note="guano"]')).toContainText(
+      "Oversample set TE to 10 in this audio file's GUANO metadata on ",
+    );
+    // Every stored copy is the changed file's: it records the change, in
+    // the changed file's units, and the old file's copy is gone.
+    const withRegion = Object.values(d.central).filter((y) => y.includes("Region"));
+    expect(withRegion.length).toBeGreaterThan(0);
+    for (const yaml of withRegion) {
+      expect(yaml).toContain("file_edits:");
+      expect(yaml).toContain("opened_rate: 25600");
+      expect(yaml).toMatch(/sample_rate: 256000\b/);
+      expect(yaml).not.toContain("set_by_user");
+    }
+    for (const key of keysBefore) expect(d.deleted).toContain(key);
+
+    // Undo.
+    await page.locator('button[data-action="guano-undo"]').click();
+    await expect(page.locator('button[data-action="guano-write"]')).toBeVisible({ timeout: 30_000 });
+    expect(questions[1]).toContain("Put back the original bytes");
+    d = await disk(page);
+    expect(d.undoChecked).toBe(true);
+    expect(d.isOriginal).toBe(true);
+    // Still read with the factor, now as one the user set.
+    await expect.poll(async () => (await snap(page)).sampleRate, { timeout: 15_000 }).toBe(256_000);
+    await expect.poll(async () => (await snap(page)).regions.length, { timeout: 15_000 }).toBe(1);
+    expectRange((await snap(page)).regions[0], made);
+    await showInfo(page);
+    await expect(page.locator(TE_NOTE)).toContainText("You set this factor");
+    if (process.env.TE_DEBUG) {
+      await page.waitForTimeout(3000);
+      const dd = await disk(page);
+      for (const [k, y] of Object.entries(dd.central))
+        console.log("KEY", k, "\n" + y.split("\n").filter((l) => /file_edits|set_by_user|sample_rate|file_size|time_expansion|from_source|modified_at/.test(l)).join("\n"));
+      console.log("DELETED", dd.deleted);
+    }
+    await expect
+      .poll(
+        async () => {
+          const all = Object.values((await disk(page)).central).filter((y) => y.includes("Region"));
+          return (
+            all.length > 0 &&
+            all.every(
+              (y) =>
+                !y.includes("file_edits") &&
+                /set_by_user: 10(\.0)?\b/.test(y) &&
+                /sample_rate: 25600\b/.test(y),
+            )
+          );
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+    expect(errors).toEqual([]);
+  });
+});
