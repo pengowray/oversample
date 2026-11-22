@@ -5,5 +5,6 @@ pub mod canvas;
 pub mod device_hint;
 pub mod dsp;
 pub mod heterodyne_hint;
+pub mod position;
 pub mod species_range;
 pub mod types;

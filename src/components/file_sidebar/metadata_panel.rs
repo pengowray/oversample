@@ -1,4 +1,5 @@
 use super::rate_notes_view::{note_selector, RateNotes};
+use oversample_core::position::parse_lat_lon;
 use crate::rate_notes::{file_rate_notes, NoteKind};
 use crate::state::store_fields::*;
 use crate::state::{AppState, MetadataView, RightSidebarTab};
@@ -61,6 +62,8 @@ enum FieldKind {
     Date,
     Temperature,
     GpsPosition,
+    /// A position the recorder's owner typed in (a D500X has no GPS).
+    TypedPosition,
     License,
     /// Markdown text (Xeno-canto remarks). `classify` never returns this: the
     /// caller picks it for the one field it knows is Markdown.
@@ -86,28 +89,6 @@ fn classify(label: &str) -> FieldKind {
     } else {
         FieldKind::None
     }
-}
-
-/// Parse a value into (lat, lon). Accepts "lat lon", "lat,lon",
-/// "lat, lon", with optional trailing junk. Returns None if anything
-/// doesn't look like a decimal coordinate pair.
-fn parse_lat_lon(value: &str) -> Option<(f64, f64)> {
-    let s = value.trim();
-    // Try comma split first, then whitespace
-    let parts: Vec<&str> = if s.contains(',') {
-        s.split(',').collect()
-    } else {
-        s.split_whitespace().collect()
-    };
-    if parts.len() < 2 {
-        return None;
-    }
-    let lat: f64 = parts[0].trim().parse().ok()?;
-    let lon: f64 = parts[1].trim().parse().ok()?;
-    if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
-        return None;
-    }
-    Some((lat, lon))
 }
 
 /// Parse a temperature value (string) into degrees Celsius.
@@ -487,9 +468,10 @@ fn render_value_body(
                 raw()
             }
         }
-        FieldKind::GpsPosition => {
+        FieldKind::GpsPosition | FieldKind::TypedPosition => {
+            let note = (kind == FieldKind::TypedPosition).then_some("Typed into the recorder");
             if let Some((lat, lon)) = parse_lat_lon(value) {
-                gps_block(lat, lon, value.to_string()).into_any()
+                gps_block(lat, lon, value.to_string(), note).into_any()
             } else {
                 raw()
             }
@@ -761,14 +743,14 @@ fn recorder_section(
         items.push(spacious_row(k, v, None, view_mode).into_any());
         if let (Some((lat, lon)), true) = (position, position_after == Some(i)) {
             // The owner types the position into a D500X (it has no GPS), so
-            // the label says so.
+            // the row says so under the coordinates.
             items.push(
                 spacious_row_as(
-                    "Position (entered by hand)".into(),
+                    "Position".into(),
                     format!("{lat:.5}, {lon:.5}"),
-                    Some("From the LAT and LON rows, which are typed into the recorder's Time settings".into()),
+                    Some("From the LAT and LON rows".into()),
                     view_mode,
-                    FieldKind::GpsPosition,
+                    FieldKind::TypedPosition,
                     None,
                 )
                 .into_any(),
@@ -985,7 +967,12 @@ fn date_section(f: &crate::state::LoadedFile, view_mode: MetadataView) -> impl I
 /// under both the root domain and the /oversample/ subpath build) and
 /// is expected to be an equirectangular projection (lon −180→+180 maps
 /// linearly across width, lat +90→−90 across height).
-fn gps_block(lat: f64, lon: f64, raw_value: String) -> impl IntoView {
+fn gps_block(
+    lat: f64,
+    lon: f64,
+    raw_value: String,
+    note: Option<&'static str>,
+) -> impl IntoView {
     let pin_left_pct = (lon + 180.0) / 360.0 * 100.0;
     let pin_top_pct = (90.0 - lat) / 180.0 * 100.0;
     let osm = format!("https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=10/{lat}/{lon}");
@@ -993,6 +980,7 @@ fn gps_block(lat: f64, lon: f64, raw_value: String) -> impl IntoView {
     let coord_text = format!("{lat:.5}, {lon:.5}");
     view! {
         <div class="metadata-value-block">{coord_text}</div>
+        {note.map(|n| view! { <div class="metadata-value-relative">{n}</div> })}
         <div class="metadata-map-wrap">
             <img class="metadata-map-img" src="world-map.png" alt="World map" />
             <div class="metadata-map-pin"
@@ -1763,7 +1751,7 @@ fn chime_section(
                         <div class="metadata-key-line">
                             <span class="metadata-key">{CHIME_LOCATION_LABEL}</span>
                         </div>
-                        {gps_block(lat, lon, raw)}
+                        {gps_block(lat, lon, raw, None)}
                     </div>
                 }
                 .into_any(),

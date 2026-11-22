@@ -23,6 +23,7 @@ pub mod countries;
 
 pub use areas::Area;
 
+use oversample_core::position::parse_lat_lon;
 use crate::bat_book::country_map::country_to_region;
 use crate::source_site::SourceSite;
 use crate::state::LoadedFile;
@@ -49,25 +50,6 @@ impl Place {
     }
 }
 
-/// "lat lon", "lat,lon" or "lat, lon" as decimal degrees, in range. Exactly
-/// 0, 0 counts as no position: detectors write it when they have no GPS fix.
-pub fn parse_lat_lon(value: &str) -> Option<(f32, f32)> {
-    let s = value.trim();
-    let parts: Vec<&str> = if s.contains(',') {
-        s.split(',').collect()
-    } else {
-        s.split_whitespace().collect()
-    };
-    if parts.len() < 2 {
-        return None;
-    }
-    let lat: f32 = parts[0].trim().parse().ok()?;
-    let lon: f32 = parts[1].trim().parse().ok()?;
-    let no_fix = lat == 0.0 && lon == 0.0;
-    ((-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) && !no_fix)
-        .then_some((lat, lon))
-}
-
 /// The week of a date that starts "YYYY-MM-DD"; `None` for an unknown month or
 /// day (Xeno-Canto writes "2019-00-00" when it has only a year).
 pub fn week_of_date(date: &str) -> Option<u32> {
@@ -92,53 +74,52 @@ fn wamd_fields(file: &LoadedFile) -> Option<&[(String, String)]> {
     wav.wamd.as_ref().map(|b| b.fields.as_slice())
 }
 
-/// The recording's place and week from its own metadata, if it has a place.
-pub fn file_place(file: &LoadedFile) -> Option<Place> {
-    let guano = file
-        .audio
-        .metadata
-        .guano
-        .as_ref()
-        .map(|g| g.fields.as_slice());
-    let xc = file.site_metadata.as_ref().map(|m| m.fields.as_slice());
-    let from_guano = guano.and_then(|g| {
-        field(g, "Loc Position")
-            .and_then(parse_lat_lon)
-            .or_else(|| {
-                let lat = field(g, "Loc|Lat")?.trim();
-                let lon = field(g, "Loc|Lon")?.trim();
-                parse_lat_lon(&format!("{lat} {lon}"))
-            })
-    });
+/// The recording's position from its own metadata, in decimal degrees. The
+/// first of these that gives a position is used: GUANO, a Wildlife Acoustics
+/// `wamd` chunk, a Pettersson D500X block (which the owner types in), an Anabat
+/// zero-crossing header, then the source website's coordinates. The Info
+/// panel's maps are drawn from the same parsers.
+pub fn file_position(file: &LoadedFile) -> Option<(f64, f64)> {
+    let meta = &file.audio.metadata;
+    let wav = meta.wav.as_ref();
+    let from_guano = || {
+        let g = meta.guano.as_ref()?.fields.as_slice();
+        field(g, "Loc Position").and_then(parse_lat_lon).or_else(|| {
+            let lat = field(g, "Loc|Lat")?.trim();
+            let lon = field(g, "Loc|Lon")?.trim();
+            parse_lat_lon(&format!("{lat} {lon}"))
+        })
+    };
     let from_wamd = || {
         wamd_fields(file)
             .and_then(|w| field(w, "GPS Position"))
             .and_then(parse_lat_lon)
     };
-    // A Pettersson D500X's own block (degrees, minutes, seconds).
     let from_d500x = || {
-        let wav = file.audio.metadata.wav.as_ref()?;
-        let block = wav.recorder_block.as_ref()?;
+        let block = wav?.recorder_block.as_ref()?;
         oversample_core::audio::wav::d500x_position(&block.fields)
-            .map(|(lat, lon)| (lat as f32, lon as f32))
     };
-    // An Anabat zero-crossing file's header.
     let from_zc = || {
-        let zc = file.audio.metadata.zc_data.as_ref()?;
+        let zc = meta.zc_data.as_ref()?;
         oversample_core::audio::zc::gps_position(&zc.metadata.gps)
-            .map(|(lat, lon)| (lat as f32, lon as f32))
     };
-    let (lat, lon) = from_guano
+    let from_site = || {
+        let site = file.site_metadata.as_ref()?.fields.as_slice();
+        field(site, "Coordinates").and_then(parse_lat_lon)
+    };
+    from_guano()
         .or_else(from_wamd)
         .or_else(from_d500x)
         .or_else(from_zc)
-        .or_else(|| {
-            xc.and_then(|x| field(x, "Coordinates"))
-                .and_then(parse_lat_lon)
-        })?;
+        .or_else(from_site)
+}
+
+/// The recording's place and week from its own metadata, if it has a place.
+pub fn file_place(file: &LoadedFile) -> Option<Place> {
+    let (lat, lon) = file_position(file)?;
     Some(Place {
-        lat,
-        lon,
+        lat: lat as f32,
+        lon: lon as f32,
         week: file_week(file),
     })
 }
@@ -256,13 +237,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn coordinates_and_dates() {
-        assert_eq!(parse_lat_lon("52.5 13.4"), Some((52.5, 13.4)));
-        assert_eq!(parse_lat_lon("-33.9, 151.2"), Some((-33.9, 151.2)));
-        assert_eq!(parse_lat_lon("95 13"), None);
-        assert_eq!(parse_lat_lon("0 0"), None);
-        assert_eq!(parse_lat_lon("0.0, 0.0"), None);
-        assert_eq!(parse_lat_lon("0, 13.4"), Some((0.0, 13.4)));
+    fn dates() {
         assert_eq!(week_of_date("2023-06-01"), Some(21));
         assert_eq!(week_of_date("2023-07-15T22:30:45Z"), Some(27));
         assert_eq!(week_of_date("2019-00-00"), None);
