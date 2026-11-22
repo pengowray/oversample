@@ -203,7 +203,7 @@ impl HeardAxis {
                     // factor that was set.
                     Some(asked) => {
                         let limit = if self.time_scale > 1.0 {
-                            "the lowest playback sample rate is 8 kHz"
+                            "the largest time expansion is 256\u{00D7}"
                         } else {
                             "the highest playback sample rate is 384 kHz"
                         };
@@ -515,21 +515,14 @@ mod tests {
         );
     }
 
-    /// TE labels use the factor playback really applies. A 44.1 kHz file at
-    /// ×10 would need a 4.41 kHz output: playback uses 8 kHz, which is
-    /// ×5.5125. A 256 kHz file sped up ×2 would need 512 kHz: playback uses
-    /// 384 kHz, which is ×1.5.
+    /// TE labels use the factor playback really applies. A 256 kHz file sped
+    /// up ×2 would need 512 kHz: playback uses 384 kHz, which is ×1.5. A
+    /// slower rate has no limit: a 44.1 kHz file at ×10 plays at ×10.
     #[test]
     fn te_labels_use_the_factor_playback_applies() {
-        let axis = HeardAxis::for_te(44_100, 10.0).unwrap();
-        assert!((axis.time_scale - 5.5125).abs() < 1e-9);
-        assert!((axis.freq_scale - 1.0 / 5.5125).abs() < 1e-9);
-        assert_eq!(axis.freq_caption(), "heard kHz = recording ÷5.5");
-        assert_eq!(
-            axis.blurb(),
-            "This file plays at 5.5×, not 10×: the lowest playback sample rate is 8 kHz. \
-             Axes show what is heard: frequency ÷5.5, time ×5.5."
-        );
+        let slow = HeardAxis::for_te(44_100, 10.0).unwrap();
+        assert_eq!(slow, HeardAxis::for_te_factor(10.0).unwrap());
+        assert!(!slow.blurb().contains("This file"));
 
         let fast = HeardAxis::for_te(256_000, -2.0).unwrap();
         assert!((fast.freq_scale - 1.5).abs() < 1e-9);
