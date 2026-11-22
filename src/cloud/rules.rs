@@ -191,6 +191,9 @@ pub fn merge_annotation_sets(drive: AnnotationSet, local: &AnnotationSet) -> Ann
     if merged.lowest_bat_hz.is_none() {
         merged.lowest_bat_hz = local.lowest_bat_hz;
     }
+    if merged.time_expansion.is_none() {
+        merged.time_expansion = local.time_expansion;
+    }
     if merged.noise_profile.is_none() {
         merged.noise_profile = local.noise_profile.clone();
     }
@@ -265,6 +268,8 @@ pub fn annotation_fingerprint(set: &AnnotationSet) -> String {
     struct Content<'a> {
         annotations: &'a [Annotation],
         lowest_bat_hz: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        time_expansion: Option<crate::annotations::SavedTimeExpansion>,
         noise_profile: Option<crate::dsp::notch::NoiseProfile>,
     }
     let noise_profile = set.noise_profile.clone().map(|mut p| {
@@ -274,6 +279,7 @@ pub fn annotation_fingerprint(set: &AnnotationSet) -> String {
     let content = Content {
         annotations: &set.annotations,
         lowest_bat_hz: set.lowest_bat_hz,
+        time_expansion: set.time_expansion,
         noise_profile,
     };
     hash_json(&content)

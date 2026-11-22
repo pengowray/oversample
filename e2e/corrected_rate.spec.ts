@@ -270,7 +270,7 @@ test.describe("a correction from Find recordings", () => {
     await page.locator(REMOVE).click();
     await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
     await expect(page.locator(`${TE_NOTE} > div`)).toHaveText([
-      "Correction for ×10 time expansion removed until you close the file or reload the page. " +
+      "Correction for ×10 time expansion removed. This choice is saved in the recording's .batm file. " +
         "Time expansion in the Find recordings result: ×10.",
     ]);
     await expect(page.locator(MARK)).toHaveCount(0);
@@ -335,7 +335,7 @@ test.describe("a streamed WAV file corrected from its GUANO", () => {
     expect(await rms(page, 2_400_000, 38_400)).toBeGreaterThan(0.1);
     expect(await rms(page, 1_500_000, 38_400)).toBeLessThan(0.01);
     await expect(page.locator(`${TE_NOTE} > div`)).toHaveText([
-      "Correction for ×10 time expansion removed until you close the file or reload the page. " +
+      "Correction for ×10 time expansion removed. This choice is saved in the recording's .batm file. " +
         "Time expansion in the file's GUANO metadata: ×10.",
     ]);
     await expect(page.locator(".toolbar-badge-row .file-badge-streaming")).toBeVisible();
@@ -414,7 +414,7 @@ test.describe("a streamed WAV file at a x10 header rate", () => {
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
     expect((await snap(page)).duration).toBeCloseTo(frames / 256_000, 6);
     await expect(page.locator(`${TE_NOTE} > div`)).toHaveText([
-      "Corrected for ×10 time expansion until you close the file or reload the page. " +
+      "Corrected for ×10 time expansion. You set this factor, and it is saved in the recording's .batm file. " +
         "Sample rate in the file header: 25.6\u00a0kHz.",
     ]);
     await expect(page.locator(`.toolbar-badge-row ${MARK}`)).toHaveText("Corrected ×10");
@@ -444,7 +444,7 @@ test.describe("a correction from a Wildlife Acoustics wamd chunk", () => {
     await page.locator(REMOVE).click();
     await expect(row(page, "Sample rate")).toHaveText("38.4 kHz");
     await expect(page.locator(`${TE_NOTE} > div`)).toHaveText([
-      "Correction for ×10 time expansion removed until you close the file or reload the page. " +
+      "Correction for ×10 time expansion removed. This choice is saved in the recording's .batm file. " +
         "Time expansion in the file's Wildlife Acoustics metadata: ×10.",
     ]);
     await page.locator(APPLY).click();

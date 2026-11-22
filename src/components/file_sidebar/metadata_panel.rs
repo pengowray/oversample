@@ -1,5 +1,4 @@
-use super::rate_notes_view::{note_selector, RateNotes};
-use oversample_core::position::parse_lat_lon;
+use super::rate_notes_view::{note_selector, RateNotes, TimeExpansionRow};
 use crate::rate_notes::{file_rate_notes, NoteKind};
 use crate::state::store_fields::*;
 use crate::state::{AppState, MetadataView, RightSidebarTab};
@@ -10,6 +9,7 @@ use oversample_core::audio::source::ChannelView;
 use oversample_core::dsp::chime_scan::{
     self, ChimeScanResult, ChimeScanner, FoundChime, RemoteCommand,
 };
+use oversample_core::position::parse_lat_lon;
 
 /// Returns (section, display_key) for a GUANO field.
 /// Known fields return "GUANO" as section; unknown pipe-separated keys
@@ -967,12 +967,7 @@ fn date_section(f: &crate::state::LoadedFile, view_mode: MetadataView) -> impl I
 /// under both the root domain and the /oversample/ subpath build) and
 /// is expected to be an equirectangular projection (lon −180→+180 maps
 /// linearly across width, lat +90→−90 across height).
-fn gps_block(
-    lat: f64,
-    lon: f64,
-    raw_value: String,
-    note: Option<&'static str>,
-) -> impl IntoView {
+fn gps_block(lat: f64, lon: f64, raw_value: String, note: Option<&'static str>) -> impl IntoView {
     let pin_left_pct = (lon + 180.0) / 360.0 * 100.0;
     let pin_top_pct = (90.0 - lat) / 180.0 * 100.0;
     let osm = format!("https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=10/{lat}/{lon}");
@@ -1880,12 +1875,22 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {inline_row("Name".into(), f.name.clone(), None)}
                                 {inline_row("Format".into(), format_text(meta), None)}
                                 {inline_row("Duration".into(), crate::format_time::format_duration(f.audio.duration_secs, 3), None)}
+                                {f.audio.can_set_time_expansion().then(|| view! {
+                                    <TimeExpansionRow
+                                        file_id=f.id
+                                        factor=f.audio.metadata.time_expansion.map_or(1.0, |te| te.factor)
+                                        stored_rate=f.audio.stored_rate()
+                                        loading=f.loading_id.is_some()
+                                        saved=!f.read_only
+                                    />
+                                })}
                                 {inline_row("Sample rate".into(), sample_rate_row_value(f.audio.sample_rate), None)}
                                 <RateNotes
                                     notes=file_rate_notes(f)
                                     file_id=f.id
                                     stored_rate=f.audio.stored_rate()
                                     loading=f.loading_id.is_some()
+                                    kept=crate::rate_notes::Kept::of(f)
                                 />
                                 {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
                                 {inline_row("Bit depth".into(), bit_depth_text(meta), None)}

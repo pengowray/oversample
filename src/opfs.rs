@@ -371,6 +371,7 @@ pub fn save_annotations(state: crate::state::AppState, file_idx: usize) {
                 set.file_identity = id;
             }
             sync_source_from_file(state, file_idx, set);
+            crate::te_correction::sync_saved_from_file(state, file_idx, set);
             // Capture current NR state into the sidecar
             set.noise_profile = sync_noise_profile_from_state(state);
         }
@@ -697,6 +698,7 @@ pub fn save_sidecar_explicit(state: crate::state::AppState, file_idx: usize) {
                 set.file_identity = id;
             }
             sync_source_from_file(state, file_idx, set);
+            crate::te_correction::sync_saved_from_file(state, file_idx, set);
             set.noise_profile = sync_noise_profile_from_state(state);
             set.touch();
         }
@@ -781,6 +783,8 @@ fn apply_loaded_sidecar(
         file_id,
         crate::cloud::rules::annotation_fingerprint(&loaded),
     );
+    let saved_te = loaded.time_expansion;
+    crate::te_correction::restore_source_factor(state, file_id, saved_te);
     // The file on disk is in the file's own seconds and Hz. If the user
     // corrected the file's rate before it finished loading, convert it.
     let mut loaded = crate::te_correction::from_file_units_at(state, file_idx, loaded);
@@ -862,6 +866,9 @@ fn apply_loaded_sidecar(
     state.annotations.store().update(|store| {
         store.insert(file_id, loaded);
     });
+    // Read the file at the rate saved with the set. This converts the set
+    // just stored along with everything else the app holds for the file.
+    crate::te_correction::apply_saved(state, file_id, saved_te);
     // Add any XC annotations that came with the recording and aren't in the
     // saved file (`merge_xc_set` saves if it adds any).
     let from_xc = crate::annota::merge_xc_set(state, file_id, false);

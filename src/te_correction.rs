@@ -31,7 +31,7 @@
 //! imported by the user, is converted the same way
 //! ([`annota_from_file_units_at`]).
 
-use crate::annotations::{AnnotationKind, AnnotationSet, AudioFileMetadata};
+use crate::annotations::{AnnotationKind, AnnotationSet, AudioFileMetadata, SavedTimeExpansion};
 use crate::dsp::notch::{NoiseBand, NoiseProfile};
 use crate::dsp::spectral_sub::NoiseFloor;
 use crate::focus_stack::FocusRange;
@@ -641,6 +641,214 @@ fn convert_current_file_signals(state: AppState, rc: RateChange) {
     state.filter.freq_high().set(hi);
 }
 
+thread_local! {
+    /// Files whose saved factor ([`SavedTimeExpansion`]) has been read but
+    /// not applied yet, because the file was still loading. A save in that
+    /// time keeps the factors the set was read with.
+    static SAVED_PENDING: std::cell::RefCell<std::collections::HashSet<u64>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// The factors to save with `file`'s annotations
+/// ([`SavedTimeExpansion`]), or `None` when the file is read as its own
+/// metadata says.
+pub fn saved_time_expansion(file: &LoadedFile) -> Option<SavedTimeExpansion> {
+    let opened = file.opened_time_expansion;
+    let from_source = opened
+        .filter(|te| te.origin == TimeExpansionOrigin::Source)
+        .map(|te| te.factor);
+    let set_by_user = match (file.audio.metadata.time_expansion, opened) {
+        (Some(te), _) if te.origin == TimeExpansionOrigin::User => Some(te.factor),
+        // The user removed the correction the file was opened with.
+        (None, Some(_)) => Some(1.0),
+        _ => None,
+    };
+    (from_source.is_some() || set_by_user.is_some()).then_some(SavedTimeExpansion {
+        from_source,
+        set_by_user,
+    })
+}
+
+/// Write file `file_idx`'s factors into `set` before it is saved. The set
+/// keeps the factors it has while they wait to be applied, and for a file
+/// the app can't read at another rate.
+pub fn sync_saved_from_file(state: AppState, file_idx: usize, set: &mut AnnotationSet) {
+    use crate::state::store_fields::*;
+    use leptos::prelude::*;
+    let saved = state.library.files().with_untracked(|files| {
+        let f = files.get(file_idx)?;
+        let pending = SAVED_PENDING.with(|p| p.borrow().contains(&f.id));
+        (!pending && f.audio.can_set_time_expansion()).then(|| saved_time_expansion(f))
+    });
+    if let Some(saved) = saved {
+        set.time_expansion = saved;
+    }
+}
+
+/// The first step of applying the factors read with a file's annotations,
+/// made before the annotations are converted
+/// ([`from_file_units_at`]): a file opened from disk, without the site it
+/// came from, takes the site's factor as the correction it was opened with.
+/// The annotations were saved in the seconds and Hz of that correction.
+/// [`apply_saved`] then sets the rate.
+pub fn restore_source_factor(state: AppState, file_id: u64, saved: Option<SavedTimeExpansion>) {
+    use crate::state::store_fields::*;
+    use leptos::prelude::*;
+    let Some(factor) = saved
+        .and_then(|s| s.from_source)
+        .and_then(crate::types::usable_factor)
+    else {
+        return;
+    };
+    let wanted = state.library.files().with_untracked(|files| {
+        files.iter().any(|f| {
+            f.id == file_id
+                && f.opened_time_expansion.is_none()
+                && f.audio.metadata.time_expansion.is_none()
+                && f.audio.can_set_time_expansion()
+        })
+    });
+    if !wanted {
+        return;
+    }
+    state.library.files().update(|files| {
+        if let Some(f) = files.iter_mut().find(|f| f.id == file_id) {
+            f.opened_time_expansion = Some(crate::types::TimeExpansion {
+                factor,
+                stored_rate: f.audio.stored_rate(),
+                origin: TimeExpansionOrigin::Source,
+            });
+        }
+    });
+}
+
+/// The second step: read file `file_id` at the rate its saved factors give.
+/// The user's factor wins; without one the file is read as it was opened,
+/// which changes the rate only after [`restore_source_factor`].
+///
+/// A file that is still loading is set when it has loaded. A file whose
+/// rate the user has already changed in this session is left alone.
+pub fn apply_saved(state: AppState, file_id: u64, saved: Option<SavedTimeExpansion>) {
+    if saved.is_none() {
+        return;
+    }
+    SAVED_PENDING.with(|p| p.borrow_mut().insert(file_id));
+    wasm_bindgen_futures::spawn_local(async move {
+        use crate::state::store_fields::*;
+        use leptos::prelude::*;
+        // Up to a minute, for a large file.
+        for _ in 0..600 {
+            let loading = state.library.files().with_untracked(|files| {
+                files
+                    .iter()
+                    .find(|f| f.id == file_id)
+                    .map(|f| f.loading_id.is_some())
+            });
+            match loading {
+                None => break,
+                Some(true) => crate::web_util::sleep_ms(100).await,
+                Some(false) => {
+                    apply_saved_now(state, file_id, saved);
+                    break;
+                }
+            }
+        }
+        SAVED_PENDING.with(|p| p.borrow_mut().remove(&file_id));
+    });
+}
+
+fn apply_saved_now(state: AppState, file_id: u64, saved: Option<SavedTimeExpansion>) {
+    use crate::state::store_fields::*;
+    use leptos::prelude::*;
+    let Some(saved) = saved else {
+        return;
+    };
+    let Some((current, opened)) = state.library.files().with_untracked(|files| {
+        files
+            .iter()
+            .find(|f| f.id == file_id)
+            .map(|f| (f.audio.metadata.time_expansion, f.opened_time_expansion))
+    }) else {
+        return;
+    };
+    // As opened, or waiting for the correction `restore_source_factor` set.
+    let untouched = current == opened || (current.is_none() && saved.from_source.is_some());
+    if !untouched {
+        return;
+    }
+    let target = match saved.set_by_user {
+        Some(f) if (f - 1.0).abs() < 1e-9 => None,
+        Some(f) => Some((f, TimeExpansionOrigin::User)),
+        None => opened.map(|te| (te.factor, te.origin)),
+    };
+    set_time_expansion(state, file_id, target);
+}
+
+/// Read file `file_id` at `factor` times the rate in its header, as the
+/// user typed it in the Info panel, and save the choice with the file's
+/// annotations. `None` or 1 is the rate in the header. The factor the file
+/// was opened with is set with the origin it had, so the file is as it was
+/// opened. Returns whether the rate changed.
+pub fn set_factor_by_user(state: AppState, file_id: u64, factor: Option<f64>) -> bool {
+    use crate::state::store_fields::*;
+    use leptos::prelude::*;
+    let opened = state.library.files().with_untracked(|files| {
+        files
+            .iter()
+            .find(|f| f.id == file_id)
+            .and_then(|f| f.opened_time_expansion)
+    });
+    let target = factor
+        .filter(|f| (f - 1.0).abs() > 1e-9)
+        .map(|f| match opened {
+            Some(te) if (te.factor - f).abs() < 1e-9 => (f, te.origin),
+            _ => (f, TimeExpansionOrigin::User),
+        });
+    let changed = set_time_expansion(state, file_id, target);
+    if changed {
+        save_factor(state, file_id);
+    }
+    changed
+}
+
+/// Save file `file_id`'s factors with its annotations after the user
+/// changed the rate. A file with no saved annotations gets a set only when
+/// there is a factor to save.
+pub fn save_factor(state: AppState, file_id: u64) {
+    use crate::state::store_fields::*;
+    use leptos::prelude::*;
+    SAVED_PENDING.with(|p| p.borrow_mut().remove(&file_id));
+    let Some(idx) = state.file_idx_for_id(file_id) else {
+        return;
+    };
+    let new_set = state.library.files().with_untracked(|files| {
+        let f = files.get(idx)?;
+        saved_time_expansion(f)?;
+        let id = f.identity.clone().unwrap_or_else(|| {
+            crate::file_identity::identity_layer1(&f.name, f.audio.metadata.file_size as u64)
+        });
+        Some(AnnotationSet::new_with_metadata(
+            id,
+            &f.audio,
+            f.cached_peak_db,
+            f.cached_full_peak_db,
+        ))
+    });
+    let mut has_set = false;
+    state.annotations.store().update(|store| {
+        if let Some(new_set) = new_set {
+            store.entry_or_insert_with(file_id, || new_set);
+        }
+        if let Some(set) = store.get_mut(file_id) {
+            set.touch();
+            has_set = true;
+        }
+    });
+    if has_set {
+        crate::opfs::save_annotations(state, idx);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -754,6 +962,7 @@ mod tests {
             audio_metadata: None,
             annotations: kinds.into_iter().map(annotation).collect(),
             lowest_bat_hz: None,
+            time_expansion: None,
             source: None,
             noise_profile: None,
         }

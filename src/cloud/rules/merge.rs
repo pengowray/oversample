@@ -312,6 +312,21 @@ pub fn merge3(
         time(b),
     );
     out.lowest_bat_hz = lo.map(f32::from_bits);
+    // The saved time expansion factors have no copy in the base, so the
+    // copy changed later gives them. On a tie the choice is by content, so
+    // it does not depend on which copy is which.
+    let te_key = |s: &AnnotationSet| {
+        (
+            time(s),
+            serde_json::to_string(&s.time_expansion).unwrap_or_default(),
+        )
+    };
+    let (later, earlier) = if te_key(a) >= te_key(b) {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    out.time_expansion = later.time_expansion.or(earlier.time_expansion);
     if let Some(kept) = lo_conflict {
         report.conflicts.push(Conflict::LowestBatHz { kept });
     }

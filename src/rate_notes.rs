@@ -99,13 +99,20 @@ impl NoteAction {
     /// Removing a correction the file was opened with has one, since the
     /// note does not say that the correction is made again when the file is
     /// opened, and the user may expect the button to change the file.
-    pub fn tooltip(self, stored_rate: u32) -> Option<String> {
-        let until_closed = |rate: u32| {
-            format!(
+    ///
+    /// `kept` says whether the change is saved ([`Kept`]).
+    pub fn tooltip(self, stored_rate: u32, kept: Kept) -> Option<String> {
+        let until_closed = |rate: u32| match kept {
+            Kept::Saved => format!(
+                "Sets the sample rate to {} and saves this choice in the recording's .batm \
+                 file. The audio file is not changed.",
+                sample_rate_khz(rate)
+            ),
+            Kept::UntilClosed => format!(
                 "Sets the sample rate to {} until you close the file or reload the page. \
                  The audio file is not changed.",
                 sample_rate_khz(rate)
-            )
+            ),
         };
         match self {
             NoteAction::CorrectTenfold => Some(until_closed(stored_rate.saturating_mul(10))),
@@ -154,14 +161,19 @@ impl NoteAction {
 /// close the file or reload the page. Sample rate in the file header:
 /// 25.6 kHz." That also tells it apart from a correction made from
 /// the file's metadata, which is made again each time the file is opened.
-pub fn time_expansion_line(te: TimeExpansion) -> NoteLine {
-    let until = match te.origin {
-        TimeExpansionOrigin::User => " until you close the file or reload the page",
-        TimeExpansionOrigin::File | TimeExpansionOrigin::Source => "",
+pub fn time_expansion_line(te: TimeExpansion, kept: Kept) -> NoteLine {
+    let factor = format_factor(te.factor);
+    let first = match (te.origin, kept) {
+        (TimeExpansionOrigin::User, Kept::Saved) => user_factor_sentence(&factor),
+        (TimeExpansionOrigin::User, Kept::UntilClosed) => format!(
+            "Corrected for {factor} time expansion until you close the file or reload the page."
+        ),
+        (TimeExpansionOrigin::File | TimeExpansionOrigin::Source, _) => {
+            format!("Corrected for {factor} time expansion.")
+        }
     };
     NoteLine::muted(format!(
-        "Corrected for {} time expansion{until}. Sample rate in the file header: {}.",
-        format_factor(te.factor),
+        "{first} Sample rate in the file header: {}.",
         sample_rate_khz(te.stored_rate)
     ))
 }
@@ -267,13 +279,123 @@ pub fn stated_in(
 /// ×10 correction" button that was pressed, and starts with a word, not the
 /// factor. The Sample rate row above shows the rate in the file header. A
 /// no-break space keeps the factor on the line of the words it ends.
-pub fn removed_line(opened: &OpenedCorrection) -> NoteLine {
+pub fn removed_line(opened: &OpenedCorrection, kept: Kept) -> NoteLine {
     let factor = format_factor(opened.te.factor);
+    let first = match kept {
+        Kept::Saved => removed_sentence(&factor),
+        Kept::UntilClosed => format!(
+            "Correction for {factor} time expansion removed until you close the file or \
+             reload the page."
+        ),
+    };
     NoteLine::muted(format!(
-        "Correction for {factor} time expansion removed until you close the file or \
-         reload the page. Time expansion {}:\u{a0}{factor}.",
+        "{first} Time expansion {}:\u{a0}{factor}.",
         opened.stated_in.phrase()
     ))
+}
+
+/// Whether a change of the rate a file is read at is saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kept {
+    /// Saved in the recording's .batm file and made again when the
+    /// recording is opened ([`crate::annotations::SavedTimeExpansion`]).
+    Saved,
+    /// The file is view-only, so nothing about it is saved: the change
+    /// lasts until the file is closed.
+    UntilClosed,
+}
+
+impl Kept {
+    pub fn of(file: &LoadedFile) -> Self {
+        if file.read_only {
+            Kept::UntilClosed
+        } else {
+            Kept::Saved
+        }
+    }
+}
+
+/// The first sentence of the time-expansion note for a factor the user set,
+/// when it is saved ([`Kept::Saved`]). `factor` is written "×10".
+fn user_factor_sentence(factor: &str) -> String {
+    format!(
+        "Corrected for {factor} time expansion. You set this factor, and it is saved in \
+         the recording's .batm file."
+    )
+}
+
+/// The first sentences of the note shown after the user removed the
+/// correction the file was opened with, when that is saved.
+fn removed_sentence(factor: &str) -> String {
+    format!(
+        "Correction for {factor} time expansion removed. This choice is saved in the \
+         recording's .batm file."
+    )
+}
+
+/// The label of the Info panel row with the factor field.
+pub const FACTOR_LABEL: &str = "Time expansion";
+/// The factor field's accessible name.
+pub const FACTOR_ARIA: &str = "Time expansion factor";
+
+/// The tooltip of the Time expansion row. `saved` is false for a view-only
+/// file, whose factor is not saved.
+pub fn factor_tooltip(saved: bool) -> String {
+    let what = if saved {
+        "This is the time expansion factor for the recording, and it is saved in the \
+         recording's .batm file."
+    } else {
+        "This is the time expansion factor for the recording."
+    };
+    format!(
+        "{what} Enter 1 to read the recording at the sample rate in the file header. \
+         The audio file is not changed."
+    )
+}
+
+/// Shown under the Time expansion row for a value that is not a number from
+/// 0.01 to 1000.
+pub const FACTOR_RANGE_ERROR: &str = "Factor must be a number from 0.01 to 1000.";
+
+/// Shown under the Time expansion row for a factor (written "×500") that
+/// gives a sample rate of `rate_hz`, over the 50 MHz the app reads.
+fn factor_rate_error(factor: &str, rate_hz: u64) -> String {
+    format!(
+        "Sample rate too high: {factor} gives {}\u{a0}MHz. The maximum is 50\u{a0}MHz.",
+        (rate_hz as f64 / 1e6).round()
+    )
+}
+
+/// The factor as the Time expansion row's field shows it: "10", "2.5".
+pub fn factor_text(factor: f64) -> String {
+    format_factor(factor)
+        .trim_start_matches('\u{d7}')
+        .to_string()
+}
+
+/// The factor typed into the Time expansion row's field, for a file whose
+/// header states `stored_rate`. 1 is the rate in the header. A leading "×"
+/// or "x" and a decimal comma are accepted. `Err` is the message shown under
+/// the row.
+pub fn parse_factor(text: &str, stored_rate: u32) -> Result<f64, String> {
+    let text = text
+        .trim()
+        .trim_start_matches(['\u{d7}', 'x', 'X'])
+        .trim()
+        .replace(',', ".");
+    let factor = text
+        .parse::<f64>()
+        .ok()
+        .filter(|f| f.is_finite() && (0.01..=crate::types::MAX_TIME_EXPANSION_FACTOR).contains(f))
+        .ok_or_else(|| FACTOR_RANGE_ERROR.to_string())?;
+    let rate = f64::from(stored_rate) * factor;
+    if rate.round() > crate::types::MAX_CORRECTED_SAMPLE_RATE {
+        return Err(factor_rate_error(
+            &format_factor(factor),
+            rate.round() as u64,
+        ));
+    }
+    Ok(factor)
 }
 
 /// Whether the app can change the rate a file is read at
@@ -317,6 +439,7 @@ pub fn file_rate_notes(file: &LoadedFile) -> Vec<RateNote> {
         file.heterodyne_hint.as_ref(),
         file.species_range.as_ref(),
         Correction::of(&file.audio),
+        Kept::of(file),
     )
 }
 
@@ -356,6 +479,7 @@ pub fn rate_notes(
     hint: Option<&HeterodyneHint>,
     finding: Option<&SpeciesRangeFinding>,
     correction: Correction,
+    kept: Kept,
 ) -> Vec<RateNote> {
     let mut notes = Vec::new();
     let removed = if time_expansion.is_none() {
@@ -368,13 +492,13 @@ pub fn rate_notes(
             te.origin == TimeExpansionOrigin::User || correction == Correction::Possible;
         notes.push(RateNote {
             kind: NoteKind::TimeExpansion,
-            lines: vec![time_expansion_line(te)],
+            lines: vec![time_expansion_line(te, kept)],
             action: can_remove.then_some(NoteAction::RemoveCorrection(te)),
         });
     } else if let Some(opened) = removed {
         notes.push(RateNote {
             kind: NoteKind::TimeExpansion,
-            lines: vec![removed_line(opened)],
+            lines: vec![removed_line(opened, kept)],
             action: (correction == Correction::Possible)
                 .then_some(NoteAction::ApplyCorrection(opened.te)),
         });
@@ -417,6 +541,75 @@ pub fn rate_notes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_saved_user_factor_says_where_it_is_saved() {
+        let user = TimeExpansion {
+            factor: 10.0,
+            stored_rate: 25_600,
+            origin: TimeExpansionOrigin::User,
+        };
+        assert_eq!(
+            time_expansion_line(user, Kept::Saved).text,
+            "Corrected for \u{d7}10 time expansion. You set this factor, and it is saved in \
+             the recording's .batm file. Sample rate in the file header: 25.6\u{a0}kHz."
+        );
+        // A factor from the file or its source reads the same either way.
+        let guano = TimeExpansion {
+            origin: TimeExpansionOrigin::File,
+            ..user
+        };
+        assert_eq!(
+            time_expansion_line(guano, Kept::Saved),
+            time_expansion_line(guano, Kept::UntilClosed)
+        );
+        assert_eq!(
+            removed_line(
+                &OpenedCorrection {
+                    te: guano,
+                    stated_in: StatedIn::Guano
+                },
+                Kept::Saved
+            )
+            .text,
+            "Correction for \u{d7}10 time expansion removed. This choice is saved in the \
+             recording's .batm file. Time expansion in the file's GUANO metadata:\u{a0}\u{d7}10."
+        );
+        assert_eq!(
+            NoteAction::CorrectTenfold
+                .tooltip(25_600, Kept::Saved)
+                .as_deref(),
+            Some(
+                "Sets the sample rate to 256\u{a0}kHz and saves this choice in the \
+                 recording's .batm file. The audio file is not changed."
+            )
+        );
+    }
+
+    #[test]
+    fn a_typed_factor_is_checked() {
+        assert_eq!(parse_factor("20", 48_000), Ok(20.0));
+        assert_eq!(parse_factor(" \u{d7}2,5 ", 48_000), Ok(2.5));
+        assert_eq!(parse_factor("x256", 44_100), Ok(256.0));
+        assert_eq!(parse_factor("1", 48_000), Ok(1.0));
+        assert_eq!(factor_text(2.5), "2.5");
+        assert_eq!(factor_text(256.0), "256");
+        for bad in ["", "abc", "0", "-3", "1001", "inf"] {
+            assert_eq!(
+                parse_factor(bad, 48_000),
+                Err(FACTOR_RANGE_ERROR.to_string())
+            );
+        }
+        assert_eq!(
+            parse_factor("500", 384_000),
+            Err(
+                "Sample rate too high: \u{d7}500 gives 192\u{a0}MHz. The maximum is \
+                 50\u{a0}MHz."
+                    .to_string()
+            )
+        );
+    }
+
     use crate::bat_book::auto_resolve::find_species;
     use crate::heterodyne::file_hint;
     use crate::note_line::LineRole;
@@ -441,14 +634,31 @@ mod tests {
 
     #[test]
     fn a_corrected_rate_says_what_the_file_holds() {
-        assert_eq!(rate_notes(None, None, None, None, Correction::Possible), []);
+        assert_eq!(
+            rate_notes(
+                None,
+                None,
+                None,
+                None,
+                Correction::Possible,
+                Kept::UntilClosed
+            ),
+            []
+        );
         let te = TimeExpansion {
             factor: 10.0,
             stored_rate: 38_400,
             origin: crate::types::TimeExpansionOrigin::File,
         };
         assert_eq!(
-            rate_notes(Some(te), None, None, None, Correction::Possible),
+            rate_notes(
+                Some(te),
+                None,
+                None,
+                None,
+                Correction::Possible,
+                Kept::UntilClosed
+            ),
             [RateNote {
                 kind: NoteKind::TimeExpansion,
                 lines: vec![NoteLine::muted(
@@ -461,7 +671,7 @@ mod tests {
         // A file whose rate can't be changed keeps its correction.
         for correction in [Correction::Streamed, Correction::NotPossible] {
             assert_eq!(
-                rate_notes(Some(te), None, None, None, correction)[0].action,
+                rate_notes(Some(te), None, None, None, correction, Kept::UntilClosed)[0].action,
                 None
             );
         }
@@ -477,14 +687,28 @@ mod tests {
     #[test]
     fn a_probable_tenfold_file_gets_the_correct_button() {
         let species = case_t();
-        let notes = rate_notes(None, None, None, Some(&species), Correction::Possible);
+        let notes = rate_notes(
+            None,
+            None,
+            None,
+            Some(&species),
+            Correction::Possible,
+            Kept::UntilClosed,
+        );
         assert_eq!(kinds(&notes), [NoteKind::Species]);
         assert_eq!(notes[0].action, Some(NoteAction::CorrectTenfold));
         // The button comes after the amber claim and the species evidence.
         assert_eq!(notes[0].lines, crate::species_check::note_lines(&species));
         assert_eq!(notes[0].lines[0].role, crate::note_line::LineRole::Warning);
         // A streamed file has no button, and its note says why.
-        let notes = rate_notes(None, None, None, Some(&species), Correction::Streamed);
+        let notes = rate_notes(
+            None,
+            None,
+            None,
+            Some(&species),
+            Correction::Streamed,
+            Kept::UntilClosed,
+        );
         assert_eq!(notes[0].action, None);
         let mut expected = crate::species_check::note_lines(&species);
         expected.push(NoteLine::muted(
@@ -492,7 +716,14 @@ mod tests {
         ));
         assert_eq!(notes[0].lines, expected);
         // A zero-crossing file has neither.
-        let notes = rate_notes(None, None, None, Some(&species), Correction::NotPossible);
+        let notes = rate_notes(
+            None,
+            None,
+            None,
+            Some(&species),
+            Correction::NotPossible,
+            Kept::UntilClosed,
+        );
         assert_eq!(notes[0].action, None);
         assert_eq!(notes[0].lines, crate::species_check::note_lines(&species));
     }
@@ -502,11 +733,25 @@ mod tests {
         // Case "Other": the factor is unknown.
         let other = finding("Pipistrellus kuhlii", ECHO, 48_000).unwrap();
         assert_eq!(other.case, crate::species_check::RangeCase::Other);
-        let notes = rate_notes(None, None, None, Some(&other), Correction::Possible);
+        let notes = rate_notes(
+            None,
+            None,
+            None,
+            Some(&other),
+            Correction::Possible,
+            Kept::UntilClosed,
+        );
         assert_eq!(notes[0].action, None);
         // Nor the streamed line: there is nothing to correct.
         assert_eq!(
-            rate_notes(None, None, None, Some(&other), Correction::Streamed),
+            rate_notes(
+                None,
+                None,
+                None,
+                Some(&other),
+                Correction::Streamed,
+                Kept::UntilClosed
+            ),
             notes
         );
         // A heterodyne note never has one. At a x10 header rate only a
@@ -521,6 +766,7 @@ mod tests {
             Some(&hint_a),
             Some(&species),
             Correction::Possible,
+            Kept::UntilClosed,
         );
         assert_eq!(kinds(&notes), [NoteKind::Heterodyne]);
         assert_eq!(notes[0].action, None);
@@ -533,7 +779,15 @@ mod tests {
                 origin,
             };
             assert_eq!(
-                rate_notes(Some(te), None, None, None, Correction::Possible)[0].action,
+                rate_notes(
+                    Some(te),
+                    None,
+                    None,
+                    None,
+                    Correction::Possible,
+                    Kept::UntilClosed
+                )[0]
+                .action,
                 Some(NoteAction::RemoveCorrection(te))
             );
         }
@@ -555,7 +809,14 @@ mod tests {
             None
         );
         assert_eq!(
-            rate_notes(Some(te), None, None, None, Correction::Possible),
+            rate_notes(
+                Some(te),
+                None,
+                None,
+                None,
+                Correction::Possible,
+                Kept::UntilClosed
+            ),
             [RateNote {
                 kind: NoteKind::TimeExpansion,
                 lines: vec![NoteLine::muted(
@@ -604,23 +865,30 @@ mod tests {
             "Correct for \u{d7}2.5 time expansion"
         );
         assert_eq!(
-            NoteAction::CorrectTenfold.tooltip(38_400).as_deref(),
+            NoteAction::CorrectTenfold
+                .tooltip(38_400, Kept::UntilClosed)
+                .as_deref(),
             Some(
                 "Sets the sample rate to 384\u{a0}kHz until you close the file or reload \
                  the page. The audio file is not changed."
             )
         );
         assert_eq!(
-            NoteAction::CorrectTenfold.tooltip(31_250).as_deref(),
+            NoteAction::CorrectTenfold
+                .tooltip(31_250, Kept::UntilClosed)
+                .as_deref(),
             Some(
                 "Sets the sample rate to 312.5\u{a0}kHz until you close the file or \
                  reload the page. The audio file is not changed."
             )
         );
-        assert_eq!(NoteAction::RemoveCorrection(user).tooltip(38_400), None);
+        assert_eq!(
+            NoteAction::RemoveCorrection(user).tooltip(38_400, Kept::UntilClosed),
+            None
+        );
         assert_eq!(
             NoteAction::RemoveCorrection(guano)
-                .tooltip(38_400)
+                .tooltip(38_400, Kept::UntilClosed)
                 .as_deref(),
             Some(
                 "Sets the sample rate to 38.4\u{a0}kHz until you close the file or reload \
@@ -629,13 +897,13 @@ mod tests {
         );
         assert_eq!(
             NoteAction::ApplyCorrection(guano)
-                .tooltip(38_400)
+                .tooltip(38_400, Kept::UntilClosed)
                 .as_deref(),
             Some("Sets the sample rate to 384\u{a0}kHz.")
         );
         assert_eq!(
             NoteAction::ApplyCorrection(commons)
-                .tooltip(48_000)
+                .tooltip(48_000, Kept::UntilClosed)
                 .as_deref(),
             Some("Sets the sample rate to 120\u{a0}kHz.")
         );
@@ -741,7 +1009,14 @@ mod tests {
         ] {
             let o = opened(stated_in);
             assert_eq!(
-                rate_notes(None, Some(&o), None, None, Correction::Possible),
+                rate_notes(
+                    None,
+                    Some(&o),
+                    None,
+                    None,
+                    Correction::Possible,
+                    Kept::UntilClosed
+                ),
                 [RateNote {
                     kind: NoteKind::TimeExpansion,
                     lines: vec![NoteLine::muted(format!(
@@ -755,8 +1030,22 @@ mod tests {
         // While the correction is on, the note is the usual one.
         let o = opened(StatedIn::Guano);
         assert_eq!(
-            rate_notes(Some(o.te), Some(&o), None, None, Correction::Possible),
-            rate_notes(Some(o.te), None, None, None, Correction::Possible)
+            rate_notes(
+                Some(o.te),
+                Some(&o),
+                None,
+                None,
+                Correction::Possible,
+                Kept::UntilClosed
+            ),
+            rate_notes(
+                Some(o.te),
+                None,
+                None,
+                None,
+                Correction::Possible,
+                Kept::UntilClosed
+            )
         );
     }
 
@@ -776,7 +1065,14 @@ mod tests {
             let mut o = opened(StatedIn::Guano);
             o.te.factor = factor;
             for correction in [Correction::Possible, Correction::Streamed] {
-                let notes = rate_notes(None, Some(&o), None, Some(&species), correction);
+                let notes = rate_notes(
+                    None,
+                    Some(&o),
+                    None,
+                    Some(&species),
+                    correction,
+                    Kept::UntilClosed,
+                );
                 assert_eq!(kinds(&notes), [NoteKind::TimeExpansion, NoteKind::Species]);
                 assert_eq!(
                     notes[0].action,
@@ -800,7 +1096,14 @@ mod tests {
         assert_eq!(other.case, crate::species_check::RangeCase::Other);
         assert_eq!(crate::species_check::note_lines(&other).len(), 2);
         let o = opened(StatedIn::Guano);
-        let notes = rate_notes(None, Some(&o), None, Some(&other), Correction::Possible);
+        let notes = rate_notes(
+            None,
+            Some(&o),
+            None,
+            Some(&other),
+            Correction::Possible,
+            Kept::UntilClosed,
+        );
         assert_eq!(notes[1].lines, [crate::species_check::fact_line(&other)]);
         // A level C heterodyne note is unchanged: it already has only the
         // species line.
@@ -808,9 +1111,16 @@ mod tests {
         let hint_c = hint("Device", "Pettersson D980", 44_100);
         assert_eq!(hint_c.level, HeterodyneLevel::MayBeHeterodyne);
         let with_hint = |o: Option<&OpenedCorrection>| {
-            rate_notes(None, o, Some(&hint_c), Some(&species), Correction::Possible)
-                .pop()
-                .unwrap()
+            rate_notes(
+                None,
+                o,
+                Some(&hint_c),
+                Some(&species),
+                Correction::Possible,
+                Kept::UntilClosed,
+            )
+            .pop()
+            .unwrap()
         };
         assert_eq!(with_hint(Some(&o)), with_hint(None));
         assert_eq!(with_hint(None).kind, NoteKind::Heterodyne);
@@ -828,7 +1138,8 @@ mod tests {
                 None,
                 Some(&hint_b),
                 Some(&species),
-                Correction::Possible
+                Correction::Possible,
+                Kept::UntilClosed
             ),
             [RateNote {
                 kind: NoteKind::Heterodyne,
@@ -846,7 +1157,8 @@ mod tests {
                 None,
                 Some(&hint_a),
                 Some(&species),
-                Correction::Possible
+                Correction::Possible,
+                Kept::UntilClosed
             ),
             [RateNote {
                 kind: NoteKind::Heterodyne,
@@ -882,7 +1194,8 @@ mod tests {
                 None,
                 Some(&hint_c),
                 Some(&species),
-                Correction::Possible
+                Correction::Possible,
+                Kept::UntilClosed
             ),
             [RateNote {
                 kind: NoteKind::Heterodyne,
@@ -895,7 +1208,14 @@ mod tests {
         assert_eq!(finding("Myotis blythii", ECHO, 44_100), None);
         let hint_c = hint("Device", "Pettersson D980", 44_100);
         assert_eq!(
-            rate_notes(None, None, Some(&hint_c), None, Correction::Possible),
+            rate_notes(
+                None,
+                None,
+                Some(&hint_c),
+                None,
+                Correction::Possible,
+                Kept::UntilClosed
+            ),
             [RateNote {
                 kind: NoteKind::Heterodyne,
                 lines: crate::heterodyne::note_lines(&hint_c),
@@ -908,7 +1228,14 @@ mod tests {
     fn no_hint_gives_the_species_note() {
         let species = finding("Pipistrellus kuhlii", ECHO, 48_000).unwrap();
         assert_eq!(
-            rate_notes(None, None, None, Some(&species), Correction::Possible),
+            rate_notes(
+                None,
+                None,
+                None,
+                Some(&species),
+                Correction::Possible,
+                Kept::UntilClosed
+            ),
             [RateNote {
                 kind: NoteKind::Species,
                 lines: crate::species_check::note_lines(&species),
@@ -929,7 +1256,14 @@ mod tests {
         let species =
             crate::species_check::finding("Pipistrellus pygmaeus", species, ECHO, Some(te), 51_200)
                 .unwrap();
-        let notes = rate_notes(Some(te), None, None, Some(&species), Correction::Possible);
+        let notes = rate_notes(
+            Some(te),
+            None,
+            None,
+            Some(&species),
+            Correction::Possible,
+            Kept::UntilClosed,
+        );
         assert_eq!(kinds(&notes), [NoteKind::TimeExpansion, NoteKind::Species]);
         assert_eq!(
             notes[0].lines,
@@ -945,7 +1279,14 @@ mod tests {
         // XC1034529. The quote line is the recordist's words, with a no-break
         // space before "kHz" so the unit wraps with "31,9".
         let hint_a = hint("Remarks", "hetrodyne detector set at 31,9 kHz", 48_000);
-        let notes = rate_notes(None, None, Some(&hint_a), None, Correction::Possible);
+        let notes = rate_notes(
+            None,
+            None,
+            Some(&hint_a),
+            None,
+            Correction::Possible,
+            Kept::UntilClosed,
+        );
         let quotes: Vec<&NoteLine> = notes[0]
             .lines
             .iter()
@@ -966,9 +1307,16 @@ mod tests {
             ("heterodyne detector tuned to 45 k Hz", "45\u{a0}k\u{a0}Hz"),
         ] {
             let hint = hint("Remarks", remark, 48_000);
-            let lines = rate_notes(None, None, Some(&hint), None, Correction::Possible)
-                .remove(0)
-                .lines;
+            let lines = rate_notes(
+                None,
+                None,
+                Some(&hint),
+                None,
+                Correction::Possible,
+                Kept::UntilClosed,
+            )
+            .remove(0)
+            .lines;
             let quote = lines.iter().find(|l| l.role == LineRole::Quote).unwrap();
             assert!(quote.text.contains(quoted), "{:?}", quote.text);
         }

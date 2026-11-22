@@ -386,6 +386,26 @@ impl AudioFileMetadata {
     }
 }
 
+/// The time expansion factors saved with a file's annotations, so the file
+/// is read at the same sample rate when it is opened again.
+///
+/// The annotations of the set are in the seconds and Hz the file opens in:
+/// corrected by `from_source` when there is one, or by the factor in the
+/// file's own metadata (GUANO's TE field), and never by `set_by_user`
+/// ([`crate::te_correction::to_file_units`]).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SavedTimeExpansion {
+    /// The factor the site the recording came from gives (Wikimedia Commons'
+    /// P14424 statement). A copy of the recording opened from disk has no
+    /// other record of it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub from_source: Option<f64>,
+    /// The factor the user set, which takes the place of any other. 1 means
+    /// the user set the file to be read at the rate in its header.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub set_by_user: Option<f64>,
+}
+
 /// Current `.batm` sidecar on-disk format version. A file whose `version`
 /// exceeds this was written by a newer app: still loaded best-effort (serde fills
 /// defaults), but unknown fields may be dropped or misread.
@@ -422,6 +442,11 @@ pub struct AnnotationSet {
     /// setting (`AppState::lowest_bat_hz`).
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub lowest_bat_hz: Option<f32>,
+
+    /// The time expansion factors the file is read with, other than one in
+    /// the audio file's own metadata.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub time_expansion: Option<SavedTimeExpansion>,
 
     /// The site the recording was loaded from, when it was (Xeno-canto,
     /// Wikimedia Commons, ...). Written when the set is saved for any other
@@ -462,6 +487,7 @@ impl AnnotationSet {
             audio_metadata: None,
             annotations: Vec::new(),
             lowest_bat_hz: None,
+            time_expansion: None,
             source: None,
             noise_profile: None,
         }
@@ -727,6 +753,7 @@ mod tests {
             audio_metadata: None,
             annotations: Vec::new(),
             lowest_bat_hz: None,
+            time_expansion: None,
             source: None,
             noise_profile: None,
         };
@@ -734,6 +761,21 @@ mod tests {
         assert!(!yaml.contains("lowest_bat_hz"), "written only when set");
         let back: AnnotationSet = yaml_serde::from_str(&yaml).unwrap();
         assert_eq!(back.lowest_bat_hz, None);
+
+        // The time expansion factors are written only when there are some.
+        assert!(!yaml.contains("time_expansion"));
+        let with_factor = AnnotationSet {
+            time_expansion: Some(SavedTimeExpansion {
+                from_source: Some(20.0),
+                set_by_user: None,
+            }),
+            ..set.clone()
+        };
+        let yaml = yaml_serde::to_string(&with_factor).unwrap();
+        assert!(yaml.contains("from_source: 20"), "{yaml}");
+        assert!(!yaml.contains("set_by_user"), "{yaml}");
+        let back: AnnotationSet = yaml_serde::from_str(&yaml).unwrap();
+        assert_eq!(back.time_expansion, with_factor.time_expansion);
 
         let own = AnnotationSet {
             lowest_bat_hz: Some(11_000.0),

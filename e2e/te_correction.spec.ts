@@ -373,7 +373,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await expect(treat).toHaveText("Correct for ×10 time expansion");
     await expect(treat).toHaveAttribute(
       "title",
-      "Sets the sample rate to 256 kHz until you close the file or reload the page. The audio file is not changed.",
+      "Sets the sample rate to 256 kHz and saves this choice in the recording's .batm file. The audio file is not changed.",
     );
     const order = await page
       .locator(SPECIES_NOTE)
@@ -395,7 +395,7 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
     await expect(page.locator(SPECIES_NOTE)).toHaveCount(0);
     await expect(page.locator(TE_NOTE)).toHaveText(
-      /^Corrected for ×10 time expansion until you close the file or reload the page\. Sample rate in the file header: 25\.6 kHz\.Remove ×10 correction$/,
+      /^Corrected for ×10 time expansion\. You set this factor, and it is saved in the recording's \.batm file\. Sample rate in the file header: 25\.6 kHz\.Remove ×10 correction$/,
     );
     // The time-expansion note is now the first note under the Sample rate row.
     expect(
@@ -515,9 +515,9 @@ test.describe("x10 correction on a probably time-expanded file", () => {
     await expect.poll(async () => (await snap(page)).regions.length).toBe(1);
     const made = (await snap(page)).regions[0];
 
-    // The correction lasts for the session: the file opens at its own rate,
-    // and the annotation saved while it was corrected is in the file's own
-    // seconds and Hz.
+    // The annotation is saved in the file's own seconds and Hz, with the
+    // factor. Opened again, the file is corrected again and the annotation
+    // is on the same sounds.
     await expect
       .poll(
         () =>
@@ -538,26 +538,73 @@ test.describe("x10 correction on a probably time-expanded file", () => {
       timeout: 60_000,
     });
     await expect.poll(async () => (await snap(page)).regions.length, { timeout: 15_000 }).toBe(1);
+    await expect.poll(async () => (await snap(page)).sampleRate, { timeout: 15_000 }).toBe(256_000);
     const reopened = await snap(page);
-    expect(reopened.sampleRate).toBe(25_600);
-    expectRange(reopened.regions[0], scaled(made, 0.1));
+    expectRange(reopened.regions[0], made);
+    // The saved set is in the file's own units and names the factor.
+    const yaml = await page.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle("oversample-annotations");
+      for await (const [, handle] of (dir as any).entries()) {
+        const text = await (await (handle as FileSystemFileHandle).getFile()).text();
+        if (text.includes("Region")) return text;
+      }
+      return "";
+    });
+    expect(yaml).toMatch(/time_expansion:\s+set_by_user: 10(\.0)?\b/);
+    expect(yaml).toMatch(/sample_rate: 25600\b/);
   });
 
-  test("the correction lasts until the file is closed", async ({ page }) => {
+  test("the correction is made again when the file is opened again", async ({ page }) => {
     await openCase(page, CASE_T);
     await showInfo(page);
     await page.locator(CORRECT).click();
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
-    await expect(page.locator(TE_NOTE)).toContainText("until you close the file");
+    await expect(page.locator(TE_NOTE)).toContainText("saved in the recording's .batm file");
     await page.locator(".file-item-close").first().click();
     await expect(page.locator(".file-item")).toHaveCount(0);
-    // Opened again from Today's bats: at the file's own rate, with the button.
+    // Opened again from Today's bats: corrected again from the saved factor.
     await page.getByText("Test bat", { exact: true }).first().click();
     await expect(page.locator(".file-item")).toHaveCount(1, { timeout: 30_000 });
     await showInfo(page);
+    await expect(row(page, "Sample rate")).toHaveText("256 kHz", { timeout: 15_000 });
+    await expect(page.locator(TE_NOTE)).toContainText("You set this factor");
+    // Removing it is saved too: the next time, the file opens at its own rate.
+    await page.locator(REMOVE).click();
     await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    await page.locator(".file-item-close").first().click();
+    await expect(page.locator(".file-item")).toHaveCount(0);
+    await page.getByText("Test bat", { exact: true }).first().click();
+    await expect(page.locator(".file-item")).toHaveCount(1, { timeout: 30_000 });
+    await showInfo(page);
     await expect(page.locator(`${SPECIES_NOTE} ${CORRECT}`)).toBeVisible();
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
     await expect(page.locator(TE_NOTE)).toHaveCount(0);
+  });
+
+  test("a factor typed in the Time expansion row is applied, and a bad one says why", async ({
+    page,
+  }) => {
+    await openCase(page, CASE_T);
+    await showInfo(page);
+    const field = page.locator(".te-factor-input");
+    await expect(field).toHaveValue("1");
+    expect((await field.boundingBox())!.height).toBeGreaterThanOrEqual(24);
+    await field.fill("20");
+    await field.press("Enter");
+    await expect(row(page, "Sample rate")).toHaveText("512 kHz");
+    await expect(page.locator(".te-factor-input")).toHaveValue("20");
+    await expect(page.locator(TE_NOTE)).toContainText("Corrected for ×20 time expansion.");
+    await page.locator(".te-factor-input").fill("abc");
+    await page.locator(".te-factor-input").press("Enter");
+    await expect(page.locator(".te-factor-error")).toHaveText(
+      "Factor must be a number from 0.01 to 1000.",
+    );
+    await expect(row(page, "Sample rate")).toHaveText("512 kHz");
+    await page.locator(".te-factor-input").fill("1");
+    await page.locator(".te-factor-input").press("Enter");
+    await expect(row(page, "Sample rate")).toHaveText("25.6 kHz");
+    await expect(page.locator(".te-factor-error")).toHaveCount(0);
   });
 
   test(".batm files exported and imported while corrected use the file's seconds and Hz", async ({
@@ -746,7 +793,7 @@ const GUANO_CASE: Case = {
 const GUANO_CORRECTED =
   /^Corrected for ×10 time expansion\. Sample rate in the file header: 38\.4\u00a0kHz\.Remove ×10 correction$/;
 const GUANO_REMOVED =
-  "Correction for ×10 time expansion removed until you close the file or reload the page. " +
+  "Correction for ×10 time expansion removed. This choice is saved in the recording's .batm file. " +
   "Time expansion in the file's GUANO metadata: ×10.";
 
 test.describe("a correction from the file's GUANO", () => {
@@ -759,12 +806,12 @@ test.describe("a correction from the file's GUANO", () => {
     await showInfo(page);
     await expect(row(page, "Sample rate")).toHaveText("384 kHz");
     await expect(page.locator(TE_NOTE)).toHaveText(GUANO_CORRECTED);
-    // Only the user's correction lasts until the file is closed.
-    await expect(page.locator(TE_NOTE)).not.toContainText("until you close the file");
+    // Only a factor the user set is described as theirs.
+    await expect(page.locator(TE_NOTE)).not.toContainText("You set this factor");
     const remove = page.locator(`${TE_NOTE} ${REMOVE}`);
     await expect(remove).toHaveAttribute(
       "title",
-      "Sets the sample rate to 38.4\u00a0kHz until you close the file or reload the page. The audio file is not changed.",
+      "Sets the sample rate to 38.4\u00a0kHz and saves this choice in the recording's .batm file. The audio file is not changed.",
     );
     await annotate(page, 0.3, 0.5, 0.3, 0.6);
     const loaded = await snap(page);
@@ -857,9 +904,16 @@ test.describe("a correction from the file's GUANO", () => {
       timeout: 60_000,
     });
     await expect.poll(async () => (await snap(page)).regions.length, { timeout: 15_000 }).toBe(1);
+    // The removal is saved with the annotations, so the file is read at the
+    // rate in its header again, with the annotation where it was drawn.
+    await expect.poll(async () => (await snap(page)).sampleRate, { timeout: 15_000 }).toBe(38_400);
     const reopened = await snap(page);
-    expect(reopened.sampleRate).toBe(384_000);
-    expectRange(reopened.regions[0], scaled(made, 10));
+    expectRange(reopened.regions[0], made);
+    // "Correct for x10" takes it back to the units it was saved in.
+    await showInfo(page);
+    await page.locator(APPLY).click();
+    await expect(row(page, "Sample rate")).toHaveText("384 kHz");
+    expectRange((await snap(page)).regions[0], scaled(made, 10));
   });
 
   test(".batm exported while it is removed uses the units the file opens in", async ({
@@ -910,7 +964,7 @@ test.describe('the "Corrected ×10" badge', () => {
       // The tooltip is the time-expansion note.
       await expect(mark).toHaveAttribute(
         "title",
-        "Corrected for ×10 time expansion until you close the file or reload the page. " +
+        "Corrected for ×10 time expansion. You set this factor, and it is saved in the recording's .batm file. " +
           "Sample rate in the file header: 25.6\u00a0kHz.",
       );
       // A control: a grey box, after the facts, which are unchanged.
@@ -991,8 +1045,8 @@ test.describe("no x10 button on other files", () => {
       await showInfo(page);
       if (c.guano) {
         await expect(page.locator(TE_NOTE)).toContainText("Corrected for ×10 time expansion");
-        // Only the user's correction lasts until the file is closed.
-        await expect(page.locator(TE_NOTE)).not.toContainText("until you close the file");
+        // Only a factor the user set is described as theirs.
+        await expect(page.locator(TE_NOTE)).not.toContainText("You set this factor");
         // Its only button removes the correction made from the GUANO.
         await expect(page.locator(".rate-note-action")).toHaveCount(1);
         await expect(page.locator(`${TE_NOTE} ${REMOVE}`)).toHaveCount(1);

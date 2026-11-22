@@ -31,6 +31,7 @@ pub(crate) fn RateNotes(
     file_id: u64,
     stored_rate: u32,
     loading: bool,
+    kept: crate::rate_notes::Kept,
 ) -> impl IntoView {
     let state = expect_context::<AppState>();
     notes
@@ -38,7 +39,7 @@ pub(crate) fn RateNotes(
         .map(|note| {
             let button = note
                 .action
-                .map(|action| action_button(state, action, file_id, stored_rate, loading));
+                .map(|action| action_button(state, action, file_id, stored_rate, loading, kept));
             let lines = note
                 .lines
                 .into_iter()
@@ -54,6 +55,74 @@ pub(crate) fn RateNotes(
             }
         })
         .collect_view()
+}
+
+/// The "Time expansion" row of the Info panel's File group, above the
+/// Sample rate row: the factor the file is read with, in a field the user
+/// can type another factor into (1 for the rate in the file header). The
+/// change is made when the field loses focus or Enter is pressed, and is
+/// saved with the file's annotations
+/// ([`crate::te_correction::set_factor_by_user`]). A value that can't be
+/// used leaves the rate alone and shows why under the row.
+///
+/// - `factor`: the factor in use, 1 with no correction.
+/// - `stored_rate`: the rate the file's header states.
+/// - `saved`: whether the file's annotations are saved (false in view-only
+///   mode), which the tooltip says.
+#[component]
+pub(crate) fn TimeExpansionRow(
+    file_id: u64,
+    factor: f64,
+    stored_rate: u32,
+    loading: bool,
+    saved: bool,
+) -> impl IntoView {
+    use wasm_bindgen::JsCast;
+    let state = expect_context::<AppState>();
+    let error = RwSignal::new(None::<String>);
+    let shown = crate::rate_notes::factor_text(factor);
+    let shown_for_reset = shown.clone();
+    let on_change = move |ev: web_sys::Event| {
+        let Some(input) = ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+        else {
+            return;
+        };
+        match crate::rate_notes::parse_factor(&input.value(), stored_rate) {
+            Ok(typed) => {
+                error.set(None);
+                if !crate::te_correction::set_factor_by_user(state, file_id, Some(typed)) {
+                    // Nothing changed (the same factor, or the file is busy):
+                    // show the factor in use again.
+                    input.set_value(&shown_for_reset);
+                }
+            }
+            Err(why) => error.set(Some(why)),
+        }
+    };
+    let tip = crate::rate_notes::factor_tooltip(saved);
+    view! {
+        <div class="setting-row metadata-row metadata-row-inline te-factor-row">
+            <span class="setting-label" title=tip.clone()>{crate::rate_notes::FACTOR_LABEL}</span>
+            <label class="te-factor-value" title=tip>
+                "\u{d7}"
+                <input
+                    class="factor-input te-factor-input"
+                    type="text"
+                    inputmode="decimal"
+                    autocomplete="off"
+                    aria-label=crate::rate_notes::FACTOR_ARIA
+                    prop:value=shown
+                    disabled=loading
+                    on:change=on_change
+                />
+            </label>
+        </div>
+        {move || error.get().map(|why| view! {
+            <div class="metadata-note te-factor-error" role="alert">{why}</div>
+        })}
+    }
 }
 
 /// The button of a note. The change runs in the click handler. It rebuilds
@@ -77,12 +146,15 @@ fn action_button(
     file_id: u64,
     stored_rate: u32,
     loading: bool,
+    kept: crate::rate_notes::Kept,
 ) -> impl IntoView {
     let on_click = move |ev: web_sys::MouseEvent| {
         if ev.detail() > 1 {
             return;
         }
-        crate::te_correction::set_time_expansion(state, file_id, action.target());
+        if crate::te_correction::set_time_expansion(state, file_id, action.target()) {
+            crate::te_correction::save_factor(state, file_id);
+        }
     };
     let on_keydown = move |ev: web_sys::KeyboardEvent| {
         if ev.repeat() {
@@ -93,7 +165,7 @@ fn action_button(
         <button
             class="hash-calc-btn rate-note-action"
             data-action=action.key()
-            title=action.tooltip(stored_rate)
+            title=action.tooltip(stored_rate, kept)
             disabled=loading
             on:click=on_click
             on:keydown=on_keydown

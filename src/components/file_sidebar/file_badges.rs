@@ -67,7 +67,7 @@ pub(crate) fn corrected_rate_badge(file: &LoadedFile) -> Option<CorrectedRateBad
     let te = file.audio.metadata.time_expansion?;
     Some(CorrectedRateBadge {
         label: format!("Corrected {}", crate::wikimedia::format_factor(te.factor)),
-        tooltip: crate::rate_notes::time_expansion_line(te).text,
+        tooltip: crate::rate_notes::time_expansion_line(te, crate::rate_notes::Kept::of(file)).text,
     })
 }
 

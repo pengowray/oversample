@@ -5602,6 +5602,41 @@ a.open-link-btn {
     padding: 4px 12px;
 }
 
+/* The Info panel's "Time expansion" row (rate_notes_view.rs TimeExpansionRow),
+   above Sample rate: "×" and a field with the factor the file is read with.
+   The field is .factor-input, the look of the TE factor field in the Hear
+   panel, so a factor field looks the same in both places. The selectors name
+   the row because .factor-input comes later in this file and resets every
+   property. The field is 24 px tall,
+   the minimum click target, and 36 px in the phone layout, where 16 px text
+   also stops the browser zooming in on focus. */
+.te-factor-value {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+    /* The size of the other rows' values (.metadata-value). */
+    font-size: 11px;
+    color: #ccc;
+}
+.te-factor-row .te-factor-input {
+    width: 44px;
+    height: 22px;
+    font-size: 12px;
+}
+.te-factor-row .te-factor-input:disabled {
+    opacity: 0.5;
+}
+.app.mobile .te-factor-row .te-factor-input {
+    width: 56px;
+    height: 34px;
+    font-size: 16px;
+}
+/* Why a typed factor was not used: the .rate-note-warning amber. */
+.te-factor-error {
+    color: #fc8;
+}
+
 /* Sequence gap indicators */
 .seq-gap-row {
     font-size: 10px;

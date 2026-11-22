@@ -1145,6 +1145,7 @@ fn export_annotations(state: AppState) {
         Some(idx) => {
             let mut set = crate::te_correction::to_file_units_at(state, idx, set);
             crate::opfs::sync_source_from_file(state, idx, &mut set);
+            crate::te_correction::sync_saved_from_file(state, idx, &mut set);
             set
         }
         None => set,
