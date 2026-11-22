@@ -17,6 +17,8 @@ log = "0.4"
 resonators = "0.1"
 # AudioMoth chimes in recordings (date, time, location, the X8 phone remote).
 chime = { path = "../chime" }
+# Anabat zero-crossing headers can give the position as UTM.
+utm = "0.1"
 
 [dev-dependencies]
 # The chime encoder, to render test chimes.

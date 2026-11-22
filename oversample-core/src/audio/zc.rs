@@ -281,15 +281,25 @@ pub fn parse_zc(bytes: &[u8]) -> Result<ZcData, String> {
 }
 
 /// Strip null/whitespace padding from an ASCII metadata field.
-/// The position in a type 132 header's GPS text, in decimal degrees, when it
-/// is written as degrees: a hemisphere letter then the number, for latitude
-/// then longitude (`WGS84     S33.7394 E150.2539`). The 10 characters before
-/// it name the datum. Returns `None` for a UTM position (zone, easting,
-/// northing), for degrees written with no decimal point, and for 0, 0.
+/// The position in a type 132 header's GPS text, in decimal degrees. The 10
+/// characters at the start name the datum. The position after it is either
+/// degrees, a hemisphere letter then the number for latitude then longitude
+/// (`WGS84     S33.7394 E150.2539`), or UTM: zone with its latitude band,
+/// easting and northing in metres (`WGS84     10S 551234 4181234`).
+///
+/// Returns `None` for degrees written with no decimal point, for 0, 0, and for
+/// a UTM position in a datum other than WGS84 or one within a few metres of it:
+/// older datums are up to about 200 m away.
 /// Layout from Chris Corben's Anabat file format note; no file with a
 /// position was at hand to test against.
 pub fn gps_position(gps: &str) -> Option<(f64, f64)> {
-    let mut parts = gps.get(10..)?.split_whitespace();
+    let datum = gps.get(..10)?.trim();
+    let parts: Vec<&str> = gps.get(10..)?.split_whitespace().collect();
+    let position = degrees_position(&parts).or_else(|| utm_position(datum, &parts))?;
+    (position != (0.0, 0.0)).then_some(position)
+}
+
+fn degrees_position(parts: &[&str]) -> Option<(f64, f64)> {
     let degrees = |part: &str, positive: char, negative: char, max: f64| {
         let mut chars = part.chars();
         let sign = match chars.next()?.to_ascii_uppercase() {
@@ -304,9 +314,27 @@ pub fn gps_position(gps: &str) -> Option<(f64, f64)> {
         let n: f64 = digits.parse().ok()?;
         (n.is_finite() && (0.0..=max).contains(&n)).then_some(sign * n)
     };
-    let lat = degrees(parts.next()?, 'N', 'S', 90.0)?;
-    let lon = degrees(parts.next()?, 'E', 'W', 180.0)?;
-    (lat != 0.0 || lon != 0.0).then_some((lat, lon))
+    let lat = degrees(parts.first()?, 'N', 'S', 90.0)?;
+    let lon = degrees(parts.get(1)?, 'E', 'W', 180.0)?;
+    Some((lat, lon))
+}
+
+/// Datums whose positions are within a few metres of WGS84.
+const WGS84_LIKE: [&str; 6] = ["WGS84", "WGS 84", "GDA94", "GDA2020", "NAD83", "ETRS89"];
+
+fn utm_position(datum: &str, parts: &[&str]) -> Option<(f64, f64)> {
+    if !WGS84_LIKE.iter().any(|d| d.eq_ignore_ascii_case(datum)) {
+        return None;
+    }
+    let [zone, easting, northing, ..] = parts else {
+        return None;
+    };
+    // "10S": zone number, then the latitude band letter (C to X; N and later
+    // are north of the equator).
+    let band = zone.chars().last()?.to_ascii_uppercase();
+    let zone: u8 = zone.get(..zone.len() - 1)?.parse().ok()?;
+    let digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit()).then(|| s.parse::<f64>().ok())?;
+    utm::wsg84_utm_to_lat_lon(digits(easting)?, digits(northing)?, zone, band).ok()
 }
 
 fn ascii_field(bytes: &[u8]) -> String {
@@ -567,7 +595,15 @@ mod tests {
         );
         assert_eq!(super::gps_position("WGS84     N45.0000 W007.5000"), Some((45.0, -7.5)));
         assert_eq!(super::gps_position("WGS84"), None);
-        assert_eq!(super::gps_position("WGS84     10S 123456 1234567"), None);
+        // UTM. Zone 56H, 334000 E 6250000 N is near Sydney.
+        let (lat, lon) = super::gps_position("WGS84     56H 334000 6250000").unwrap();
+        assert!((lat + 33.88).abs() < 0.01 && (lon - 151.20).abs() < 0.01, "{lat} {lon}");
+        // Zone 10S is north of the equator (the band letter, not "south").
+        let (lat, lon) = super::gps_position("WGS84     10S 551000 4181000").unwrap();
+        assert!((lat - 37.77).abs() < 0.01 && (lon + 122.42).abs() < 0.01, "{lat} {lon}");
+        assert_eq!(super::gps_position("AGD66     56H 334000 6250000"), None);
+        assert_eq!(super::gps_position("WGS84     61H 334000 6250000"), None);
+        assert_eq!(super::gps_position("WGS84     56H 33400x 6250000"), None);
         assert_eq!(super::gps_position("WGS84     N4500000 W00750000"), None);
         assert_eq!(super::gps_position("WGS84     N00.0000 E000.0000"), None);
     }

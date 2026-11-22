@@ -713,15 +713,24 @@ fn date_row(label: String, value: String, view_mode: MetadataView) -> impl IntoV
 }
 
 /// One note about a WAV file's structure: amber when it changes which audio is
-/// read, grey otherwise, with the note's detail as a tooltip.
+/// read, grey otherwise. A note with more detail opens on a click or tap to
+/// show it (a tooltip would not show on a phone).
 pub(super) fn wav_note_view(n: &crate::types::WavNote) -> impl IntoView {
-    let class = match (n.warning, n.detail.is_some()) {
-        (true, false) => "analysis-warning",
-        (true, true) => "analysis-warning has-detail",
-        (false, false) => "metadata-note",
-        (false, true) => "metadata-note has-detail",
+    let class = if n.warning {
+        "analysis-warning"
+    } else {
+        "metadata-note"
     };
-    view! { <div class=class title=n.detail.clone()>{n.text.clone()}</div> }
+    match n.detail.clone() {
+        None => view! { <div class=class>{n.text.clone()}</div> }.into_any(),
+        Some(detail) => view! {
+            <details class=format!("{class} note-with-detail")>
+                <summary>{n.text.clone()}</summary>
+                <div class="note-detail">{detail}</div>
+            </details>
+        }
+        .into_any(),
+    }
 }
 
 /// A recorder's own metadata block (a D500X header, a Wildlife Acoustics `wamd`
@@ -751,12 +760,16 @@ fn recorder_section(
     for (i, (k, v)) in differ.into_iter().enumerate() {
         items.push(spacious_row(k, v, None, view_mode).into_any());
         if let (Some((lat, lon)), true) = (position, position_after == Some(i)) {
+            // The owner types the position into a D500X (it has no GPS), so
+            // the label says so.
             items.push(
-                spacious_row(
-                    "Position".into(),
+                spacious_row_as(
+                    "Position (entered by hand)".into(),
                     format!("{lat:.5}, {lon:.5}"),
-                    Some("From the LAT and LON rows".into()),
+                    Some("From the LAT and LON rows, which are typed into the recorder's Time settings".into()),
                     view_mode,
+                    FieldKind::GpsPosition,
+                    None,
                 )
                 .into_any(),
             );

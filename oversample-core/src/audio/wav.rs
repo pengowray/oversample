@@ -1066,11 +1066,11 @@ pub mod msg {
     pub fn data_size_stretched(declared: u64, available: u64) -> WavNote {
         let (declared, available) = (thousands(declared), thousands(available));
         WavNote {
-            detail: Some(
-                "Usual causes: a recording over 4 GB saved as standard WAV, which can't store sizes over 4 GB, or a recorder that didn't fill in the size.".into(),
-            ),
+            detail: Some(format!(
+                "Oversample reads all {available} bytes. Usual causes: a recording over 4 GB saved as standard WAV, which can't store sizes over 4 GB, or a recorder that didn't fill in the size."
+            )),
             ..warning(format!(
-                "More audio than the header says: {available} bytes of audio, and the header says {declared} bytes. Oversample reads all {available} bytes."
+                "More audio than the header says: {available} bytes, header says {declared}."
             ))
         }
     }
@@ -1078,11 +1078,11 @@ pub mod msg {
     pub fn data_cut_short(declared: u64, available: u64) -> WavNote {
         let (declared, available) = (thousands(declared), thousands(available));
         WavNote {
-            detail: Some(
-                "Usual causes: the recording was interrupted, or the file was only partly copied or downloaded.".into(),
-            ),
+            detail: Some(format!(
+                "Oversample reads the {available} bytes that are there. Usual causes: the recording was interrupted, or the file was only partly copied or downloaded."
+            )),
             ..warning(format!(
-                "Less audio than the header says: {available} bytes of audio, and the header says {declared} bytes. Oversample reads the {available} bytes that are there."
+                "Less audio than the header says: {available} bytes, header says {declared}."
             ))
         }
     }

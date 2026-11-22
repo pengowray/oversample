@@ -396,12 +396,16 @@ body.sidebar-resizing {
     color: #fc8;
 }
 
-/* A note with more detail in its tooltip. */
-.has-detail {
-    cursor: help;
-    text-decoration: underline dotted;
-    text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
-    text-underline-offset: 2px;
+/* A note with more detail: a click or tap on the note opens the detail under
+   it (metadata_panel.rs wav_note_view). The detail is the muted grey of
+   .metadata-note whatever the note's own colour. */
+.note-with-detail > summary {
+    cursor: pointer;
+}
+
+.note-detail {
+    padding: 3px 0 1px 12px;
+    color: #999;
 }
 
 .metadata-note {
