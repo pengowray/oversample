@@ -3457,7 +3457,8 @@ a.open-link-btn {
 }
 
 /* In a heading with the "Corrected ×10" badge, a licence label that would be
-   cut off is hidden, and the button shrinks to its icon (toolbar.rs,
+   cut off, or would move the licence below the badge when its icon alone
+   fits beside it, is hidden, and the button shrinks to its icon (toolbar.rs,
    fit_licence_label). On a phone the badge leaves the licence about 70px, and
    "BY-NC-SA 4.0" cut to "BY-NC…" reads as a different licence. */
 .toolbar-cc-badge.toolbar-cc-icon-only {
@@ -5626,6 +5627,10 @@ a.open-link-btn {
 }
 .te-factor-row .te-factor-input:disabled {
     opacity: 0.5;
+}
+/* The "×" at the size of the field's text. */
+.app.mobile .te-factor-value {
+    font-size: 16px;
 }
 .app.mobile .te-factor-row .te-factor-input {
     width: 56px;

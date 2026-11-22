@@ -23,9 +23,18 @@ const BADGE_MENU_PARTS: &str = ".badge-dropdown-panel, \
 /// has the "Corrected ×10" badge. On a phone the badge leaves the licence
 /// button about 70px, and "BY-NC-SA 4.0" cut to "BY-NC…" reads as another
 /// licence. With the label hidden the button shows the licence icon, and
-/// opens the licence dialog as before. Other headings keep a long label cut
-/// with an ellipsis, which keeps a heterodyne file's heading on a phone at
-/// two badge lines (style.css, `.toolbar-cc-badge`).
+/// opens the licence dialog as before.
+///
+/// The label is also hidden when it would move the licence to a line below
+/// the badge but the icon alone fits beside the badge, as for a 24-bit file
+/// on a phone: the heading keeps one line of badges. When even the icon
+/// moves down, the licence has a line of its own, where the whole label
+/// fits. Other headings keep a long label cut with an ellipsis, which keeps
+/// a heterodyne file's heading on a phone at two badge lines (style.css,
+/// `.toolbar-cc-badge`).
+///
+/// Changing the class can change the toolbar's height, so the toolbar's
+/// ResizeObserver calls this in an animation frame, not in its callback.
 fn fit_licence_label(toolbar: &web_sys::Element) {
     const ICON_ONLY: &str = "toolbar-cc-icon-only";
     let Ok(Some(button)) = toolbar.query_selector(".toolbar-badge-row .toolbar-cc-badge") else {
@@ -33,16 +42,21 @@ fn fit_licence_label(toolbar: &web_sys::Element) {
     };
     let classes = button.class_list();
     let _ = classes.remove_1(ICON_ONLY);
-    let corrected = toolbar
-        .query_selector(".toolbar-badge-row .file-badge-corrected")
-        .ok()
-        .flatten()
-        .is_some();
+    let Ok(Some(badge)) = toolbar.query_selector(".toolbar-badge-row .file-badge-corrected") else {
+        return;
+    };
     let Ok(Some(label)) = button.query_selector(".toolbar-cc-label") else {
         return;
     };
-    if corrected && label.scroll_width() > label.client_width() {
-        let _ = classes.add_1(ICON_ONLY);
+    let below_badge = || {
+        button.get_bounding_client_rect().top() >= badge.get_bounding_client_rect().bottom() - 1.0
+    };
+    if label.scroll_width() <= label.client_width() && !below_badge() {
+        return;
+    }
+    let _ = classes.add_1(ICON_ONLY);
+    if below_badge() {
+        let _ = classes.remove_1(ICON_ONLY);
     }
 }
 
@@ -82,7 +96,8 @@ pub fn Toolbar() -> impl IntoView {
         let cb = wasm_bindgen::closure::Closure::<dyn Fn(js_sys::Array)>::new(
             move |_e: js_sys::Array| {
                 set_height(&observed);
-                fit_licence_label(&observed);
+                let toolbar = observed.clone();
+                request_animation_frame(move || fit_licence_label(&toolbar));
             },
         );
         if let Ok(obs) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
