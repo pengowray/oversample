@@ -259,15 +259,28 @@ pub(crate) fn te_speed_ratio(te_factor: f64) -> f64 {
     }
 }
 
-/// The lowest and highest sample rates TE playback gives the audio output.
-const TE_OUTPUT_RATE_RANGE: (u32, u32) = (8_000, 384_000);
+/// The largest TE factor, slower or faster. Time-expansion recordings and
+/// detectors go up to ×256 (the owner's example, 2026-11-22).
+pub(crate) const TE_MAX_FACTOR: f64 = 256.0;
+
+/// A TE factor kept inside ×[`TE_MAX_FACTOR`] slower to ×[`TE_MAX_FACTOR`]
+/// faster.
+pub(crate) fn te_factor_in_range(te_factor: f64) -> f64 {
+    te_factor.clamp(-TE_MAX_FACTOR, TE_MAX_FACTOR)
+}
+
+/// The lowest and highest sample rates TE playback gives its audio buffers.
+/// The low end only stops a rate of 0: buffers under [`MIN_BUFFER_RATE`] are
+/// raised to a rate the browser takes in `make_buffer`, so a 384 kHz file at
+/// ×256 plays at 1.5 kHz.
+const TE_OUTPUT_RATE_RANGE: (u32, u32) = (50, 384_000);
 
 /// The sample rate TE playback gives the audio output for a file at
-/// `sample_rate`: the file's rate times [`te_speed_ratio`], kept inside
-/// 8 to 384 kHz. A 44.1 kHz file at ×10 plays at 8 kHz, not 4.41 kHz.
+/// `sample_rate`: the file's rate times [`te_speed_ratio`], kept under
+/// 384 kHz.
 pub(crate) fn te_output_rate(sample_rate: u32, te_factor: f64) -> u32 {
-    let rate = sample_rate as f64 * te_speed_ratio(te_factor);
-    (rate as u32).clamp(TE_OUTPUT_RATE_RANGE.0, TE_OUTPUT_RATE_RANGE.1)
+    let rate = sample_rate as f64 * te_speed_ratio(te_factor_in_range(te_factor));
+    (rate.round() as u32).clamp(TE_OUTPUT_RATE_RANGE.0, TE_OUTPUT_RATE_RANGE.1)
 }
 
 /// The TE factor playback really applies to a file at `sample_rate`, in
@@ -910,9 +923,36 @@ pub(crate) fn apply_dsp_mode(
 /// costs nothing there.
 pub(crate) const MAX_CONTEXT_RATE: u32 = 384_000;
 
+/// The lowest rate asked of an audio context or given to an audio buffer:
+/// the Web Audio specification requires support from 8 kHz, and no lower.
+const MIN_BUFFER_RATE: u32 = 8_000;
+
 /// The sample rate to ask of the audio context for buffers at `buffer_rate`.
 pub(crate) fn context_rate_for(buffer_rate: u32) -> u32 {
-    buffer_rate.min(MAX_CONTEXT_RATE)
+    buffer_rate.clamp(MIN_BUFFER_RATE, MAX_CONTEXT_RATE)
+}
+
+/// How many times each sample of a buffer at `sample_rate` is repeated to
+/// bring the buffer up to [`MIN_BUFFER_RATE`]. 1 when it is there already.
+fn low_rate_multiplier(sample_rate: u32) -> u32 {
+    MIN_BUFFER_RATE.div_ceil(sample_rate.max(1)).max(1)
+}
+
+/// `samples` at `sample_rate`, raised to `sample_rate * k`: each sample is
+/// repeated `k` times, and a low-pass at 45% of `sample_rate` removes the
+/// copies of the sound that repeating puts above half of `sample_rate`.
+fn raise_rate(samples: &[f32], sample_rate: u32, k: u32) -> Vec<f32> {
+    let mut out: Vec<f32> = samples
+        .iter()
+        .flat_map(|&v| std::iter::repeat_n(v, k as usize))
+        .collect();
+    crate::dsp::filters::Butterworth::lowpass(
+        8,
+        (sample_rate * k) as f32,
+        0.45 * sample_rate as f32,
+    )
+    .process_in_place(&mut out);
+    out
 }
 
 /// A sample rate every browser accepts for an audio buffer: the Web Audio
@@ -940,6 +980,22 @@ fn make_buffer(
 ) -> Option<web_sys::AudioBuffer> {
     let len = channels.iter().map(|c| c.len()).min()?;
     let count = channels.len() as u32;
+    // TE at a large factor gives a rate under the lowest a browser has to
+    // take. The buffer lasts as long at the raised rate.
+    let k = low_rate_multiplier(sample_rate);
+    if k > 1 {
+        let raised: Vec<Vec<f32>> = channels
+            .iter()
+            .map(|ch| raise_rate(&ch[..len], sample_rate, k))
+            .collect();
+        let buffer = ctx
+            .create_buffer(count, (len as u32) * k, (sample_rate * k) as f32)
+            .ok()?;
+        for (i, ch) in raised.iter().enumerate() {
+            let _ = buffer.copy_to_channel(ch, i as i32);
+        }
+        return Some(buffer);
+    }
     if let Ok(buffer) = ctx.create_buffer(count, len as u32, sample_rate as f32) {
         for (i, ch) in channels.iter().enumerate() {
             let _ = buffer.copy_to_channel(&ch[..len], i as i32);
@@ -1022,8 +1078,9 @@ async fn sleep(ms: u32) {
 #[cfg(test)]
 mod tests {
 
-    /// The factor TE applies is the one asked for while the output rate is
-    /// inside 8 to 384 kHz, and the one the limited rate gives outside it.
+    /// The factor TE applies is the one asked for, up to x256, while the
+    /// output rate is under 384 kHz, and the one the limited rate gives
+    /// above it.
     #[test]
     fn te_applied_factor_follows_the_output_rate() {
         use super::{te_applied_factor, te_output_rate, te_playback_speed};
@@ -1031,10 +1088,14 @@ mod tests {
         assert_eq!(te_applied_factor(256_000, 10.0), 10.0);
         assert_eq!(te_applied_factor(256_000, 1.0), 1.0);
         assert_eq!(te_applied_factor(48_000, -4.0), -4.0);
-        // 44.1 kHz at x10 would be 4.41 kHz: limited to 8 kHz.
-        assert_eq!(te_output_rate(44_100, 10.0), 8_000);
-        assert!((te_applied_factor(44_100, 10.0) - 5.5125).abs() < 1e-12);
-        assert!((te_playback_speed(44_100, 10.0) - 8_000.0 / 44_100.0).abs() < 1e-12);
+        // Rates under 8 kHz are kept: `make_buffer` raises the buffer's rate.
+        assert_eq!(te_output_rate(44_100, 10.0), 4_410);
+        assert_eq!(te_applied_factor(44_100, 10.0), 10.0);
+        assert!((te_playback_speed(44_100, 10.0) - 0.1).abs() < 1e-12);
+        assert_eq!(te_output_rate(384_000, 256.0), 1_500);
+        assert_eq!(te_applied_factor(384_000, 256.0), 256.0);
+        // A factor past x256 is x256.
+        assert_eq!(te_output_rate(384_000, 1_000.0), 1_500);
         // 256 kHz sped up x2 would be 512 kHz: limited to 384 kHz.
         assert_eq!(te_output_rate(256_000, -2.0), 384_000);
         assert!((te_applied_factor(256_000, -2.0) + 1.5).abs() < 1e-12);
@@ -1048,6 +1109,8 @@ mod tests {
         assert_eq!(context_rate_for(384_000), 384_000);
         assert_eq!(context_rate_for(256_000), 256_000);
         assert_eq!(context_rate_for(44_100), 44_100);
+        // TE buffers under 8 kHz play in an 8 kHz context.
+        assert_eq!(context_rate_for(1_500), 8_000);
     }
 
     /// A refused buffer rate is divided down to 96 kHz or under.
@@ -1134,5 +1197,23 @@ mod tests {
         let c = het_carriers(30_000.0, 12_000.0, 4);
         let lowest = c.iter().cloned().fold(f64::INFINITY, f64::min);
         assert_eq!(lowest, 30_000.0);
+    }
+
+    #[test]
+    fn a_low_rate_buffer_is_raised_to_8_khz_or_more() {
+        use super::{low_rate_multiplier, raise_rate};
+        assert_eq!(low_rate_multiplier(8_000), 1);
+        assert_eq!(low_rate_multiplier(48_000), 1);
+        assert_eq!(low_rate_multiplier(4_410), 2);
+        assert_eq!(low_rate_multiplier(1_500), 6);
+        // A 100 Hz tone at 1.5 kHz is still a 100 Hz tone of the same size
+        // at 9 kHz, six times as many samples.
+        let tone: Vec<f32> = (0..1_500)
+            .map(|i| (std::f32::consts::TAU * 100.0 * i as f32 / 1_500.0).sin())
+            .collect();
+        let raised = raise_rate(&tone, 1_500, 6);
+        assert_eq!(raised.len(), tone.len() * 6);
+        let peak = raised[raised.len() / 2..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!((0.9..=1.05).contains(&peak), "peak {peak}");
     }
 }

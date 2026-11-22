@@ -25,7 +25,10 @@ use crate::state::{
 };
 use leptos::prelude::*;
 
-/// A setting with an "A" (auto) button: its value follows the HFR band.
+/// The largest factor Auto gives PS, and the end of its slider.
+const PS_AUTO_MAX: f64 = 32.0;
+
+/// A setting with an "Auto" button: its value follows the HFR band.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum AutoSetting {
     HetCutoff,
@@ -81,7 +84,7 @@ fn apply_auto_values(state: AppState, lo: f64, hi: f64, only: Option<AutoSetting
         }
     }
     if wanted(AutoSetting::PsFactor) && t.ps_factor_auto().get_untracked() {
-        let ps = PitchFactor::from_signed(smart_auto_factor(lo, hi, 20.0));
+        let ps = PitchFactor::from_signed(smart_auto_factor(lo, hi, PS_AUTO_MAX));
         if t.ps_factor().get_untracked() != ps {
             freeze();
             t.ps_factor().set(ps);
@@ -818,9 +821,14 @@ fn ModeSettingsBody() -> impl IntoView {
         use wasm_bindgen::JsCast;
         let input: web_sys::HtmlInputElement = ev.target().unwrap().unchecked_into();
         if let Some(val) = parse_factor_input(&input.value()) {
+            // The typed field takes up to x256; the slider stops at 40.
+            let val = crate::audio::streaming_playback::te_factor_in_range(val);
             state.transform.te_factor_auto().set(false);
             state.transform.te_factor().set(val);
         }
+        // `prop:value` does not update when the limited factor equals the
+        // previous one, so a typed 999 would otherwise stay on screen.
+        input.set_value(&format_factor_value(state.transform.te_factor().get_untracked()));
     };
 
     let on_ps_text = move |ev: web_sys::Event| {
@@ -856,14 +864,12 @@ fn ModeSettingsBody() -> impl IntoView {
         }
     }
 
-    // TE has five presets, PS four. The owner cut six to three on 2026-11-20
+    // Five presets for TE and PS. The owner cut six to three on 2026-11-20
     // (the rows of factor buttons were too much), then asked for 8x and 32x
-    // back on TE on 2026-11-22. PS has no 32x: its slider stops at 20.
-    // Other factors come from the slider, the typed field and "Fine output
-    // adjustment".
-    let te_presets: [(f64, &str); 5] =
+    // back on 2026-11-22. Other factors come from the slider (to 40 for TE,
+    // 32 for PS), the typed field (TE to 256) and "Fine output adjustment".
+    let presets: [(f64, &str); 5] =
         [(4.0, "4x"), (8.0, "8x"), (10.0, "10x"), (16.0, "16x"), (32.0, "32x")];
-    let ps_presets: [(f64, &str); 4] = [(4.0, "4x"), (8.0, "8x"), (10.0, "10x"), (16.0, "16x")];
     // A preset is "sel" when the user chose its factor, and "auto-derived"
     // when Auto chose it (as on the HET Carriers row).
     fn preset_class(matches: bool, auto: bool) -> &'static str {
@@ -938,8 +944,8 @@ fn ModeSettingsBody() -> impl IntoView {
                             <span class="het-value">{move || format!("{:.1} kHz", state.transform.het_cutoff().get() / 1000.0)}</span>
                             <button class=move || if state.transform.het_cutoff_auto().get() { "auto-toggle on" } else { "auto-toggle" }
                                 on:click=move |_| toggle_auto(state, AutoSetting::HetCutoff)
-                                title="Toggle auto LP cutoff"
-                            >"A"</button>
+                                title="Auto: set the LP cutoff from the HFR band"
+                            >"Auto"</button>
                         </div>
                         <div class="layer-panel-slider-row">
                             <label title="Number of heterodyne carriers — 1 is classic; more carriers tile upward from the low edge to cover a wider band.">"Carriers"</label>
@@ -962,7 +968,7 @@ fn ModeSettingsBody() -> impl IntoView {
                             <button class=move || if state.transform.het_comb_auto().get() { "auto-toggle on" } else { "auto-toggle" }
                                 on:click=move |_| state.transform.het_comb_auto().update(|v| *v = !*v)
                                 title="Auto-fit carrier count + spacing to the focus range"
-                            >"A"</button>
+                            >"Auto"</button>
                         </div>
                         <Show when=move || { state.transform.het_comb_count().get() > 1 }>
                             <div class="layer-panel-slider-row het-text-row">
@@ -1002,15 +1008,15 @@ fn ModeSettingsBody() -> impl IntoView {
                                         input.select();
                                     }
                                 }
-                                title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
+                                title="Type a factor, up to 256 (e.g. 10, 7.5, \u{00f7}2)"
                             />
                             <button class=move || if state.transform.te_factor_auto().get() { "auto-toggle on" } else { "auto-toggle" }
                                 on:click=move |_| toggle_auto(state, AutoSetting::TeFactor)
                                 title="Auto: set the factor from the HFR band"
-                            >"A"</button>
+                            >"Auto"</button>
                         </div>
                         <div class="factor-presets">
-                            {te_presets.iter().map(|&(val, label)| {
+                            {presets.iter().map(|&(val, label)| {
                                 let on_click = make_preset_click(state, state.transform.te_factor(), state.transform.te_factor_auto(), PlaybackMode::TimeExpansion, val);
                                 let matches = move || (state.transform.te_factor().get() - val).abs() < 0.01;
                                 view! {
@@ -1043,7 +1049,7 @@ fn ModeSettingsBody() -> impl IntoView {
                             <div class="layer-panel-title">"Pitch Shift"</div>
                             <div class="layer-panel-slider-row">
                                 <label>"Factor"</label>
-                                <input type="range" min="-20" max="20" step="1"
+                                <input type="range" min="-32" max="32" step="1"
                                     prop:value=move || (state.transform.ps_factor().get().signed() as i32).to_string()
                                     on:input=on_ps_change
                                 />
@@ -1061,10 +1067,10 @@ fn ModeSettingsBody() -> impl IntoView {
                                 <button class=move || if state.transform.ps_factor_auto().get() { "auto-toggle on" } else { "auto-toggle" }
                                     on:click=move |_| toggle_auto(state, AutoSetting::PsFactor)
                                     title="Auto: set the factor from the HFR band"
-                                >"A"</button>
+                                >"Auto"</button>
                             </div>
                             <div class="factor-presets">
-                                {ps_presets.iter().map(|&(val, label)| {
+                                {presets.iter().map(|&(val, label)| {
                                     let on_click = make_preset_click(state, state.transform.ps_factor(), state.transform.ps_factor_auto(), PlaybackMode::PitchShift, PitchFactor::from_signed(val));
                                     let matches = move || (state.transform.ps_factor().get().signed() - val).abs() < 0.01;
                                     view! {

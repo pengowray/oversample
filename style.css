@@ -6193,12 +6193,15 @@ a.open-link-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
+    /* The label is "Auto" (it was "A", which needed its tooltip to be
+       understood, and phones show no tooltips). */
+    box-sizing: border-box;
     height: 24px;
+    padding: 0 6px;
     border-radius: 3px;
     font-size: 11px;
-    font-weight: bold;
-    color: #666;
+    font-weight: 600;
+    color: #999;
     background: rgba(255,255,255,0.06);
     cursor: pointer;
     margin-left: 4px;
@@ -11339,8 +11342,11 @@ body.hfr-nudge-on .hfr-switch {
         font-size: 12px;
         padding: 4px 10px;
     }
+    /* 2px above and below here and on .fine-out-row: with 6px the TE panel
+       with "Fine output adjustment" open was taller than the space above
+       the mode list on an 812px-tall phone, and its last row was cut off. */
     .layer-panel-slider-row {
-        padding: 6px 10px 6px 12px;
+        padding: 2px 10px 2px 12px;
         gap: 8px;
         min-height: 40px;
     }
@@ -11368,11 +11374,11 @@ body.hfr-nudge-on .hfr-switch {
     }
     .factor-presets {
         gap: 6px;
-        padding: 4px 10px 6px 12px;
+        padding: 2px 10px 4px 12px;
     }
     .auto-toggle {
-        width: 40px;
         height: 40px;
+        padding: 0 10px;
         font-size: 14px;
         margin-left: 6px;
     }
@@ -11389,10 +11395,17 @@ body.hfr-nudge-on .hfr-switch {
         min-height: 40px;
         font-size: 13px;
     }
+    .fine-out {
+        margin-top: 2px;
+        padding-top: 2px;
+    }
+    .fine-out-diagram {
+        padding: 0;
+    }
     .fine-out-row {
         font-size: 13px;
         gap: 8px;
-        padding: 6px 10px;
+        padding: 2px 10px;
     }
     .fine-out-seg button {
         padding: 10px 10px;

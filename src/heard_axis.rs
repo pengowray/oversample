@@ -89,7 +89,7 @@ impl HeardAxis {
 
     /// The scale for TE playback of a file at `sample_rate`: of the factor
     /// playback really applies (`te_applied_factor`), which is smaller than
-    /// `te_factor` when the output rate would leave 8 to 384 kHz.
+    /// `te_factor` when the output rate would be over 384 kHz.
     pub fn for_te(sample_rate: u32, te_factor: f64) -> Option<Self> {
         let applied = crate::audio::streaming_playback::te_applied_factor(sample_rate, te_factor);
         let mut axis = Self::for_te_factor(applied)?;

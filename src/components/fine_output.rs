@@ -55,9 +55,9 @@ const PREVIEW_HOLD_MS: i32 = 1500;
 /// the heard band is used.
 const HEARD_TOPS: [f64; 6] = [10_000.0, 20_000.0, 50_000.0, 100_000.0, 200_000.0, 500_000.0];
 
-const STANDARD_FACTORS: [f64; 8] = [2.0, 4.0, 8.0, 10.0, 16.0, 32.0, 64.0, 128.0];
+const STANDARD_FACTORS: [f64; 9] = [2.0, 4.0, 8.0, 10.0, 16.0, 32.0, 64.0, 128.0, 256.0];
 /// Powers of 2: each halving is one octave, so musical intervals are kept.
-const CHROMA_FACTORS: [f64; 7] = [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0];
+const CHROMA_FACTORS: [f64; 8] = [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0];
 const HET_SNAP_STEP_HZ: f64 = 5_000.0;
 /// Colours of the HET carriers' bands, lowest carrier first.
 const HET_COLOURS: [&str; 5] = ["#4cc9f0", "#80ed99", "#ffd166", "#f79d65", "#c77dff"];
@@ -139,20 +139,27 @@ pub(crate) fn effective_ps_shift(stored: f64, band_lo: f64, factor: f64) -> f64 
     s.min(band_lo / f)
 }
 
-/// A divide factor moved to one the mode can use: TE and PS take 1.5 to 64
-/// (or the Snap setting's nearest factor), ZC a whole number from 2 to 32.
+/// A divide factor moved to one the mode can use: TE takes 1.5 to 256 and PS
+/// 1.5 to 64 (or the Snap setting's nearest factor in that range), ZC a
+/// whole number from 2 to 32.
 fn usable_factor(raw: f64, mode: PlaybackMode, snap: OutputSnap) -> f64 {
     if mode == PlaybackMode::ZeroCrossing {
         return raw.round().clamp(2.0, 32.0);
     }
+    let max = if mode == PlaybackMode::TimeExpansion {
+        crate::audio::streaming_playback::TE_MAX_FACTOR
+    } else {
+        64.0
+    };
     let nearest = |list: &[f64]| {
         list.iter()
             .copied()
+            .filter(|f| *f <= max)
             .min_by(|a, b| (a - raw).abs().total_cmp(&(b - raw).abs()))
             .unwrap_or(8.0)
     };
     match snap {
-        OutputSnap::Free => ((raw * 10.0).round() / 10.0).clamp(1.5, 64.0),
+        OutputSnap::Free => ((raw * 10.0).round() / 10.0).clamp(1.5, max),
         OutputSnap::Standard => nearest(&STANDARD_FACTORS),
         OutputSnap::EqualChroma => nearest(&CHROMA_FACTORS),
     }
@@ -613,8 +620,57 @@ fn test_tone_samples(freqs: &[f64], rate: f64) -> Vec<f32> {
     out
 }
 
+/// "Play noise" lasts this long.
+const NOISE_MS: f64 = 1200.0;
+/// The noise is this many sine waves at once, equal musical steps apart
+/// from the lowest to the highest frequency heard, so it has no sound
+/// outside the heard band.
+const NOISE_PARTS: usize = 96;
+
+/// Noise that fills the heard band `lo` to `hi` (Hz) and nothing outside it,
+/// faded in and out, at `rate` Hz. Empty when no part of the band can be
+/// heard.
+fn test_noise_samples(lo: f64, hi: f64, max_hz: f64, rate: f64) -> Vec<f32> {
+    if !test_tones_playable(lo, hi) {
+        return vec![];
+    }
+    let lo = lo.max(TONE_MIN_HZ);
+    let hi = hi.min(TONE_MAX_HZ).min(max_hz).max(lo);
+    let n = (NOISE_MS / 1000.0 * rate) as usize;
+    let n_fade = ((TONE_FADE_MS / 1000.0 * rate) as usize).max(1);
+    let mut sum = vec![0.0f64; n];
+    // Each sine starts at its own phase, from a fixed sequence of numbers,
+    // so the noise is the same every time.
+    let mut seed: u32 = 0x9E37_79B9;
+    for part in 0..NOISE_PARTS {
+        let hz = lo * (hi / lo).powf((part as f64 + 0.5) / NOISE_PARTS as f64);
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let start = seed as f64 / u32::MAX as f64 * std::f64::consts::TAU;
+        let step = std::f64::consts::TAU * hz / rate;
+        for (i, v) in sum.iter_mut().enumerate() {
+            *v += (start + step * i as f64).sin();
+        }
+    }
+    let peak = sum.iter().fold(0.0f64, |m, v| m.max(v.abs())).max(1e-9);
+    sum.iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let edge = i.min(n - 1 - i).min(n_fade) as f64 / n_fade as f64;
+            let fade = 0.5 - 0.5 * (std::f64::consts::PI * edge).cos();
+            (v / peak * fade) as f32 * TONE_LEVEL
+        })
+        .collect()
+}
+
+/// The two test sounds of the heard band.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TestSound {
+    Tones,
+    Noise,
+}
+
 thread_local! {
-    /// The context of the test tones that are playing, and their number.
+    /// The context of the test sound that is playing, and its number.
     static TONES: RefCell<(Option<web_sys::AudioContext>, u32)> = const { RefCell::new((None, 0)) };
 }
 
@@ -624,15 +680,18 @@ fn stop_test_tones() {
     }
 }
 
-/// Play the test tones of the heard band `lo` to `hi` (Hz). They play in a
-/// context of their own, beside whatever the recording is playing.
-fn play_test_tones(lo: f64, hi: f64) {
+/// Play a test sound of the heard band `lo` to `hi` (Hz). It plays in a
+/// context of its own, beside whatever the recording is playing.
+fn play_test_sound(kind: TestSound, lo: f64, hi: f64) {
     stop_test_tones();
     let Ok(ctx) = crate::audio::context::new_context(48_000) else {
         return;
     };
     let rate = ctx.sample_rate() as f64;
-    let samples = test_tone_samples(&test_tone_freqs(lo, hi, rate * 0.45), rate);
+    let samples = match kind {
+        TestSound::Tones => test_tone_samples(&test_tone_freqs(lo, hi, rate * 0.45), rate),
+        TestSound::Noise => test_noise_samples(lo, hi, rate * 0.45, rate),
+    };
     if samples.is_empty() {
         let _ = ctx.close();
         return;
@@ -665,8 +724,8 @@ fn play_test_tones(lo: f64, hi: f64) {
     });
 }
 
-/// The row under each diagram: "Play test tones" for the heard band, and
-/// "Reset".
+/// The row under each diagram: "Play tones" and "Play noise" for the heard
+/// band, and "Reset".
 fn footer_row(
     heard: Signal<(f64, f64)>,
     is_default: Signal<bool>,
@@ -680,18 +739,23 @@ fn footer_row(
     };
     view! {
         <div class="fine-out-row">
-            <button class="fine-out-btn"
-                disabled=move || !playable()
-                title=move || if playable() {
-                    "Plays tones rising from the lowest to the highest frequency heard"
-                } else {
-                    "The heard band is above 20 kHz, too high to hear"
-                }
-                on:click=move |_| {
-                    let (lo, hi) = heard.get_untracked();
-                    play_test_tones(lo, hi);
-                }
-            >"Play test tones"</button>
+            {[
+                (TestSound::Tones, "Play tones", "Plays 8 tones rising from the lowest to the highest frequency heard"),
+                (TestSound::Noise, "Play noise", "Plays noise that fills the band from the lowest to the highest frequency heard"),
+            ].map(|(kind, label, title)| view! {
+                <button class="fine-out-btn"
+                    disabled=move || !playable()
+                    title=move || if playable() {
+                        title
+                    } else {
+                        "The heard band is above 20 kHz, too high to hear"
+                    }
+                    on:click=move |_| {
+                        let (lo, hi) = heard.get_untracked();
+                        play_test_sound(kind, lo, hi);
+                    }
+                >{label}</button>
+            }).collect_view()}
             <span class="fine-out-gap"></span>
             <button class="fine-out-btn"
                 disabled=move || is_default.get()
@@ -1324,7 +1388,7 @@ fn HetDiagram() -> impl IntoView {
                     class=move || if state.transform.het_freq_auto().get() { "auto-toggle on" } else { "auto-toggle" }
                     on:click=move |_| toggle_auto(state, AutoSetting::HetCarrier)
                     title="Auto: set the carrier from the HFR band"
-                >"A"</button>
+                >"Auto"</button>
                 <span class="fine-out-gap"></span>
                 {move || several().then(|| view! {
                     <span class="fine-out-dim">
@@ -1471,5 +1535,25 @@ mod tests {
         assert_eq!(s[0], 0.0);
         assert_eq!(*s.last().unwrap(), 0.0);
         assert!(s.iter().any(|v| v.abs() > TONE_LEVEL * 0.9));
+    }
+
+    #[test]
+    fn test_noise_fills_the_heard_band_at_the_test_level() {
+        let s = test_noise_samples(2_500.0, 7_600.0, 21_600.0, 48_000.0);
+        assert_eq!(s.len(), 57_600);
+        let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert!(peak <= TONE_LEVEL + 1e-6 && peak > TONE_LEVEL * 0.9);
+        assert_eq!(s[0], 0.0);
+        assert!(test_noise_samples(25_000.0, 40_000.0, 21_600.0, 48_000.0).is_empty());
+    }
+
+    #[test]
+    fn te_takes_factors_up_to_256() {
+        let te = |f, snap| usable_factor(f, PlaybackMode::TimeExpansion, snap);
+        assert_eq!(te(256.0, OutputSnap::Free), 256.0);
+        assert_eq!(te(900.0, OutputSnap::Free), 256.0);
+        assert_eq!(te(300.0, OutputSnap::Standard), 256.0);
+        assert_eq!(free(256.0), 64.0);
+        assert_eq!(usable_factor(300.0, PlaybackMode::PitchShift, OutputSnap::Standard), 64.0);
     }
 }
