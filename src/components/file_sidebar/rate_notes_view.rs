@@ -180,7 +180,7 @@ pub(crate) fn GuanoControls(
                             Ok(done) => reopened(
                                 done,
                                 format!(
-                                    "Set TE to {} in the GUANO metadata of {name}",
+                                    "Wrote TE: {} to the GUANO metadata of {name}",
                                     te(*factor)
                                 ),
                             ),
@@ -189,10 +189,8 @@ pub(crate) fn GuanoControls(
                     }
                     GuanoAction::Undo { .. } => {
                         match crate::guano_write::undo_in_place(state, file_id).await {
-                            Ok(done) => {
-                                reopened(done, format!("Put back the original bytes of {name}"))
-                            }
-                            Err(why) => Err(format!("Could not undo the change to {name}: {why}")),
+                            Ok(done) => reopened(done, format!("Restored the original {name}")),
+                            Err(why) => Err(format!("Could not restore {name}: {why}")),
                         }
                     }
                     GuanoAction::SaveCopy { factor } => {

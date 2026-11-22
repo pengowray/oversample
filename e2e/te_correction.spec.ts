@@ -1346,7 +1346,7 @@ test.describe("the factor in the audio file's GUANO", () => {
     await expect(row(page, "Sample rate")).toHaveText("256 kHz");
 
     const save = page.locator('button[data-action="guano-copy"]');
-    await expect(save).toHaveText("Save a copy with TE 10 in its GUANO");
+    await expect(save).toHaveText("Download copy with ×10 in GUANO");
     expect((await save.boundingBox())!.height).toBeGreaterThanOrEqual(24);
     const [download] = await Promise.all([page.waitForEvent("download"), save.click()]);
     expect(download.suggestedFilename()).toBe("plain TE10.wav");
@@ -1511,10 +1511,10 @@ test.describe("the factor in the audio file's GUANO, in the desktop app", () => 
 
     // Write TE to the file on disk.
     const write = page.locator('button[data-action="guano-write"]');
-    await expect(write).toHaveText("Write TE 10 to the audio file");
+    await expect(write).toHaveText("Write ×10 to GUANO metadata");
     await write.click();
     await expect(page.locator('button[data-action="guano-undo"]')).toBeVisible({ timeout: 30_000 });
-    expect(questions[0]).toContain('Change the audio file "plain.wav"?');
+    expect(questions[0]).toContain("Write ×10 time expansion to plain.wav?");
     let d = await disk(page);
     expect(d.size).toBe(audio.length + 34);
     expect(d.tail).toContain("GUANO|Version: 1.0\nTE: 10\n");
@@ -1527,7 +1527,7 @@ test.describe("the factor in the audio file's GUANO, in the desktop app", () => 
     await expect(page.locator(TE_NOTE)).toContainText("Corrected for ×10 time expansion.");
     await expect(page.locator(TE_NOTE)).not.toContainText("You set this factor");
     await expect(page.locator('.rate-note[data-note="guano"]')).toContainText(
-      "Oversample set TE to 10 in this audio file's GUANO metadata on ",
+      "Oversample changed this audio file on ",
     );
     // Every stored copy is the changed file's: it records the change, in
     // the changed file's units, and the old file's copy is gone.
@@ -1544,7 +1544,7 @@ test.describe("the factor in the audio file's GUANO, in the desktop app", () => 
     // Undo.
     await page.locator('button[data-action="guano-undo"]').click();
     await expect(page.locator('button[data-action="guano-write"]')).toBeVisible({ timeout: 30_000 });
-    expect(questions[1]).toContain("Put back the original bytes");
+    expect(questions[1]).toContain("Restore the original plain.wav?");
     d = await disk(page);
     expect(d.undoChecked).toBe(true);
     expect(d.isOriginal).toBe(true);

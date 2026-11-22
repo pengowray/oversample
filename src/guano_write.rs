@@ -120,17 +120,29 @@ fn te(factor: f64) -> String {
     oversample_core::audio::guano_edit::te_value(factor)
 }
 
+/// The factor as the panel writes it: "×10".
+fn times(factor: f64) -> String {
+    crate::wikimedia::format_factor(factor)
+}
+
+/// The label of the Undo button, which the confirmation before a change
+/// names.
+const UNDO_LABEL: &str = "Restore original audio file";
+
 impl GuanoAction {
-    /// The button's label.
+    /// The button's label. The factor is written "×10", as in the "Remove
+    /// ×10 correction" button above it. The tooltips, the questions and the
+    /// note name the GUANO line itself, "TE: 10", which is what the reader
+    /// will look for in other programs.
     pub fn label(&self) -> String {
         match self {
             GuanoAction::WriteInPlace { factor } => {
-                format!("Write TE {} to the audio file", te(*factor))
+                format!("Write {} to GUANO metadata", times(*factor))
             }
             GuanoAction::SaveCopy { factor } => {
-                format!("Save a copy with TE {} in its GUANO", te(*factor))
+                format!("Download copy with {} in GUANO", times(*factor))
             }
-            GuanoAction::Undo { .. } => "Undo the change to the audio file".to_string(),
+            GuanoAction::Undo { .. } => UNDO_LABEL.to_string(),
         }
     }
 
@@ -138,21 +150,27 @@ impl GuanoAction {
     pub fn tooltip(&self) -> String {
         match self {
             GuanoAction::WriteInPlace { factor } => format!(
-                "Sets TE to {} in the audio file's GUANO metadata, so other programs read \
-                 the factor too. The audio is not changed. The original file's size and \
-                 hashes, and the bytes that undo the change, are saved in the recording's \
-                 .batm file.",
+                "Writes the {} time expansion factor into the audio file's GUANO metadata, \
+                 as the TE field (TE: {}), so other programs read the factor too. The audio \
+                 samples stay the same; the audio file's size and hashes change. The change \
+                 can be undone.",
+                times(*factor),
                 te(*factor)
             ),
             GuanoAction::SaveCopy { factor } => format!(
-                "Downloads a copy of the audio file with TE set to {} in its GUANO \
-                 metadata, so other programs read the factor too. The file you opened is \
-                 not changed.",
+                "Downloads a copy of the audio file with the {} time expansion factor \
+                 written into the copy's GUANO metadata, as the TE field (TE: {}), so other \
+                 programs read the factor too. The audio file you opened is unchanged.",
+                times(*factor),
                 te(*factor)
             ),
-            GuanoAction::Undo { .. } => "Puts back the bytes the audio file had before, and \
-                 checks the result against the original file's SHA-256 hash."
-                .to_string(),
+            GuanoAction::Undo { factor, .. } => format!(
+                "Restores the audio file's original bytes from the recording's .batm file, \
+                 and checks the restored file against the original SHA-256 hash. Oversample \
+                 still reads the recording with {} time expansion, because the factor stays \
+                 saved in the recording's .batm file.",
+                times(*factor)
+            ),
         }
     }
 
@@ -163,10 +181,11 @@ impl GuanoAction {
             GuanoAction::Undo { factor, made_at } => {
                 let day = made_at.get(..10).unwrap_or(made_at);
                 Some(format!(
-                    "Oversample set TE to {} in this audio file's GUANO metadata on {day}. \
-                     The original file's size and hashes are saved in the recording's .batm \
-                     file.",
-                    te(*factor)
+                    "Oversample changed this audio file on {day}: it set TE: {} ({}) in the \
+                     GUANO metadata. The original file's size and hashes are saved in the \
+                     recording's .batm file.",
+                    te(*factor),
+                    times(*factor)
                 ))
             }
             _ => None,
@@ -186,17 +205,24 @@ impl GuanoAction {
     pub fn confirm_text(&self, name: &str) -> Option<String> {
         match self {
             GuanoAction::WriteInPlace { factor } => Some(format!(
-                "Change the audio file \"{name}\"?\n\nTE will be set to {} in the file's \
-                 GUANO metadata. The audio is not changed.\n\nThe file's size and hashes \
-                 will change. The original size and hashes, and the bytes that undo the \
-                 change, are saved in the recording's .batm file.",
+                "Write {} time expansion to {name}?\n\nOversample will set TE: {} in the \
+                 audio file's GUANO metadata. The audio samples stay the same. The audio \
+                 file's size and hashes will change.\n\nYou can undo the change with \
+                 \"{UNDO_LABEL}\". The original file's size and hashes, and the bytes needed \
+                 to restore the file, are saved in the recording's .batm file.",
+                times(*factor),
                 te(*factor)
             )),
-            GuanoAction::Undo { .. } => Some(format!(
-                "Put back the original bytes of the audio file \"{name}\"?\n\nThe TE field \
-                 Oversample wrote is removed from the file. The recording is still read \
-                 with the same factor, saved in its .batm file."
-            )),
+            GuanoAction::Undo { factor, made_at } => {
+                let day = made_at.get(..10).unwrap_or(made_at);
+                Some(format!(
+                    "Restore the original {name}?\n\nOversample will put back the audio \
+                     file's original bytes and check the restored file against the original \
+                     SHA-256 hash. The GUANO metadata will be as it was before {day}.\n\n\
+                     Oversample will still read this recording with {} time expansion.",
+                    times(*factor)
+                ))
+            }
             GuanoAction::SaveCopy { .. } => None,
         }
     }
@@ -624,7 +650,7 @@ mod tests {
     fn texts_name_the_factor_and_the_day() {
         assert_eq!(
             GuanoAction::WriteInPlace { factor: 2.5 }.label(),
-            "Write TE 2.5 to the audio file"
+            "Write \u{d7}2.5 to GUANO metadata"
         );
         assert_eq!(copy_name("bat call.wav", 10.0), "bat call TE10.wav");
         assert_eq!(copy_name("noext", 2.5), "noext TE2.5");
@@ -635,8 +661,9 @@ mod tests {
         assert_eq!(
             undo.note().as_deref(),
             Some(
-                "Oversample set TE to 10 in this audio file's GUANO metadata on 2026-11-22. \
-                 The original file's size and hashes are saved in the recording's .batm file."
+                "Oversample changed this audio file on 2026-11-22: it set TE: 10 (\u{d7}10) in \
+                 the GUANO metadata. The original file's size and hashes are saved in the \
+                 recording's .batm file."
             )
         );
         assert!(undo.confirm_text("a.wav").is_some());
