@@ -3875,6 +3875,7 @@ name = "oversample-desktop"
 version = "0.5.294"
 dependencies = [
  "base64 0.22.1",
+ "blake3",
  "chrono",
  "claxon",
  "cpal",

@@ -22,7 +22,7 @@ fn hashes(bytes: &[u8]) -> FileHashes {
     FileHashes {
         file_size: bytes.len() as u64,
         sha256: Some(sha256_hex(bytes)),
-        blake3: None,
+        blake3: Some(blake3::hash(bytes).to_hex().to_string()),
     }
 }
 
@@ -115,8 +115,8 @@ pub fn set_te_on_disk(path: &Path, factor: f64) -> Result<FileEditOutcome, Strin
 }
 
 /// Take back a change to the file at `path` with its saved undo patch. The
-/// file is written only when the result has the size and SHA-256 the file
-/// had before the change (`original`).
+/// file is written only when the result has the size, SHA-256 and BLAKE3
+/// the file had before the change (`original`).
 pub fn undo_on_disk(
     path: &Path,
     undo: &[SavedSplice],
@@ -130,6 +130,7 @@ pub fn undo_on_disk(
     let now = hashes(&restored);
     if now.file_size != original.file_size
         || (original.sha256.is_some() && now.sha256 != original.sha256)
+        || (original.blake3.is_some() && now.blake3 != original.blake3)
     {
         return Err(
             "Undoing would not give the original file back, so the file is left as it is.".into(),
@@ -190,6 +191,12 @@ mod tests {
         assert_ne!(changed, original);
         assert_eq!(outcome.original, hashes(&original));
         assert_eq!(outcome.changed, hashes(&changed));
+        // Both hashes of both files, as the Info panel shows them.
+        assert_eq!(
+            outcome.original.blake3.as_deref(),
+            Some(blake3::hash(&original).to_hex().as_str())
+        );
+        assert!(outcome.changed.blake3.is_some() && outcome.changed.sha256.is_some());
         assert!(changed.ends_with(b"GUANO|Version: 1.0\nTE: 10\n"));
         // No temporary file is left beside it.
         assert_eq!(

@@ -457,8 +457,12 @@ pub async fn write_in_place(state: AppState, file_id: u64, factor: f64) -> Resul
     )
     .await?;
     let mut set = file.set.clone();
+    // The desktop command hashed the file it read. A BLAKE3 the app worked
+    // out earlier is used only if the command gave none.
     let mut original = outcome.original.clone();
-    original.blake3 = file.full_blake3.clone();
+    if original.blake3.is_none() {
+        original.blake3 = file.full_blake3.clone();
+    }
     set.file_edits.push(FileEdit {
         what: KIND_GUANO_TE.to_string(),
         factor,
