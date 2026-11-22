@@ -86,7 +86,7 @@ async function annotate(page: Page, t0: number, t1: number) {
 
 async function openSettings(page: Page) {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await expect(page.locator(".setting-group-title", { hasText: "Beta" })).toBeVisible();
+  await expect(page.locator(".setting-group-title").first()).toBeVisible();
 }
 
 /** Every saved annotation file in every store, by path from the storage root. */

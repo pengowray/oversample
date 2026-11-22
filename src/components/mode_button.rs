@@ -25,6 +25,103 @@ use crate::state::{
 };
 use leptos::prelude::*;
 
+/// A setting with an "A" (auto) button: its value follows the HFR band.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum AutoSetting {
+    HetCutoff,
+    HetCarrier,
+    TeFactor,
+    PsFactor,
+}
+
+/// The band the auto values are worked out from: the HFR band, or the whole
+/// recording (0 to Nyquist) when no band is set.
+fn auto_band(state: AppState) -> Option<(f64, f64)> {
+    let lo = state.filter.band_ff_freq_lo().get_untracked();
+    let hi = state.filter.band_ff_freq_hi().get_untracked();
+    if hi > lo {
+        return Some((lo, hi));
+    }
+    let nyquist = crate::components::hfr_switch::nyquist_for_current(state);
+    (nyquist > 0.0).then_some((0.0, nyquist))
+}
+
+/// Set every setting whose Auto is on from the band `lo` to `hi` (Hz). A
+/// setting is written only when its value changes, because each write
+/// restarts playback and redraws the XForm tiles.
+fn apply_auto_values(state: AppState, lo: f64, hi: f64) {
+    if hi <= lo {
+        return;
+    }
+    let t = state.transform;
+    // Auto LP cutoff: half the focus band, capped. Computed first so the
+    // carrier anchor below can sit one cutoff above the band's low edge.
+    let auto_cutoff = ((hi - lo) / 2.0).min(15_000.0);
+    if t.het_cutoff_auto().get_untracked() && t.het_cutoff().get_untracked() != auto_cutoff {
+        t.het_cutoff().set(auto_cutoff);
+    }
+    if t.het_freq_auto().get_untracked() {
+        // Anchor the comb at the BOTTOM of the focus band: the lowest
+        // carrier's lower LP edge lands on band_lo, and any comb teeth tile
+        // upward from there. For a single full-band carrier this equals the
+        // band centre, so single-carrier auto behaviour is unchanged.
+        let carrier = lo + t.het_cutoff().get_untracked();
+        if t.het_frequency().get_untracked() != carrier {
+            t.het_frequency().set(carrier);
+        }
+    }
+    if t.te_factor_auto().get_untracked() {
+        let te = smart_auto_factor(lo, hi, 40.0);
+        if t.te_factor().get_untracked() != te {
+            t.te_factor().set(te);
+        }
+    }
+    if t.ps_factor_auto().get_untracked() {
+        let ps = PitchFactor::from_signed(smart_auto_factor(lo, hi, 20.0));
+        if t.ps_factor().get_untracked() != ps {
+            t.ps_factor().set(ps);
+        }
+    }
+}
+
+/// Turn a setting's Auto on and set its value now. Effect B only runs when
+/// the band changes, so without this the "A" button changed nothing until
+/// the band was next moved.
+pub(crate) fn turn_auto_on(state: AppState, which: AutoSetting) {
+    let t = state.transform;
+    match which {
+        AutoSetting::HetCutoff => t.het_cutoff_auto().set(true),
+        AutoSetting::HetCarrier => t.het_freq_auto().set(true),
+        AutoSetting::TeFactor => t.te_factor_auto().set(true),
+        AutoSetting::PsFactor => t.ps_factor_auto().set(true),
+    }
+    if let Some((lo, hi)) = auto_band(state) {
+        apply_auto_values(state, lo, hi);
+    }
+}
+
+/// The "A" button: Auto on (and the value set from the band), or off (the
+/// value stays as it is).
+pub(crate) fn toggle_auto(state: AppState, which: AutoSetting) {
+    let t = state.transform;
+    let on = match which {
+        AutoSetting::HetCutoff => t.het_cutoff_auto().get_untracked(),
+        AutoSetting::HetCarrier => t.het_freq_auto().get_untracked(),
+        AutoSetting::TeFactor => t.te_factor_auto().get_untracked(),
+        AutoSetting::PsFactor => t.ps_factor_auto().get_untracked(),
+    };
+    if !on {
+        turn_auto_on(state, which);
+        return;
+    }
+    match which {
+        AutoSetting::HetCutoff => t.het_cutoff_auto().set(false),
+        AutoSetting::HetCarrier => t.het_freq_auto().set(false),
+        AutoSetting::TeFactor => t.te_factor_auto().set(false),
+        AutoSetting::PsFactor => t.ps_factor_auto().set(false),
+    }
+}
+
 /// Compute the best auto factor for shifting BandFF center into audible range.
 /// Prefers 8x, then other 2^n, then 10, then best integer, then exact ratio.
 /// Positive factors divide (shift down), negative factors multiply (shift
@@ -253,38 +350,7 @@ pub fn ModeRadioGroup(#[prop(default = false)] list_layout: bool) -> impl IntoVi
             return;
         }
 
-        let band_ff_bandwidth = band_ff_hi - band_ff_lo;
-
-        // Auto LP cutoff: half the focus band, capped. Computed first so the
-        // carrier anchor below can sit one cutoff above the band's low edge.
-        let auto_cutoff = (band_ff_bandwidth / 2.0).min(15_000.0);
-        if state.transform.het_cutoff_auto().get_untracked() {
-            state.transform.het_cutoff().set(auto_cutoff);
-        }
-        if state.transform.het_freq_auto().get_untracked() {
-            // Anchor the comb at the BOTTOM of the focus band: the lowest
-            // carrier's lower LP edge lands on band_lo, and any comb teeth tile
-            // upward from there. For a single full-band carrier this equals the
-            // band centre, so single-carrier auto behaviour is unchanged.
-            let cutoff = if state.transform.het_cutoff_auto().get_untracked() {
-                auto_cutoff
-            } else {
-                state.transform.het_cutoff().get_untracked()
-            };
-            state.transform.het_frequency().set(band_ff_lo + cutoff);
-        }
-
-        if state.transform.te_factor_auto().get_untracked() {
-            let te = smart_auto_factor(band_ff_lo, band_ff_hi, 40.0);
-            state.transform.te_factor().set(te);
-        }
-        if state.transform.ps_factor_auto().get_untracked() {
-            let ps = smart_auto_factor(band_ff_lo, band_ff_hi, 20.0);
-            state
-                .transform
-                .ps_factor()
-                .set(PitchFactor::from_signed(ps));
-        }
+        apply_auto_values(state, band_ff_lo, band_ff_hi);
     });
 
     // ── Effect B2: Comb-auto recompute ──
@@ -777,10 +843,23 @@ fn ModeSettingsBody() -> impl IntoView {
         }
     }
 
-    // Three presets (were six: the owner found the rows of factor buttons
-    // too much, 2026-11-20). Other factors come from the slider, the typed
-    // field and "Fine output adjustment".
-    let preset_values: [(f64, &str); 3] = [(4.0, "4x"), (10.0, "10x"), (16.0, "16x")];
+    // TE has five presets, PS four. The owner cut six to three on 2026-11-20
+    // (the rows of factor buttons were too much), then asked for 8x and 32x
+    // back on TE on 2026-11-22. PS has no 32x: its slider stops at 20.
+    // Other factors come from the slider, the typed field and "Fine output
+    // adjustment".
+    let te_presets: [(f64, &str); 5] =
+        [(4.0, "4x"), (8.0, "8x"), (10.0, "10x"), (16.0, "16x"), (32.0, "32x")];
+    let ps_presets: [(f64, &str); 4] = [(4.0, "4x"), (8.0, "8x"), (10.0, "10x"), (16.0, "16x")];
+    // A preset is "sel" when the user chose its factor, and "auto-derived"
+    // when Auto chose it (as on the HET Carriers row).
+    fn preset_class(matches: bool, auto: bool) -> &'static str {
+        match (matches, auto) {
+            (true, false) => "factor-preset sel",
+            (true, true) => "factor-preset auto-derived",
+            _ => "factor-preset",
+        }
+    }
 
     fn set_output_highlight<F, V>(
         state: AppState,
@@ -845,7 +924,7 @@ fn ModeSettingsBody() -> impl IntoView {
                             <label title="Low-pass cutoff (kHz) applied to each carrier — controls how wide a band around the carrier you hear. Drag the cyan band edges on the spectrogram to adjust.">"LP cutoff"</label>
                             <span class="het-value">{move || format!("{:.1} kHz", state.transform.het_cutoff().get() / 1000.0)}</span>
                             <button class=move || if state.transform.het_cutoff_auto().get() { "auto-toggle on" } else { "auto-toggle" }
-                                on:click=move |_| state.transform.het_cutoff_auto().update(|v| *v = !*v)
+                                on:click=move |_| toggle_auto(state, AutoSetting::HetCutoff)
                                 title="Toggle auto LP cutoff"
                             >"A"</button>
                         </div>
@@ -913,16 +992,16 @@ fn ModeSettingsBody() -> impl IntoView {
                                 title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
                             />
                             <button class=move || if state.transform.te_factor_auto().get() { "auto-toggle on" } else { "auto-toggle" }
-                                on:click=move |_| state.transform.te_factor_auto().update(|v| *v = !*v)
-                                title="Auto: picks best factor for audible output"
+                                on:click=move |_| toggle_auto(state, AutoSetting::TeFactor)
+                                title="Auto: set the factor from the HFR band"
                             >"A"</button>
                         </div>
                         <div class="factor-presets">
-                            {preset_values.iter().map(|&(val, label)| {
+                            {te_presets.iter().map(|&(val, label)| {
                                 let on_click = make_preset_click(state, state.transform.te_factor(), state.transform.te_factor_auto(), PlaybackMode::TimeExpansion, val);
-                                let is_sel = move || (state.transform.te_factor().get() - val).abs() < 0.01 && !state.transform.te_factor_auto().get();
+                                let matches = move || (state.transform.te_factor().get() - val).abs() < 0.01;
                                 view! {
-                                    <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
+                                    <button class=move || preset_class(matches(), state.transform.te_factor_auto().get())
                                         on:click=on_click
                                     >{label}</button>
                                 }
@@ -967,16 +1046,16 @@ fn ModeSettingsBody() -> impl IntoView {
                                     title="Enter a custom factor (e.g. 10, 7.5, \u{00f7}2)"
                                 />
                                 <button class=move || if state.transform.ps_factor_auto().get() { "auto-toggle on" } else { "auto-toggle" }
-                                    on:click=move |_| state.transform.ps_factor_auto().update(|v| *v = !*v)
-                                    title="Auto: picks best factor for audible output"
+                                    on:click=move |_| toggle_auto(state, AutoSetting::PsFactor)
+                                    title="Auto: set the factor from the HFR band"
                                 >"A"</button>
                             </div>
                             <div class="factor-presets">
-                                {preset_values.iter().map(|&(val, label)| {
+                                {ps_presets.iter().map(|&(val, label)| {
                                     let on_click = make_preset_click(state, state.transform.ps_factor(), state.transform.ps_factor_auto(), PlaybackMode::PitchShift, PitchFactor::from_signed(val));
-                                    let is_sel = move || (state.transform.ps_factor().get().signed() - val).abs() < 0.01 && !state.transform.ps_factor_auto().get();
+                                    let matches = move || (state.transform.ps_factor().get().signed() - val).abs() < 0.01;
                                     view! {
-                                        <button class=move || if is_sel() { "factor-preset sel" } else { "factor-preset" }
+                                        <button class=move || preset_class(matches(), state.transform.ps_factor_auto().get())
                                             on:click=on_click
                                         >{label}</button>
                                     }

@@ -49,7 +49,7 @@ async function openSettings(page: Page) {
   const show = page.locator('button[title="Show sidebar"]');
   if (await show.isVisible()) await show.click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await expect(page.locator(".setting-group-title", { hasText: "Beta" })).toBeVisible();
+  await expect(page.locator(".setting-group-title").first()).toBeVisible();
 }
 
 async function openFileAndAnnotate(page: Page, name: string) {

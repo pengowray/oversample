@@ -23,7 +23,7 @@
 use crate::audio::streaming_playback::{het_carriers_for, selection_freq_band};
 use crate::components::hfr_switch::nyquist_for_current;
 use crate::components::icons::Icon;
-use crate::components::mode_button::format_factor_value;
+use crate::components::mode_button::{format_factor_value, toggle_auto, turn_auto_on, AutoSetting};
 use crate::dsp::pitch_shift::PitchFactor;
 use crate::state::store_fields::*;
 use crate::state::{AppState, OutputSnap, PlaybackMode};
@@ -558,6 +558,150 @@ fn snap_select(state: AppState, options: &'static [(OutputSnap, &'static str)]) 
     }
 }
 
+// ── Test tones ──────────────────────────────────────────────────────────────
+
+/// "Play test tones" plays this many tones, rising from the lowest to the
+/// highest frequency heard, so the user hears where the heard band sits.
+const TONE_COUNT: usize = 8;
+const TONE_MS: f64 = 140.0;
+const TONE_GAP_MS: f64 = 30.0;
+const TONE_FADE_MS: f64 = 10.0;
+/// Peak level of the tones, of full scale 1.
+const TONE_LEVEL: f32 = 0.2;
+/// Tones are kept inside these, the frequencies people hear.
+const TONE_MIN_HZ: f64 = 100.0;
+const TONE_MAX_HZ: f64 = 20_000.0;
+/// The division ZC starts with (`zc_factor` in state.rs); Reset returns to it.
+const ZC_DEFAULT_FACTOR: f64 = 8.0;
+
+/// Whether any of the heard band `lo` to `hi` can be played as test tones.
+fn test_tones_playable(lo: f64, hi: f64) -> bool {
+    hi > TONE_MIN_HZ && lo < TONE_MAX_HZ
+}
+
+/// The tones for a heard band, equal musical steps apart. One tone when the
+/// band is too narrow for steps.
+fn test_tone_freqs(lo: f64, hi: f64, max_hz: f64) -> Vec<f64> {
+    if !test_tones_playable(lo, hi) {
+        return vec![];
+    }
+    let lo = lo.max(TONE_MIN_HZ);
+    let hi = hi.min(TONE_MAX_HZ).min(max_hz).max(lo);
+    if hi / lo < 1.02 {
+        return vec![lo];
+    }
+    (0..TONE_COUNT)
+        .map(|i| lo * (hi / lo).powf(i as f64 / (TONE_COUNT - 1) as f64))
+        .collect()
+}
+
+/// Sine tones one after another, each faded in and out, at `rate` Hz.
+fn test_tone_samples(freqs: &[f64], rate: f64) -> Vec<f32> {
+    let n_tone = (TONE_MS / 1000.0 * rate) as usize;
+    let n_gap = (TONE_GAP_MS / 1000.0 * rate) as usize;
+    let n_fade = ((TONE_FADE_MS / 1000.0 * rate) as usize).max(1);
+    let mut out = Vec::with_capacity(freqs.len() * (n_tone + n_gap));
+    for &hz in freqs {
+        for i in 0..n_tone {
+            let edge = i.min(n_tone - 1 - i).min(n_fade) as f64 / n_fade as f64;
+            let fade = 0.5 - 0.5 * (std::f64::consts::PI * edge).cos();
+            let phase = std::f64::consts::TAU * hz * i as f64 / rate;
+            out.push((phase.sin() * fade) as f32 * TONE_LEVEL);
+        }
+        out.extend(std::iter::repeat(0.0).take(n_gap));
+    }
+    out
+}
+
+thread_local! {
+    /// The context of the test tones that are playing, and their number.
+    static TONES: RefCell<(Option<web_sys::AudioContext>, u32)> = const { RefCell::new((None, 0)) };
+}
+
+fn stop_test_tones() {
+    if let Some(ctx) = TONES.with(|t| t.borrow_mut().0.take()) {
+        let _ = ctx.close();
+    }
+}
+
+/// Play the test tones of the heard band `lo` to `hi` (Hz). They play in a
+/// context of their own, beside whatever the recording is playing.
+fn play_test_tones(lo: f64, hi: f64) {
+    stop_test_tones();
+    let Ok(ctx) = crate::audio::context::new_context(48_000) else {
+        return;
+    };
+    let rate = ctx.sample_rate() as f64;
+    let samples = test_tone_samples(&test_tone_freqs(lo, hi, rate * 0.45), rate);
+    if samples.is_empty() {
+        let _ = ctx.close();
+        return;
+    }
+    let started = (|| {
+        let buffer = ctx.create_buffer(1, samples.len() as u32, rate as f32)?;
+        buffer.copy_to_channel(&samples, 0)?;
+        let source = ctx.create_buffer_source()?;
+        source.set_buffer(Some(&buffer));
+        source.connect_with_audio_node(&ctx.destination())?;
+        source.start()
+    })();
+    if started.is_err() {
+        let _ = ctx.close();
+        return;
+    }
+    let _ = ctx.resume();
+    let n = TONES.with(|t| {
+        let mut t = t.borrow_mut();
+        t.0 = Some(ctx);
+        t.1 = t.1.wrapping_add(1);
+        t.1
+    });
+    let ms = (samples.len() as f64 / rate * 1000.0) as i32 + 300;
+    spawn_local(async move {
+        crate::web_util::sleep_ms(ms).await;
+        if TONES.with(|t| t.borrow().1) == n {
+            stop_test_tones();
+        }
+    });
+}
+
+/// The row under each diagram: "Play test tones" for the heard band, and
+/// "Reset".
+fn footer_row(
+    heard: Signal<(f64, f64)>,
+    is_default: Signal<bool>,
+    reset_title: &'static str,
+    on_reset: impl Fn() + 'static,
+) -> impl IntoView {
+    on_cleanup(stop_test_tones);
+    let playable = move || {
+        let (lo, hi) = heard.get();
+        test_tones_playable(lo, hi)
+    };
+    view! {
+        <div class="fine-out-row">
+            <button class="fine-out-btn"
+                disabled=move || !playable()
+                title=move || if playable() {
+                    "Plays tones rising from the lowest to the highest frequency heard"
+                } else {
+                    "The heard band is above 20 kHz, too high to hear"
+                }
+                on:click=move |_| {
+                    let (lo, hi) = heard.get_untracked();
+                    play_test_tones(lo, hi);
+                }
+            >"Play test tones"</button>
+            <span class="fine-out-gap"></span>
+            <button class="fine-out-btn"
+                disabled=move || is_default.get()
+                title=reset_title
+                on:click=move |_| on_reset()
+            >"Reset"</button>
+        </div>
+    }
+}
+
 /// The section: a heading that opens and closes it, and the diagram of the
 /// mode that is playing.
 #[component]
@@ -729,6 +873,37 @@ fn DivideDiagram(mode: PlaybackMode) -> impl IntoView {
         input.set_value(&format!("{:.2}", mapping.get_untracked().shift / 1000.0));
     };
 
+    // Reset: TE and PS go back to Auto (PS also to no shift), ZC to its
+    // starting division. Snap is a preference and stays.
+    let is_default = Signal::derive(move || match mode {
+        PlaybackMode::TimeExpansion => state.transform.te_factor_auto().get(),
+        PlaybackMode::ZeroCrossing => {
+            (state.transform.zc_factor().get() - ZC_DEFAULT_FACTOR).abs() < 0.01
+        }
+        _ => {
+            state.transform.ps_factor_auto().get() && state.transform.ps_shift_hz().get() < 1.0
+        }
+    });
+    let on_reset = move || {
+        freeze_spectrogram(&state);
+        match mode {
+            PlaybackMode::TimeExpansion => turn_auto_on(state, AutoSetting::TeFactor),
+            PlaybackMode::ZeroCrossing => state.transform.zc_factor().set(ZC_DEFAULT_FACTOR),
+            _ => {
+                allow_shift.set(false);
+                if state.transform.ps_shift_hz().get_untracked() != 0.0 {
+                    state.transform.ps_shift_hz().set(0.0);
+                }
+                turn_auto_on(state, AutoSetting::PsFactor);
+            }
+        }
+    };
+    let reset_title = match mode {
+        PlaybackMode::TimeExpansion => "Set the factor from the HFR band (Auto)",
+        PlaybackMode::ZeroCrossing => "Set the division back to 8",
+        _ => "Set the factor from the HFR band (Auto) and remove the shift",
+    };
+
     const FACTOR_SNAPS: &[(OutputSnap, &str)] = &[
         (OutputSnap::Free, "Free"),
         (OutputSnap::Standard, "Standard factors"),
@@ -846,6 +1021,7 @@ fn DivideDiagram(mode: PlaybackMode) -> impl IntoView {
                     </div>
                 </Show>
             })}
+            {footer_row(heard.into(), is_default, reset_title, on_reset)}
         </div>
     }
 }
@@ -1070,6 +1246,21 @@ fn HetDiagram() -> impl IntoView {
     };
     let several = move || carriers.get().len() > 1;
 
+    let is_default = Signal::derive(move || {
+        state.transform.het_freq_auto().get()
+            && state.transform.het_cutoff_auto().get()
+            && state.transform.het_ps_factor().get() <= 1.0
+    });
+    let on_reset = move || {
+        freeze_spectrogram(&state);
+        if state.transform.het_ps_factor().get_untracked() != 1.0 {
+            state.transform.het_ps_factor().set(1.0);
+        }
+        turn_auto_on(state, AutoSetting::HetCutoff);
+        turn_auto_on(state, AutoSetting::HetCarrier);
+    };
+    let heard_band = Signal::derive(move || (0.0, heard_hi()));
+
     const CARRIER_SNAPS: &[(OutputSnap, &str)] = &[
         (OutputSnap::Free, "Free"),
         (OutputSnap::Standard, "5 kHz steps"),
@@ -1127,7 +1318,7 @@ fn HetDiagram() -> impl IntoView {
                 <span>"kHz"</span>
                 <button
                     class=move || if state.transform.het_freq_auto().get() { "auto-toggle on" } else { "auto-toggle" }
-                    on:click=move |_| state.transform.het_freq_auto().update(|v| *v = !*v)
+                    on:click=move |_| toggle_auto(state, AutoSetting::HetCarrier)
                     title="Auto: set the carrier from the HFR band"
                 >"A"</button>
                 <span class="fine-out-gap"></span>
@@ -1158,6 +1349,12 @@ fn HetDiagram() -> impl IntoView {
                 <span class="fine-out-gap"></span>
                 {snap_select(state, CARRIER_SNAPS)}
             </div>
+            {footer_row(
+                heard_band,
+                is_default,
+                "Set the carrier and LP cutoff from the HFR band (Auto), and turn \"Then pitch shift\" off",
+                on_reset,
+            )}
         </div>
     }
 }
@@ -1247,5 +1444,28 @@ mod tests {
         assert_eq!(heard_top_for(9_600.0), 20_000.0);
         assert_eq!(heard_top_for(15_000.0), 20_000.0);
         assert_eq!(heard_top_for(1e9), 500_000.0);
+    }
+
+    #[test]
+    fn test_tones_rise_across_the_heard_band() {
+        let f = test_tone_freqs(4_200.0, 5_100.0, 21_600.0);
+        assert_eq!(f.len(), TONE_COUNT);
+        assert!((f[0] - 4_200.0).abs() < 1e-6 && (f[TONE_COUNT - 1] - 5_100.0).abs() < 1e-6);
+        assert!(f.windows(2).all(|w| w[1] > w[0]));
+        // No band: 0 Hz to the top becomes 100 Hz to 20 kHz at most.
+        let f = test_tone_freqs(0.0, 48_000.0, 21_600.0);
+        assert!((f[0] - 100.0).abs() < 1e-6 && (f[TONE_COUNT - 1] - 20_000.0).abs() < 1e-6);
+        // A band above hearing has no tones.
+        assert!(test_tone_freqs(25_000.0, 40_000.0, 21_600.0).is_empty());
+        assert_eq!(test_tone_freqs(3_000.0, 3_001.0, 21_600.0), vec![3_000.0]);
+    }
+
+    #[test]
+    fn test_tone_samples_stay_under_the_level_and_start_and_end_silent() {
+        let s = test_tone_samples(&[1_000.0, 2_000.0], 48_000.0);
+        assert!(s.iter().all(|v| v.abs() <= TONE_LEVEL + 1e-6));
+        assert_eq!(s[0], 0.0);
+        assert_eq!(*s.last().unwrap(), 0.0);
+        assert!(s.iter().any(|v| v.abs() > TONE_LEVEL * 0.9));
     }
 }
