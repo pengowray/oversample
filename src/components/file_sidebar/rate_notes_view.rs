@@ -62,10 +62,11 @@ pub(crate) fn RateNotes(
 ///
 /// The rebuild reuses the button element for the next note's button, so
 /// "Correct for ×10 time expansion" becomes "Remove ×10 correction" under
-/// the pointer and keeps keyboard focus. So that one double-click, or Enter
-/// held down, does not apply the correction and take it back, the second
-/// click of a double-click (`detail` 2 or more) and a key repeat do nothing.
-/// A separate press of the button does what its label says.
+/// the pointer and keeps keyboard focus; "Remove ×N correction" becomes
+/// "Correct for ×N time expansion" the same way. So that one double-click,
+/// or Enter held down, does not apply the correction and take it back, the
+/// second click of a double-click (`detail` 2 or more) and a key repeat do
+/// nothing. A separate press of the button does what its label says.
 ///
 /// The handler holds only `state` and the file's id, so it reads nothing that
 /// the rebuild disposes of. It sets no `disabled` property by hand: the
@@ -81,7 +82,7 @@ fn action_button(
         if ev.detail() > 1 {
             return;
         }
-        crate::te_correction::set_user_time_expansion(state, file_id, action.factor());
+        crate::te_correction::set_time_expansion(state, file_id, action.target());
     };
     let on_keydown = move |ev: web_sys::KeyboardEvent| {
         if ev.repeat() {

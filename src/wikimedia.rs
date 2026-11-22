@@ -366,7 +366,7 @@ impl WikiFile {
     /// Take the time expansion factor, the coordinates and (when the file
     /// page gave none) the date from the file's structured data.
     fn apply_statements(&mut self, statements: &serde_json::Value) {
-        const TAIL: &[&str] = &["License", "License URL", "Time expansion", "URL"];
+        const TAIL: &[&str] = &["License", "License URL", TIME_EXPANSION_FIELD, "URL"];
         if !self.fields.iter().any(|(label, _)| label == "Date") {
             if let Some(date) = date_from(statements) {
                 insert_field(&mut self.fields, ("Date", date), TAIL);
@@ -377,10 +377,10 @@ impl WikiFile {
             insert_field(&mut self.fields, ("Coordinates", v), TAIL);
         }
         self.time_expansion = time_expansion_from(statements);
-        self.fields.retain(|(label, _)| label != "Time expansion");
+        self.fields.retain(|(label, _)| label != TIME_EXPANSION_FIELD);
         if let Some(te) = self.time_expansion {
             let row = format!("{} (P14424)", format_factor(te));
-            insert_field(&mut self.fields, ("Time expansion", row), &["URL"]);
+            insert_field(&mut self.fields, (TIME_EXPANSION_FIELD, row), &["URL"]);
         }
     }
 }
@@ -593,6 +593,11 @@ fn parse_file_page(page: &serde_json::Value, api_host: &str) -> Option<WikiFile>
     }
     Some(file)
 }
+
+/// The label of the metadata row that shows a file's P14424 time expansion
+/// factor. [`crate::rate_notes`] looks for it to say where the factor of a
+/// correction comes from.
+pub const TIME_EXPANSION_FIELD: &str = "Time expansion";
 
 /// Render a factor the way people write it: `\u{00D7}10`, `\u{00D7}2.5`.
 pub fn format_factor(te: f64) -> String {

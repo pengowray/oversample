@@ -394,6 +394,7 @@ pub(crate) async fn load_named_bytes_id(
         crate::heterodyne::file_hint(&m.fields, audio.metadata.time_expansion, audio.sample_rate)
     });
 
+    let opened_time_expansion = audio.metadata.time_expansion;
     let new_id = crate::state::next_file_id();
     let mut file = LoadedFile {
         id: new_id,
@@ -426,6 +427,8 @@ pub(crate) async fn load_named_bytes_id(
         loading_id: Some(load_id),
         min_display_freq: None,
         max_display_freq: None,
+        opened_time_expansion,
+        hfr_on_at_correction: None,
     };
     // Needs the built file: the species is looked up as the typical-calls
     // strip does, by the recording's country as well as its name.

@@ -8,7 +8,11 @@
 //!
 //! `install` also installs `window.__oversample_classifier`
 //! (`crate::classifier::test_hook`), which is not read-only: it can start model
-//! downloads and runs through the classifier API.
+//! downloads and runs through the classifier API. And it installs
+//! `window.__oversample_read_rms` ([`install_read_rms`]), which reads the
+//! current file's samples. It changes no state the app shows, but reading a
+//! streamed file loads the chunks it reads into that file's chunk cache, as
+//! playback would.
 
 use crate::state::store_fields::*;
 use crate::state::AppState;
@@ -34,6 +38,7 @@ pub fn install(state: AppState) {
     let Some(window) = web_sys::window() else {
         return;
     };
+    install_read_rms(state, &window);
 
     let cb = Closure::wrap(Box::new(move || -> JsValue {
         use crate::canvas::live_waterfall as wf;
@@ -130,7 +135,8 @@ pub fn install(state: AppState) {
             JsValue::from_f64(state.transform.het_cutoff().get_untracked()),
         );
         // The current file: its rate and duration, the top of its
-        // spectrogram's frequency axis, and what is drawn on it.
+        // spectrogram's frequency axis, whether its overview image is built,
+        // and what is drawn on it.
         let current = state.library.current_index().get_untracked().and_then(|i| {
             state.library.files().with_untracked(|files| {
                 files.get(i).map(|f| {
@@ -140,15 +146,17 @@ pub fn install(state: AppState) {
                         f.audio.duration_secs,
                         f.spectrogram.max_freq,
                         f.audio.channels,
+                        f.overview_image.is_some(),
                     )
                 })
             })
         });
-        if let Some((id, rate, duration, max_freq, channels)) = current {
+        if let Some((id, rate, duration, max_freq, channels, overview_ready)) = current {
             set(&o, "channels", JsValue::from_f64(f64::from(channels)));
             set(&o, "sampleRate", JsValue::from_f64(f64::from(rate)));
             set(&o, "duration", JsValue::from_f64(duration));
             set(&o, "fileMaxFreq", JsValue::from_f64(max_freq));
+            set(&o, "overviewReady", JsValue::from_bool(overview_ready));
             let lo = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
             let hi = state
                 .view
@@ -335,6 +343,49 @@ pub fn install(state: AppState) {
     let _ = js_sys::Reflect::set(
         &window,
         &JsValue::from_str("__oversample_test"),
+        cb.as_ref().unchecked_ref(),
+    );
+    cb.forget(); // keep the closure alive for the page lifetime
+}
+
+/// Install `window.__oversample_read_rms(start, len)`: a Promise of the RMS
+/// of the current file's samples (mono mix) from frame `start` for `len`
+/// frames, or of `null` when no file is open or the frames could not be
+/// read. The frames are read the way playback reads them
+/// ([`crate::audio::streaming_source::read_region_ready`]), so a streamed
+/// file loads them from disk when they are not in memory. The e2e specs use
+/// it to check that a streamed file still reads its samples after its rate
+/// changed for a time-expansion correction.
+fn install_read_rms(state: AppState, window: &web_sys::Window) {
+    use crate::audio::source::ChannelView;
+    let cb = Closure::wrap(Box::new(move |start: f64, len: f64| -> js_sys::Promise {
+        let source = state.library.files().with_untracked(|files| {
+            let idx = state.library.current_index().get_untracked()?;
+            files.get(idx).map(|f| f.audio.source.clone())
+        });
+        wasm_bindgen_futures::future_to_promise(async move {
+            let Some(source) = source else {
+                return Ok(JsValue::NULL);
+            };
+            let samples = crate::audio::streaming_source::read_region_ready(
+                source.as_ref(),
+                ChannelView::MonoMix,
+                start.max(0.0) as u64,
+                len.max(0.0) as usize,
+            )
+            .await;
+            Ok(match samples {
+                Some(s) if !s.is_empty() => {
+                    let sum: f64 = s.iter().map(|x| f64::from(*x) * f64::from(*x)).sum();
+                    JsValue::from_f64((sum / s.len() as f64).sqrt())
+                }
+                _ => JsValue::NULL,
+            })
+        })
+    }) as Box<dyn Fn(f64, f64) -> js_sys::Promise>);
+    let _ = js_sys::Reflect::set(
+        window,
+        &JsValue::from_str("__oversample_read_rms"),
         cb.as_ref().unchecked_ref(),
     );
     cb.forget(); // keep the closure alive for the page lifetime

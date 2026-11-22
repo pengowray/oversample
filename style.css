@@ -3456,6 +3456,17 @@ a.open-link-btn {
     mask-repeat: no-repeat;
 }
 
+/* In a heading with the "Corrected ×10" badge, a licence label that would be
+   cut off is hidden, and the button shrinks to its icon (toolbar.rs,
+   fit_licence_label). On a phone the badge leaves the licence about 70px, and
+   "BY-NC-SA 4.0" cut to "BY-NC…" reads as a different licence. */
+.toolbar-cc-badge.toolbar-cc-icon-only {
+    flex: none;
+}
+.toolbar-cc-icon-only .toolbar-cc-label {
+    display: none;
+}
+
 /* 14em is 168px at the badge row's 12px: the longest Creative Commons
    labels ("Public Domain Mark 1.0", "BY-NC-SA 2.5 SCOTLAND") fit, and a
    longer licence name that is not Creative Commons is cut off. */
@@ -5477,6 +5488,15 @@ a.open-link-btn {
 .file-item-name .badge-btn {
     font-size: 11px;
 }
+/* A file row draws the sample rate of a file corrected for time expansion as
+   a box (file_badges.rs, corrected_rate_badge). Margins as wide as the box's
+   padding keep the row as wide as with the plain rate, so a narrow Files
+   sidebar wraps it no earlier: a 384 kHz 32-bit float row has under 4px to
+   spare at 170px. The rate's text stays in line with the file name above
+   it, and the dot after the rate sits at the box's edge. */
+.file-item-info .badge-sample-rate > .badge-btn {
+    margin: 0 -3px;
+}
 :is(.toolbar-badge-row, .file-item-info, .file-item-name) .badge-btn:hover {
     background: rgba(255, 255, 255, 0.22);
 }
@@ -5485,7 +5505,10 @@ a.open-link-btn {
    file is a heterodyne bat detector's output, so its frequencies are not the
    bat's, and the badge opens the Info panel at the note), and Download or
    Save for an unsaved recording. The same colours on the selected row, since
-   it is a warning about the file and not a selection state. */
+   it is a warning about the file and not a selection state. The "Corrected
+   ×10" badge in the heading and the boxed sample rate in a file row
+   (file_badges.rs) also open a note, but stay grey: a rate corrected for
+   time expansion is the recording's real rate, not a warning. */
 :is(.toolbar-badge-row, .file-item-info) .badge-btn:is(.badge-warn, .unsaved) {
     background: #3a2700;
     color: #fc8;

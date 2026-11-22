@@ -81,6 +81,7 @@ pub fn App() -> impl IntoView {
 
     // Expose a read-only state snapshot on window for e2e (Playwright) specs.
     crate::test_hook::install(state);
+    crate::te_correction::track_hfr_turn_on(state);
     // Expose synth-test start/stop on window for e2e (dev/test feature).
     crate::audio::synthetic_mic::install_test_hooks(state);
     // Google Drive copies of annotations and projects (browser only).

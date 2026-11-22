@@ -508,7 +508,7 @@ async fn load_item(state: AppState, item: RecordingItem) -> Result<(), String> {
                 if let Some(te) = crate::wikimedia::time_expansion_for_urls(&urls).await {
                     time_expansion = Some(te);
                     fields.push((
-                        "Time expansion".to_string(),
+                        crate::wikimedia::TIME_EXPANSION_FIELD.to_string(),
                         format!("{} (P14424)", crate::wikimedia::format_factor(te)),
                     ));
                 }

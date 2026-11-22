@@ -396,6 +396,7 @@ pub(super) fn FilesPanel() -> impl IntoView {
                             cc_license: cc_info.as_ref().map(|(l, _)| l.clone()),
                             cc_tooltip: cc_info.map(|(_, t)| t),
                             heterodyne_tooltip: file_badges::heterodyne_tooltip(f),
+                            corrected_rate: file_badges::corrected_rate_badge(f),
                             file_index: i,
                         };
 

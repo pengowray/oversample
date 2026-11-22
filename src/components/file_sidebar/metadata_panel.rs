@@ -794,22 +794,22 @@ fn sample_rate_row_value(hz: u32) -> String {
     format!("{} kHz", crate::format_units::sample_rate_khz_value(hz))
 }
 
-/// Open the right sidebar on the Info tab, as the "Heterodyne recording" badge
-/// does. On a phone the two sidebars are overlays, so the Files sidebar is
-/// closed, as the toolbar's Show info panel button does. If the panel is
-/// scrolled down, the heterodyne note is scrolled into view once drawn.
-pub(crate) fn open_info_panel(state: AppState) {
+/// Open the right sidebar on the Info tab, as the "Heterodyne recording" and
+/// "Corrected ×10" badges do. On a phone the two sidebars are overlays, so
+/// the Files sidebar is closed, as the toolbar's Show info panel button does.
+/// If the panel is scrolled down, the note of kind `note` under the Sample
+/// rate row is scrolled into view once drawn.
+pub(crate) fn open_info_panel(state: AppState, note: NoteKind) {
     state.panels.right_tab().set(RightSidebarTab::Metadata);
     state.panels.right_collapsed().set(false);
     if state.status.is_mobile().get_untracked() {
         state.panels.left_collapsed().set(true);
     }
-    request_animation_frame(|| {
-        if let Some(el) = web_sys::window().and_then(|w| w.document()).and_then(|d| {
-            d.query_selector(&note_selector(NoteKind::Heterodyne))
-                .ok()
-                .flatten()
-        }) {
+    request_animation_frame(move || {
+        if let Some(el) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.query_selector(&note_selector(note)).ok().flatten())
+        {
             let opts = web_sys::ScrollIntoViewOptions::new();
             opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
             // The note annotates the Sample rate row above it, so bring that
