@@ -1008,23 +1008,23 @@ pub mod msg {
     pub fn d500x_size_short(block_len: u64) -> WavNote {
         let n = thousands(block_len);
         WavNote {
+            text: format!(
+                "{n}-byte Pettersson D500X metadata block before the audio. Oversample skips the block."
+            ),
+            // Grey: a D500X always writes this block, and all of the audio is read.
+            warning: false,
             detail: Some(format!(
-                "Some other programs play the block as a short burst of noise at the start and leave out the last {n} bytes of audio."
+                "Oversample reads all of the audio. The Info tab lists the metadata, under Pettersson D500X metadata. Some other programs play the block as a short burst of noise at the start and leave out the last {n} bytes of audio."
             )),
-            ..warning(format!(
-                "The audio data starts with a {n}-byte Pettersson D500X metadata block. Oversample skips the block and reads all of the audio. The Info tab lists the metadata, under Pettersson D500X metadata."
-            ))
         }
     }
 
     pub fn data_chunks(n: u32) -> WavNote {
         WavNote {
-            text: format!(
-                "This file has {n} data chunks, the sections that contain the audio. Oversample plays all {n} data chunks in file order, as one continuous recording."
-            ),
+            text: format!("{n} data chunks, played in file order as one recording."),
             warning: false,
             detail: Some(
-                "Other programs, including ffmpeg and programs built on it, may play only the first data chunk. In those programs, the recording is shorter.".into(),
+                "Data chunks are the sections of a WAV file that contain the audio. Other programs, including ffmpeg and programs built on it, may play only the first data chunk. In those programs, the recording is shorter.".into(),
             ),
         }
     }
@@ -1046,12 +1046,12 @@ pub mod msg {
             format!("{silence} silence chunks ({secs} seconds of silence)")
         };
         let text = match (data, silence) {
-            (1, 0) => "This file's audio is stored in a wave list, a rarely used part of the WAV format.".to_string(),
+            (1, 0) => "Audio stored in a wave list.".to_string(),
             (_, 0) => format!(
-                "This file has {data_text}, stored in a wave list. Oversample plays all {data_text} in file order, as one recording."
+                "{data_text} in a wave list, played in file order as one recording."
             ),
             _ => format!(
-                "This file has {data_text} and {silence_text}, stored in a wave list. Oversample plays all the chunks in file order, as one recording."
+                "{data_text} and {silence_text} in a wave list, played in file order as one recording."
             ),
         };
         WavNote {
@@ -1065,26 +1065,36 @@ pub mod msg {
 
     pub fn data_size_stretched(declared: u64, available: u64) -> WavNote {
         let (declared, available) = (thousands(declared), thousands(available));
-        warning(format!(
-            "This file has more audio than the header says. The header says the audio is {declared} bytes, but the file contains {available} bytes of audio. Oversample reads all {available} bytes. Usual causes: a recording over 4 GB saved as standard WAV, which can't store sizes over 4 GB, or a recorder that didn't fill in the size."
-        ))
+        WavNote {
+            detail: Some(
+                "Usual causes: a recording over 4 GB saved as standard WAV, which can't store sizes over 4 GB, or a recorder that didn't fill in the size.".into(),
+            ),
+            ..warning(format!(
+                "More audio than the header says: {available} bytes of audio, and the header says {declared} bytes. Oversample reads all {available} bytes."
+            ))
+        }
     }
 
     pub fn data_cut_short(declared: u64, available: u64) -> WavNote {
         let (declared, available) = (thousands(declared), thousands(available));
-        warning(format!(
-            "This file is shorter than the header says. The header says the audio is {declared} bytes, but the file ends after {available} bytes of audio. Oversample reads the {available} bytes that are there. Usual causes: the recording was interrupted, or the file was only partly copied or downloaded."
-        ))
+        WavNote {
+            detail: Some(
+                "Usual causes: the recording was interrupted, or the file was only partly copied or downloaded.".into(),
+            ),
+            ..warning(format!(
+                "Less audio than the header says: {available} bytes of audio, and the header says {declared} bytes. Oversample reads the {available} bytes that are there."
+            ))
+        }
     }
 
     pub fn riff_size_past_end(over: u64) -> WavNote {
         WavNote {
             text: format!(
-                "The file size in the header is {} bytes larger than the actual file. Oversample reads all of the audio.",
+                "File size in the header is {} bytes larger than the file.",
                 thousands(over)
             ),
             warning: false,
-            detail: None,
+            detail: Some("Oversample reads all of the audio.".into()),
         }
     }
 }

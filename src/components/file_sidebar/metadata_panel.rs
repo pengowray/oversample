@@ -74,7 +74,12 @@ fn classify(label: &str) -> FieldKind {
         FieldKind::Date
     } else if l.contains("temp") {
         FieldKind::Temperature
-    } else if l == "gps position" || l == "coordinates" || l == "gps" || l == "loc position" {
+    } else if l == "gps position"
+        || l == "coordinates"
+        || l == "gps"
+        || l == "loc position"
+        || l == "position"
+    {
         FieldKind::GpsPosition
     } else if l == "license" || l == "licence" || l == "lic" {
         FieldKind::License
@@ -707,6 +712,18 @@ fn date_row(label: String, value: String, view_mode: MetadataView) -> impl IntoV
     }
 }
 
+/// One note about a WAV file's structure: amber when it changes which audio is
+/// read, grey otherwise, with the note's detail as a tooltip.
+pub(super) fn wav_note_view(n: &crate::types::WavNote) -> impl IntoView {
+    let class = match (n.warning, n.detail.is_some()) {
+        (true, false) => "analysis-warning",
+        (true, true) => "analysis-warning has-detail",
+        (false, false) => "metadata-note",
+        (false, true) => "metadata-note has-detail",
+    };
+    view! { <div class=class title=n.detail.clone()>{n.text.clone()}</div> }
+}
+
 /// A recorder's own metadata block (a D500X header, a Wildlife Acoustics `wamd`
 /// chunk) as a section titled "<recorder> metadata". Kaleidoscope copies most `wamd`
 /// fields into the file's GUANO block, so rows with the same value as `guano` are
@@ -735,13 +752,11 @@ fn recorder_section(
         items.push(spacious_row(k, v, None, view_mode).into_any());
         if let (Some((lat, lon)), true) = (position, position_after == Some(i)) {
             items.push(
-                spacious_row_as(
+                spacious_row(
                     "Position".into(),
                     format!("{lat:.5}, {lon:.5}"),
                     Some("From the LAT and LON rows".into()),
                     view_mode,
-                    FieldKind::GpsPosition,
-                    None,
                 )
                 .into_any(),
             );
@@ -1276,6 +1291,9 @@ fn zc_header_section(f: &crate::state::LoadedFile, view_mode: MetadataView) -> i
     }
     if !md.gps.is_empty() {
         rows.push(("GPS".into(), md.gps.clone()));
+        if let Some((lat, lon)) = oversample_core::audio::zc::gps_position(&md.gps) {
+            rows.push(("Position".into(), format!("{lat:.5}, {lon:.5}")));
+        }
     }
     if let Some(ts) = md.timestamp {
         rows.push((
@@ -1845,6 +1863,12 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             .unwrap_or_default();
                         let has_guano = !guano_fields.is_empty();
                         let wav = meta.wav.clone().unwrap_or_default();
+                        // Only the notes that change which audio is read. Data
+                        // analysis lists every note, under File structure.
+                        let structure_warnings: Vec<_> = wav.notes.iter()
+                            .filter(|n| n.warning)
+                            .map(wav_note_view)
+                            .collect();
                         let recorder_block = wav.recorder_block.clone();
                         let wamd = wav.wamd.clone();
                         let guano_fields_all = guano_fields.clone();
@@ -1865,6 +1889,7 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
                                 {inline_row("Bit depth".into(), bit_depth_text(meta), None)}
                                 {inline_row(size_label, size_str, None)}
+                                {structure_warnings}
                             </div>
                             {date_section(f, view_mode)}
                             {chime_section(chime_search.get(), f, view_mode)}

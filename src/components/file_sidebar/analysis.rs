@@ -420,6 +420,9 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                     report.push_str("\nFile structure\n");
                     for n in &w.notes {
                         report.push_str(&format!("  {}\n", n.text));
+                        if let Some(detail) = &n.detail {
+                            report.push_str(&format!("    {detail}\n"));
+                        }
                     }
                 }
                 report.push_str(&format!(
@@ -844,18 +847,9 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                         };
 
                         // Problems in the WAV file's structure and how they were
-                        // handled (oversample-core audio/wav.rs). Amber for the ones
-                        // that change which audio is read.
+                        // handled (oversample-core audio/wav.rs).
                         let structure_notes: Vec<_> = f.audio.metadata.wav.as_ref()
-                            .map(|w| w.notes.iter().map(|n| {
-                                let class = match (n.warning, n.detail.is_some()) {
-                                    (true, false) => "analysis-warning",
-                                    (true, true) => "analysis-warning has-detail",
-                                    (false, false) => "metadata-note",
-                                    (false, true) => "metadata-note has-detail",
-                                };
-                                view! { <div class=class title=n.detail.clone()>{n.text.clone()}</div> }
-                            }).collect())
+                            .map(|w| w.notes.iter().map(super::metadata_panel::wav_note_view).collect())
                             .unwrap_or_default();
                         let structure_group = (!structure_notes.is_empty()).then(|| view! {
                             <div class="setting-group">

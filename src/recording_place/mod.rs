@@ -122,10 +122,20 @@ pub fn file_place(file: &LoadedFile) -> Option<Place> {
         oversample_core::audio::wav::d500x_position(&block.fields)
             .map(|(lat, lon)| (lat as f32, lon as f32))
     };
-    let (lat, lon) = from_guano.or_else(from_wamd).or_else(from_d500x).or_else(|| {
-        xc.and_then(|x| field(x, "Coordinates"))
-            .and_then(parse_lat_lon)
-    })?;
+    // An Anabat zero-crossing file's header.
+    let from_zc = || {
+        let zc = file.audio.metadata.zc_data.as_ref()?;
+        oversample_core::audio::zc::gps_position(&zc.metadata.gps)
+            .map(|(lat, lon)| (lat as f32, lon as f32))
+    };
+    let (lat, lon) = from_guano
+        .or_else(from_wamd)
+        .or_else(from_d500x)
+        .or_else(from_zc)
+        .or_else(|| {
+            xc.and_then(|x| field(x, "Coordinates"))
+                .and_then(parse_lat_lon)
+        })?;
     Some(Place {
         lat,
         lon,

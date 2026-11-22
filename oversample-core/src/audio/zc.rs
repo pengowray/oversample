@@ -281,6 +281,34 @@ pub fn parse_zc(bytes: &[u8]) -> Result<ZcData, String> {
 }
 
 /// Strip null/whitespace padding from an ASCII metadata field.
+/// The position in a type 132 header's GPS text, in decimal degrees, when it
+/// is written as degrees: a hemisphere letter then the number, for latitude
+/// then longitude (`WGS84     S33.7394 E150.2539`). The 10 characters before
+/// it name the datum. Returns `None` for a UTM position (zone, easting,
+/// northing), for degrees written with no decimal point, and for 0, 0.
+/// Layout from Chris Corben's Anabat file format note; no file with a
+/// position was at hand to test against.
+pub fn gps_position(gps: &str) -> Option<(f64, f64)> {
+    let mut parts = gps.get(10..)?.split_whitespace();
+    let degrees = |part: &str, positive: char, negative: char, max: f64| {
+        let mut chars = part.chars();
+        let sign = match chars.next()?.to_ascii_uppercase() {
+            c if c == positive => 1.0,
+            c if c == negative => -1.0,
+            _ => return None,
+        };
+        let digits = chars.as_str();
+        if !digits.contains('.') {
+            return None;
+        }
+        let n: f64 = digits.parse().ok()?;
+        (n.is_finite() && (0.0..=max).contains(&n)).then_some(sign * n)
+    };
+    let lat = degrees(parts.next()?, 'N', 'S', 90.0)?;
+    let lon = degrees(parts.next()?, 'E', 'W', 180.0)?;
+    (lat != 0.0 || lon != 0.0).then_some((lat, lon))
+}
+
 fn ascii_field(bytes: &[u8]) -> String {
     let s: String = bytes
         .iter()
@@ -530,6 +558,19 @@ pub fn synthesise_waveform(zc: &ZcData, output_sample_rate: u32) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gps_position_reads_degrees() {
+        assert_eq!(
+            super::gps_position("WGS84     S12.5100 E100.2500 120"),
+            Some((-12.51, 100.25))
+        );
+        assert_eq!(super::gps_position("WGS84     N45.0000 W007.5000"), Some((45.0, -7.5)));
+        assert_eq!(super::gps_position("WGS84"), None);
+        assert_eq!(super::gps_position("WGS84     10S 123456 1234567"), None);
+        assert_eq!(super::gps_position("WGS84     N4500000 W00750000"), None);
+        assert_eq!(super::gps_position("WGS84     N00.0000 E000.0000"), None);
+    }
 
     /// Build a synthetic minimum-viable v129 .zc file with a single
     /// absolute interval + two 7-bit deltas.
