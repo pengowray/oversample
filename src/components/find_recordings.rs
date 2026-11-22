@@ -504,7 +504,8 @@ async fn load_item(state: AppState, item: RecordingItem) -> Result<(), String> {
             let mut time_expansion = item.time_expansion;
             let mut fields = item_metadata(&item);
             if site == SourceSite::WikimediaCommons {
-                if let Some(te) = crate::wikimedia::time_expansion_for_page(&item.page_url).await {
+                let urls = [item.page_url.as_str(), item.audio_url.as_str()];
+                if let Some(te) = crate::wikimedia::time_expansion_for_urls(&urls).await {
                     time_expansion = Some(te);
                     fields.push((
                         "Time expansion".to_string(),

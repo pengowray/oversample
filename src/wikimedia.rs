@@ -735,17 +735,19 @@ pub async fn load_file(state: AppState, file: &WikiFile) -> Result<(), String> {
     result.map(|_| ())
 }
 
-/// The time expansion factor (P14424) Commons holds for the file at
-/// `page_url`, a Commons file page. `None` when the page is not a file page,
+/// The time expansion factor (P14424) Commons holds for a file, found from
+/// the first of `urls` that names a file: a Commons file page, or a media
+/// URL on upload.wikimedia.org. `None` when no URL names a file, the file
 /// has no factor, or Commons can't be reached.
-pub async fn time_expansion_for_page(page_url: &str) -> Option<f64> {
-    let WikiTarget::File { api_host, title } = parse_input(page_url).ok()? else {
-        return None;
-    };
+pub async fn time_expansion_for_urls(urls: &[&str]) -> Option<f64> {
+    let (api_host, title) = urls.iter().find_map(|url| match parse_input(url) {
+        Ok(WikiTarget::File { api_host, title }) => Some((api_host, title)),
+        _ => None,
+    })?;
     match fetch_file(&api_host, &title).await {
         Ok(file) => file.time_expansion,
         Err(e) => {
-            log::warn!("No structured data for {page_url}: {e}");
+            log::warn!("No structured data for {title}: {e}");
             None
         }
     }

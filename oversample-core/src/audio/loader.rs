@@ -726,7 +726,15 @@ fn load_ogg(bytes: &[u8]) -> Result<AudioData, String> {
         // file (.ogv) starts with its Theora stream, so its Vorbis track is
         // read with symphonia, which skips the streams it has no decoder for.
         Err(e) => {
-            return load_ogg_multiplexed(bytes).map_err(|_| format!("OGG error: {e}"));
+            // A video with no sound track gets symphonia's "No audio track
+            // found"; any other failure keeps lewton's reason.
+            return load_ogg_multiplexed(bytes).map_err(|sym| {
+                if sym.starts_with("No audio track") {
+                    sym
+                } else {
+                    format!("OGG error: {e}")
+                }
+            });
         }
     };
 
