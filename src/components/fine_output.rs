@@ -346,7 +346,7 @@ fn end_preview(state: &AppState) {
 ///
 /// The copy is a DOM overlay (see "DOM overlay pattern" in CLAUDE.md): no
 /// canvas Effect subscribes to anything for it.
-fn freeze_spectrogram(state: &AppState) {
+pub(crate) fn freeze_spectrogram(state: &AppState) {
     const CLASS: &str = "fine-out-freeze";
     if !state.display.transform().get_untracked() {
         return;
@@ -884,14 +884,18 @@ fn DivideDiagram(mode: PlaybackMode) -> impl IntoView {
             state.transform.ps_factor_auto().get() && state.transform.ps_shift_hz().get() < 1.0
         }
     });
+    // `turn_auto_on` keeps the spectrogram's picture up for what it writes.
     let on_reset = move || {
-        freeze_spectrogram(&state);
         match mode {
             PlaybackMode::TimeExpansion => turn_auto_on(state, AutoSetting::TeFactor),
-            PlaybackMode::ZeroCrossing => state.transform.zc_factor().set(ZC_DEFAULT_FACTOR),
+            PlaybackMode::ZeroCrossing => {
+                freeze_spectrogram(&state);
+                state.transform.zc_factor().set(ZC_DEFAULT_FACTOR);
+            }
             _ => {
                 allow_shift.set(false);
                 if state.transform.ps_shift_hz().get_untracked() != 0.0 {
+                    freeze_spectrogram(&state);
                     state.transform.ps_shift_hz().set(0.0);
                 }
                 turn_auto_on(state, AutoSetting::PsFactor);
@@ -1252,8 +1256,8 @@ fn HetDiagram() -> impl IntoView {
             && state.transform.het_ps_factor().get() <= 1.0
     });
     let on_reset = move || {
-        freeze_spectrogram(&state);
         if state.transform.het_ps_factor().get_untracked() != 1.0 {
+            freeze_spectrogram(&state);
             state.transform.het_ps_factor().set(1.0);
         }
         turn_auto_on(state, AutoSetting::HetCutoff);

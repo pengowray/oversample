@@ -34,51 +34,56 @@ pub(crate) enum AutoSetting {
     PsFactor,
 }
 
-/// The band the auto values are worked out from: the HFR band, or the whole
-/// recording (0 to Nyquist) when no band is set.
-fn auto_band(state: AppState) -> Option<(f64, f64)> {
+/// The HFR band, when one is set.
+fn hfr_band(state: AppState) -> Option<(f64, f64)> {
     let lo = state.filter.band_ff_freq_lo().get_untracked();
     let hi = state.filter.band_ff_freq_hi().get_untracked();
-    if hi > lo {
-        return Some((lo, hi));
-    }
-    let nyquist = crate::components::hfr_switch::nyquist_for_current(state);
-    (nyquist > 0.0).then_some((0.0, nyquist))
+    (hi > lo).then_some((lo, hi))
 }
 
-/// Set every setting whose Auto is on from the band `lo` to `hi` (Hz). A
-/// setting is written only when its value changes, because each write
-/// restarts playback and redraws the XForm tiles.
-fn apply_auto_values(state: AppState, lo: f64, hi: f64) {
+/// Set every setting whose Auto is on from the band `lo` to `hi` (Hz), or
+/// only the setting `only`. A setting is written only when its value
+/// changes, because each write restarts playback and redraws the XForm
+/// tiles; the spectrogram's picture is kept on screen until they are redrawn.
+fn apply_auto_values(state: AppState, lo: f64, hi: f64, only: Option<AutoSetting>) {
     if hi <= lo {
         return;
     }
     let t = state.transform;
+    let wanted = |which: AutoSetting| only.is_none_or(|o| o == which);
+    let freeze = || crate::components::fine_output::freeze_spectrogram(&state);
     // Auto LP cutoff: half the focus band, capped. Computed first so the
     // carrier anchor below can sit one cutoff above the band's low edge.
     let auto_cutoff = ((hi - lo) / 2.0).min(15_000.0);
-    if t.het_cutoff_auto().get_untracked() && t.het_cutoff().get_untracked() != auto_cutoff {
+    if wanted(AutoSetting::HetCutoff)
+        && t.het_cutoff_auto().get_untracked()
+        && t.het_cutoff().get_untracked() != auto_cutoff
+    {
+        freeze();
         t.het_cutoff().set(auto_cutoff);
     }
-    if t.het_freq_auto().get_untracked() {
+    if wanted(AutoSetting::HetCarrier) && t.het_freq_auto().get_untracked() {
         // Anchor the comb at the BOTTOM of the focus band: the lowest
         // carrier's lower LP edge lands on band_lo, and any comb teeth tile
         // upward from there. For a single full-band carrier this equals the
         // band centre, so single-carrier auto behaviour is unchanged.
         let carrier = lo + t.het_cutoff().get_untracked();
         if t.het_frequency().get_untracked() != carrier {
+            freeze();
             t.het_frequency().set(carrier);
         }
     }
-    if t.te_factor_auto().get_untracked() {
+    if wanted(AutoSetting::TeFactor) && t.te_factor_auto().get_untracked() {
         let te = smart_auto_factor(lo, hi, 40.0);
         if t.te_factor().get_untracked() != te {
+            freeze();
             t.te_factor().set(te);
         }
     }
-    if t.ps_factor_auto().get_untracked() {
+    if wanted(AutoSetting::PsFactor) && t.ps_factor_auto().get_untracked() {
         let ps = PitchFactor::from_signed(smart_auto_factor(lo, hi, 20.0));
         if t.ps_factor().get_untracked() != ps {
+            freeze();
             t.ps_factor().set(ps);
         }
     }
@@ -95,8 +100,16 @@ pub(crate) fn turn_auto_on(state: AppState, which: AutoSetting) {
         AutoSetting::TeFactor => t.te_factor_auto().set(true),
         AutoSetting::PsFactor => t.ps_factor_auto().set(true),
     }
-    if let Some((lo, hi)) = auto_band(state) {
-        apply_auto_values(state, lo, hi);
+    if let Some((lo, hi)) = hfr_band(state) {
+        apply_auto_values(state, lo, hi, Some(which));
+        return;
+    }
+    // No HFR band. A TE or PS factor is worked out for the whole recording,
+    // 0 to Nyquist. The HET carrier and cutoff stay as they are until a band
+    // is set: a carrier worked out from the whole recording would be a guess.
+    let nyquist = crate::components::hfr_switch::nyquist_for_current(state);
+    if nyquist > 0.0 && matches!(which, AutoSetting::TeFactor | AutoSetting::PsFactor) {
+        apply_auto_values(state, 0.0, nyquist, Some(which));
     }
 }
 
@@ -350,7 +363,7 @@ pub fn ModeRadioGroup(#[prop(default = false)] list_layout: bool) -> impl IntoVi
             return;
         }
 
-        apply_auto_values(state, band_ff_lo, band_ff_hi);
+        apply_auto_values(state, band_ff_lo, band_ff_hi, None);
     });
 
     // ── Effect B2: Comb-auto recompute ──

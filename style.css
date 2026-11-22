@@ -5338,41 +5338,8 @@ a.open-link-btn {
  * options and on the small inline preset/auto-toggle controls. Those were
  * 32px until 2026-11-22, when the owner found them too small for fingers.
  */
-@media (pointer: coarse), (max-width: 640px) {
-    /* Wider gap between rows so fingers don't fat-finger neighbors. */
-    .layer-panel {
-        padding: 10px 6px;
-    }
-    .layer-panel hr {
-        margin: 8px 0;
-    }
-    .layer-panel-opt {
-        padding: 10px 12px;
-        font-size: 14px;
-        min-height: 40px;
-        box-sizing: border-box;
-    }
-    .layer-panel-title {
-        font-size: 12px;
-        padding: 4px 10px;
-    }
-    .layer-panel-slider-row {
-        padding: 6px 10px 6px 12px;
-        gap: 8px;
-        min-height: 40px;
-    }
-    .layer-panel-slider-row label {
-        font-size: 13px;
-        min-width: 70px;
-    }
-    .layer-panel-slider-row span {
-        font-size: 13px;
-        min-width: 52px;
-    }
-    .layer-panel-slider-row input[type="range"] {
-        height: 28px; /* taller hit zone for the thumb */
-    }
-}
+/* The rules are at the end of this file, under "Touch sizes for the mode
+   panels": the rules they override come after this point. */
 
 /* Popups positioned above multi-row toolbar on mobile */
 /* Panel uses JS-computed bottom via toolbar height; fallback to safe estimate */
@@ -9291,7 +9258,9 @@ button.canvas-overflow-action-btn.disabled {
 }
 .fine-out-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.14); }
 .fine-out-btn:focus-visible { outline: 1px solid rgba(0, 200, 255, 0.6); }
-.fine-out-btn:disabled { opacity: 0.4; cursor: default; pointer-events: none; }
+/* A disabled button still shows its tooltip, which says why. */
+.fine-out-btn:disabled { opacity: 0.4; cursor: default; }
+.fine-out-btn:disabled:hover { color: #ccc; background: rgba(255, 255, 255, 0.08); }
 .fine-out-range { flex: 1; min-width: 80px; }
 /* Fixed width: the text changes between "Off" and "÷2.5" as the slider moves. */
 .fine-out-post { width: 30px; text-align: right; color: #8fc; font-variant-numeric: tabular-nums; }
@@ -11353,6 +11322,39 @@ body.hfr-nudge-on .hfr-switch {
  * were inside it they had no effect.
  */
 @media (pointer: coarse), (max-width: 640px) {
+    /* Wider gap between rows so fingers don't fat-finger neighbors. */
+    .layer-panel {
+        padding: 10px 6px;
+    }
+    .layer-panel hr {
+        margin: 8px 0;
+    }
+    .layer-panel-opt {
+        padding: 10px 12px;
+        font-size: 14px;
+        min-height: 40px;
+        box-sizing: border-box;
+    }
+    .layer-panel-title {
+        font-size: 12px;
+        padding: 4px 10px;
+    }
+    .layer-panel-slider-row {
+        padding: 6px 10px 6px 12px;
+        gap: 8px;
+        min-height: 40px;
+    }
+    .layer-panel-slider-row label {
+        font-size: 13px;
+        min-width: 70px;
+    }
+    .layer-panel-slider-row span {
+        font-size: 13px;
+        min-width: 52px;
+    }
+    .layer-panel-slider-row input[type="range"] {
+        height: 28px; /* taller hit zone for the thumb */
+    }
     /* Carriers row, factor preset row, etc. — small inline buttons. */
     .factor-preset {
         font-size: 14px;
