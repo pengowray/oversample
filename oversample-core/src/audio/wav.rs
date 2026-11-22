@@ -555,6 +555,44 @@ fn parse_d500x_block(block: &[u8]) -> RecorderBlock {
     }
 }
 
+/// The position in a D500X block's `LAT` and `LON` fields, in decimal degrees.
+/// The recorder writes each as degrees, minutes and seconds with a hemisphere
+/// letter (`33 44 22 S`). A position of 0, 0 is read as "not set".
+pub fn d500x_position(fields: &[(String, String)]) -> Option<(f64, f64)> {
+    let get = |key: &str| {
+        fields
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v.as_str())
+    };
+    let lat = parse_dms(get("LAT")?, 'N', 'S', 90.0)?;
+    let lon = parse_dms(get("LON")?, 'E', 'W', 180.0)?;
+    (lat != 0.0 || lon != 0.0).then_some((lat, lon))
+}
+
+/// `33 44 22 S` → -33.7394. Minutes and seconds are optional.
+fn parse_dms(value: &str, positive: char, negative: char, max: f64) -> Option<f64> {
+    let mut parts: Vec<&str> = value.split_whitespace().collect();
+    let hemisphere = parts.pop()?;
+    let sign = match hemisphere.chars().next()?.to_ascii_uppercase() {
+        c if hemisphere.len() == 1 && c == positive => 1.0,
+        c if hemisphere.len() == 1 && c == negative => -1.0,
+        _ => return None,
+    };
+    if parts.is_empty() || parts.len() > 3 {
+        return None;
+    }
+    let mut degrees = 0.0;
+    for (i, part) in parts.iter().enumerate() {
+        let n: f64 = part.parse().ok()?;
+        if !n.is_finite() || n < 0.0 || (i > 0 && n >= 60.0) {
+            return None;
+        }
+        degrees += n / 60f64.powi(i as i32);
+    }
+    (degrees <= max).then_some(sign * degrees)
+}
+
 // ─── cue / adtl ─────────────────────────────────────────────────────────────
 
 fn parse_cue(cue: &[u8], out: &mut Vec<(u32, u64)>) {
@@ -974,7 +1012,7 @@ pub mod msg {
                 "Some other programs play the block as a short burst of noise at the start and leave out the last {n} bytes of audio."
             )),
             ..warning(format!(
-                "The audio data starts with a {n}-byte Pettersson D500X metadata block. Oversample skips the block and reads all of the audio. The metadata is listed below, under Pettersson D500X metadata."
+                "The audio data starts with a {n}-byte Pettersson D500X metadata block. Oversample skips the block and reads all of the audio. The Info tab lists the metadata, under Pettersson D500X metadata."
             ))
         }
     }
@@ -1048,5 +1086,30 @@ pub mod msg {
             warning: false,
             detail: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::d500x_position;
+
+    #[test]
+    fn d500x_position_reads_degrees_minutes_seconds() {
+        let f = |lat: &str, lon: &str| {
+            d500x_position(&[
+                ("LAT".to_string(), lat.to_string()),
+                ("LON".to_string(), lon.to_string()),
+            ])
+        };
+        let (lat, lon) = f("12 30 36 S", "100 15 00 E").unwrap();
+        assert!((lat + 12.51).abs() < 1e-9);
+        assert!((lon - 100.25).abs() < 1e-9);
+        assert_eq!(f("45 N", "7 30 W"), Some((45.0, -7.5)));
+        assert_eq!(f("00 00 00 N", "000 00 00 E"), None);
+        assert_eq!(f("12 60 00 S", "100 15 00 E"), None);
+        assert_eq!(f("91 00 00 N", "100 15 00 E"), None);
+        assert_eq!(f("12 30 36", "100 15 00 E"), None);
+        assert_eq!(f("12 30 36 E", "100 15 00 E"), None);
+        assert_eq!(d500x_position(&[]), None);
     }
 }

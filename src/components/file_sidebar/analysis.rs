@@ -416,6 +416,12 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                 } else {
                     "-\u{221e} dB".into()
                 };
+                if let Some(w) = f.audio.metadata.wav.as_ref().filter(|w| !w.notes.is_empty()) {
+                    report.push_str("\nFile structure\n");
+                    for n in &w.notes {
+                        report.push_str(&format!("  {}\n", n.text));
+                    }
+                }
                 report.push_str(&format!(
                     "\nSignal\n  Min: {:.4} ({})\n  Max: {:.4} ({})\n  RMS: {}\n  DC bias: {}\n",
                     smin, min_db, smax, max_db, rms_db, dc_db
@@ -837,6 +843,27 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                             None
                         };
 
+                        // Problems in the WAV file's structure and how they were
+                        // handled (oversample-core audio/wav.rs). Amber for the ones
+                        // that change which audio is read.
+                        let structure_notes: Vec<_> = f.audio.metadata.wav.as_ref()
+                            .map(|w| w.notes.iter().map(|n| {
+                                let class = match (n.warning, n.detail.is_some()) {
+                                    (true, false) => "analysis-warning",
+                                    (true, true) => "analysis-warning has-detail",
+                                    (false, false) => "metadata-note",
+                                    (false, true) => "metadata-note has-detail",
+                                };
+                                view! { <div class=class title=n.detail.clone()>{n.text.clone()}</div> }
+                            }).collect())
+                            .unwrap_or_default();
+                        let structure_group = (!structure_notes.is_empty()).then(|| view! {
+                            <div class="setting-group">
+                                <div class="setting-group-title">"File structure"</div>
+                                {structure_notes}
+                            </div>
+                        });
+
                         view! {
                             <div class="setting-group">
                                 <div class="setting-group-title">"File"</div>
@@ -863,6 +890,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                                     </div>
                                 </div>
                             </div>
+                            {structure_group}
                             <div class="setting-group">
                                 <div class="setting-group-title">"Signal"</div>
                                 <div class="analysis-stats">

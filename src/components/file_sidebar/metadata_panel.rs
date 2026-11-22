@@ -724,10 +724,29 @@ fn recorder_section(
         .fields
         .into_iter()
         .partition(|(k, v)| crate::audio::wamd::same_in_guano(k, v, guano));
-    let items: Vec<_> = differ
-        .into_iter()
-        .map(|(k, v)| spacious_row(k, v, None, view_mode).into_any())
-        .collect();
+    // A D500X writes its position as two rows of degrees, minutes and seconds.
+    // The map goes in a Position row straight after them.
+    let position = oversample_core::audio::wav::d500x_position(&differ);
+    let position_after = differ
+        .iter()
+        .rposition(|(k, _)| k.eq_ignore_ascii_case("LAT") || k.eq_ignore_ascii_case("LON"));
+    let mut items: Vec<_> = Vec::with_capacity(differ.len() + 1);
+    for (i, (k, v)) in differ.into_iter().enumerate() {
+        items.push(spacious_row(k, v, None, view_mode).into_any());
+        if let (Some((lat, lon)), true) = (position, position_after == Some(i)) {
+            items.push(
+                spacious_row_as(
+                    "Position".into(),
+                    format!("{lat:.5}, {lon:.5}"),
+                    Some("From the LAT and LON rows".into()),
+                    view_mode,
+                    FieldKind::GpsPosition,
+                    None,
+                )
+                .into_any(),
+            );
+        }
+    }
     let folded = (!same.is_empty()).then(|| {
         let n = same.len();
         let label = format!(
@@ -1826,15 +1845,6 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             .unwrap_or_default();
                         let has_guano = !guano_fields.is_empty();
                         let wav = meta.wav.clone().unwrap_or_default();
-                        let structure_notes: Vec<_> = wav.notes.iter().map(|n| {
-                            let class = match (n.warning, n.detail.is_some()) {
-                                (true, false) => "analysis-warning",
-                                (true, true) => "analysis-warning has-detail",
-                                (false, false) => "metadata-note",
-                                (false, true) => "metadata-note has-detail",
-                            };
-                            view! { <div class=class title=n.detail.clone()>{n.text.clone()}</div> }
-                        }).collect();
                         let recorder_block = wav.recorder_block.clone();
                         let wamd = wav.wamd.clone();
                         let guano_fields_all = guano_fields.clone();
@@ -1855,7 +1865,6 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 {inline_row("Channels".into(), f.audio.channels.to_string(), None)}
                                 {inline_row("Bit depth".into(), bit_depth_text(meta), None)}
                                 {inline_row(size_label, size_str, None)}
-                                {structure_notes}
                             </div>
                             {date_section(f, view_mode)}
                             {chime_section(chime_search.get(), f, view_mode)}

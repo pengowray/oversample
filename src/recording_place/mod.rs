@@ -115,7 +115,14 @@ pub fn file_place(file: &LoadedFile) -> Option<Place> {
             .and_then(|w| field(w, "GPS Position"))
             .and_then(parse_lat_lon)
     };
-    let (lat, lon) = from_guano.or_else(from_wamd).or_else(|| {
+    // A Pettersson D500X's own block (degrees, minutes, seconds).
+    let from_d500x = || {
+        let wav = file.audio.metadata.wav.as_ref()?;
+        let block = wav.recorder_block.as_ref()?;
+        oversample_core::audio::wav::d500x_position(&block.fields)
+            .map(|(lat, lon)| (lat as f32, lon as f32))
+    };
+    let (lat, lon) = from_guano.or_else(from_wamd).or_else(from_d500x).or_else(|| {
         xc.and_then(|x| field(x, "Coordinates"))
             .and_then(parse_lat_lon)
     })?;

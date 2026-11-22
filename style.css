@@ -569,9 +569,15 @@ body.sidebar-resizing {
     color: #ccc;
 }
 
+/* Same 12px side padding as .bit-depth-stat, which these lines sit between in
+   the Data analysis panel. Inside .wsnr-result the box already has it. */
 .wsnr-detail {
     font-size: 11px;
     color: #888;
+    padding: 1px 12px;
+}
+
+.wsnr-result .wsnr-detail {
     padding: 1px 0;
 }
 
