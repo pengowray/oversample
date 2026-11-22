@@ -92,9 +92,16 @@ pub fn compute_placement(
     let left = raw_left.clamp(edge_pad, max_left);
     let max_width = (v_w - 2.0 * edge_pad).max(0.0);
 
+    // Keep the whole panel on screen. An anchor can be off screen (the phone
+    // mode list while its sheet is closed), and "above" it is then still
+    // below the bottom edge.
+    let max_height = max_height.min((v_h - 2.0 * edge_pad).max(0.0));
+    let lowest_top = (v_h - edge_pad - p_h.min(max_height)).max(edge_pad);
+    let top = top.clamp(edge_pad, lowest_top);
+
     Placement {
         left,
-        top: top.max(edge_pad),
+        top,
         max_width,
         max_height,
     }
@@ -269,5 +276,27 @@ pub fn PopupPanel(
                 </div>
             </Portal>
         </Show>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_panel_above_an_off_screen_anchor_stays_on_screen() {
+        // A 375 x 812 phone, the anchor below the bottom edge at y 876.
+        let p = compute_placement(
+            (9.0, 876.0, 366.0, 1163.0),
+            (357.0, 500.0),
+            (375.0, 812.0),
+            Side::Above,
+            Align::Start,
+            4.0,
+            4.0,
+        );
+        assert!(p.top >= 4.0);
+        assert!(p.top + 500.0 <= 812.0 - 4.0 + 1e-9, "top {}", p.top);
+        assert!(p.max_height <= 804.0);
     }
 }
