@@ -203,6 +203,34 @@ fn freq_label_bottom(y: f64, height: f64) -> f64 {
     }
 }
 
+/// The step in Hz between the frequency divisions of a visible range of
+/// `range_hz`, drawn `height_px` tall: 1 kHz for a range up to 5 kHz, 5 kHz
+/// up to 25 kHz, and 10 kHz above that.
+///
+/// A file read at several MHz (a 44.1 kHz file corrected for ×256 time
+/// expansion is at 11.3 MHz) would get hundreds of 10 kHz divisions with
+/// their labels on top of each other. So when 10 kHz divisions would be
+/// closer than a label is tall, the step is the smallest of 20, 50, 100,
+/// 200, 500 kHz, 1 MHz and so on that keeps them a label's height apart.
+pub fn freq_div_interval(range_hz: f64, height_px: f64) -> f64 {
+    if range_hz <= 5_000.0 {
+        return 1_000.0;
+    }
+    if range_hz <= 25_000.0 {
+        return 5_000.0;
+    }
+    let min_gap = FREQ_LABEL_BOX_H + 1.0;
+    let px_per_hz = height_px.max(1.0) / range_hz;
+    let mut step = 10_000.0;
+    for factor in [2.0, 2.5, 2.0].into_iter().cycle() {
+        if step * px_per_hz >= min_gap || step >= 1e9 {
+            break;
+        }
+        step *= factor;
+    }
+    step
+}
+
 /// Draw horizontal frequency marker lines with subtle, interactive UI.
 /// Labels are white; colored range bars indicate the resistor-band color.
 pub fn draw_freq_markers(
@@ -234,12 +262,8 @@ pub fn draw_freq_markers(
     let range = max_freq - min_freq;
     let div_interval = if ms.heard_caption.is_some() {
         crate::heard_axis::heard_div_interval(range, canvas_height)
-    } else if range <= 5_000.0 {
-        1_000.0
-    } else if range <= 25_000.0 {
-        5_000.0
     } else {
-        10_000.0
+        freq_div_interval(range, canvas_height)
     };
     // Green for heard values, white for the recording's own.
     let label_rgb = if ms.heard_caption.is_some() {
@@ -2692,6 +2716,19 @@ pub fn draw_time_marker_lines(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn freq_divisions_stay_a_label_apart_on_a_file_read_at_mhz() {
+        // Ranges of an ordinary bat recording keep their steps.
+        assert_eq!(freq_div_interval(4_000.0, 400.0), 1_000.0);
+        assert_eq!(freq_div_interval(24_000.0, 400.0), 5_000.0);
+        assert_eq!(freq_div_interval(192_000.0, 400.0), 10_000.0);
+        assert_eq!(freq_div_interval(250_000.0, 400.0), 10_000.0);
+        // 44.1 kHz corrected for x256: 0 to 5.6448 MHz.
+        assert_eq!(freq_div_interval(5_644_800.0, 400.0), 500_000.0);
+        // 48 kHz corrected for x20: 0 to 480 kHz.
+        assert_eq!(freq_div_interval(480_000.0, 400.0), 20_000.0);
+    }
+
     use super::*;
 
     #[test]

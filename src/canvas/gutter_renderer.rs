@@ -51,18 +51,6 @@ pub fn draw_fog(ctx: &CanvasRenderingContext2d, x: f64, y: f64, w: f64, h: f64, 
     }
 }
 
-/// Pick a frequency-division interval based on the total visible range.
-/// Mirrors the spectrogram's `draw_freq_markers` adaptive-interval logic.
-fn pick_div_interval(range_hz: f64) -> f64 {
-    if range_hz <= 5_000.0 {
-        1_000.0
-    } else if range_hz <= 25_000.0 {
-        5_000.0
-    } else {
-        10_000.0
-    }
-}
-
 /// Draw the band gutter. Paints fog over the whole rectangle, then overlays
 /// a stack of per-division shield flags covering the selected
 /// [band_lo, band_hi] range. The colouring algorithm matches the
@@ -122,7 +110,7 @@ pub fn draw_band_gutter(
     let div_for_labels = if heard {
         crate::heard_axis::heard_div_interval(range, h)
     } else {
-        pick_div_interval(range)
+        crate::canvas::overlays::freq_div_interval(range, h)
     };
     let label_rgb = if heard {
         crate::heard_axis::HEARD_RGB
