@@ -2,8 +2,9 @@
 // imports in src/opfs_audio.rs and src/components/xc_browser.rs).
 //
 // They are global functions in this one file, not wasm-bindgen `inline_js`
-// blocks: each inline block came out as about 130 copies in dist/snippets,
-// and Trunk told the page to preload every copy (382 requests at start-up).
+// blocks. An inline block becomes a file in a snippets folder, wasm-bindgen
+// keeps the folders of earlier builds, and Trunk has the page preload every
+// file in all of them (382 requests at start-up after a few weeks of builds).
 
 // English name of a language code ("de" gives "German"); the code itself if
 // the browser doesn't know it.
