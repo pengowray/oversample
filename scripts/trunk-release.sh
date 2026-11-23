@@ -28,4 +28,10 @@ var=CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS
 export "$var=${!var:+${!var} }$strip_flags"
 
 cd "$(dirname "$0")/.."
+
+# wasm-bindgen adds a snippets folder per build and never removes old ones.
+# Trunk copies every folder into dist and has the page preload every file in
+# them, which was 382 extra requests at start-up after a few weeks of builds.
+rm -rf "${CARGO_TARGET_DIR:-target}/wasm-bindgen/release/snippets"
+
 exec trunk build --release "$@"

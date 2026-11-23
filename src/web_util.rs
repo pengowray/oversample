@@ -30,6 +30,18 @@ pub async fn yield_now() {
     sleep_ms(0).await;
 }
 
+/// Waits until the browser has drawn a frame. Start-up work that the first
+/// screen does not need goes after this, so the screen shows sooner.
+pub async fn after_next_paint() {
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        let window = web_sys::window().expect("no window in current context");
+        let _ = window.request_animation_frame(&resolve);
+    });
+    let _ = JsFuture::from(promise).await;
+    // The frame callback runs before the browser draws; the timer runs after.
+    sleep_ms(0).await;
+}
+
 /// Percent-encode for use as a query-string value. Everything outside the
 /// unreserved set is escaped, which is stricter than `encodeURIComponent` but
 /// always valid.

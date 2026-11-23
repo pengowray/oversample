@@ -169,20 +169,16 @@ fn text_groups_indexing(groups: &[String]) -> Option<String> {
     }
 }
 
-#[wasm_bindgen(inline_js = "export function language_name(code) {
-    try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) || code; }
-    catch (e) { return code; }
-}")]
+// Defined in js/app-glue.js.
+#[wasm_bindgen]
 extern "C" {
     /// English name of a language code ("de" gives "German"); the code itself
     /// if the browser doesn't know it.
     fn language_name(code: &str) -> String;
 }
 
-#[wasm_bindgen(inline_js = "export function language_autonym(code) {
-    try { return new Intl.DisplayNames([code], { type: 'language' }).of(code) || code; }
-    catch (e) { return code; }
-}")]
+// Defined in js/app-glue.js.
+#[wasm_bindgen]
 extern "C" {
     /// A language's name in that language ("de" gives "Deutsch").
     fn language_autonym(code: &str) -> String;

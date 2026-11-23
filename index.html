@@ -56,16 +56,6 @@
     <link data-trunk rel="copy-file" href="about-icon.png"/>
     <link data-trunk rel="copy-file" href="world-map.png"/>
     <link data-trunk rel="css" href="style.css"/>
-    <!-- The app. Named here because a second rust link (the worker below) stops
-         Trunk from adding it on its own. An explicit link also turns on
-         wasm-opt, which the implicit one never ran; data-wasm-opt="0" keeps the
-         build as it was. -->
-    <link data-trunk rel="rust" href="Cargo.toml" data-type="main" data-wasm-opt="0"/>
-    <!-- BirdNET and BattyBirdNET engine, run in a Web Worker. Trunk writes
-         birdnet-worker_loader.js, birdnet-worker.js and birdnet-worker_bg.wasm
-         (names not hashed); the app starts the worker only when someone runs a
-         model (src/classifier/). -->
-    <link data-trunk rel="rust" href="birdnet-worker/Cargo.toml" data-type="worker" data-loader-shim data-wasm-opt="0"/>
     <!-- Species map (src/components/file_sidebar/species_map.rs): BirdNET's
          class positions (research/species-map, 26 KB), the glue, and Apache
          ECharts, which species-map.js loads only when a map opens. -->
@@ -89,16 +79,31 @@
     <!-- <script data-trunk>: Trunk puts a content hash in the file name, so
          a new build never runs with an old cached copy of the script. The
          libraries these scripts load later are plain copies. -->
-    <script data-trunk src="species-map.js"></script>
-    <script data-trunk src="live-embedding.js"></script>
-    <script data-trunk src="live-explorer.js"></script>
-    <script data-trunk src="mp4-muxer.js"></script>
+    <script data-trunk defer src="species-map.js"></script>
+    <script data-trunk defer src="live-embedding.js"></script>
+    <script data-trunk defer src="live-explorer.js"></script>
+    <script data-trunk defer src="mp4-muxer.js"></script>
     <link data-trunk rel="copy-file" href="js/plotly-gl3d-4.1.2.min.js"/>
-    <script data-trunk src="js/surface-3d.js"></script>
+    <script data-trunk defer src="js/surface-3d.js"></script>
     <link data-trunk rel="copy-file" href="js/driver-1.10.2.iife.js"/>
     <link data-trunk rel="copy-file" href="js/driver-1.10.2.css"/>
     <link data-trunk rel="copy-file" href="js/driver-1.10.2.LICENSE"/>
-    <script data-trunk src="js/hfr-tour.js"></script>
+    <script data-trunk defer src="js/hfr-tour.js"></script>
+    <script data-trunk defer src="js/app-glue.js"></script>
+    <!-- The scripts above have `defer`, so the page does not wait for them
+         before it shows the start-up screen. The app's own script comes after
+         them here because deferred and module scripts run in page order, and
+         the app calls functions those scripts define. -->
+    <!-- The app. Named here because a second rust link (the worker below) stops
+         Trunk from adding it on its own. An explicit link also turns on
+         wasm-opt, which the implicit one never ran; data-wasm-opt="0" keeps the
+         build as it was. -->
+    <link data-trunk rel="rust" href="Cargo.toml" data-type="main" data-wasm-opt="0"/>
+    <!-- BirdNET and BattyBirdNET engine, run in a Web Worker. Trunk writes
+         birdnet-worker_loader.js, birdnet-worker.js and birdnet-worker_bg.wasm
+         (names not hashed); the app starts the worker only when someone runs a
+         model (src/classifier/). -->
+    <link data-trunk rel="rust" href="birdnet-worker/Cargo.toml" data-type="worker" data-loader-shim data-wasm-opt="0"/>
     <script>
     // .fit-text — auto-shrink text to fit its container.
     //

@@ -51,8 +51,17 @@ pub mod xc_client;
 use components::app::App;
 use leptos::prelude::*;
 
+/// Milliseconds since the page started loading.
+fn page_ms() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.performance())
+        .map_or(0.0, |p| p.now())
+}
+
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn main() {
+    // Reached once the WASM is downloaded and compiled.
+    let wasm_ready = page_ms();
     console_error_panic_hook::set_once();
     let _ = console_log::init_with_level(log::Level::Debug);
 
@@ -65,6 +74,7 @@ pub fn main() {
     }
 
     mount_to_body(App);
+    let app_built = page_ms();
 
     // The start-up screen from index.html, shown while the WASM loaded.
     if let Some(splash) = web_sys::window()
@@ -73,4 +83,27 @@ pub fn main() {
     {
         splash.remove();
     }
+
+    // One line in the console (logcat on Android) saying how long each
+    // start-up stage took, for comparing builds and devices.
+    wasm_bindgen_futures::spawn_local(async move {
+        web_util::after_next_paint().await;
+        let first_frame = page_ms();
+        log::info!(
+            "Start-up: {:.0} ms. Loading and compiling the app {:.0} ms, building the screen {:.0} ms, first frame {:.0} ms.",
+            first_frame,
+            wasm_ready,
+            app_built - wasm_ready,
+            first_frame - app_built,
+        );
+        // Read by e2e/startup.spec.ts.
+        if let Some(window) = web_sys::window() {
+            let times = js_sys::Array::of3(
+                &wasm_ready.into(),
+                &app_built.into(),
+                &first_frame.into(),
+            );
+            let _ = js_sys::Reflect::set(&window, &"__oversampleStartup".into(), &times);
+        }
+    });
 }

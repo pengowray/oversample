@@ -87,9 +87,12 @@ pub fn App() -> impl IntoView {
     // Google Drive copies of annotations and projects (browser only).
     crate::cloud::sync::init(state);
 
-    // Detect browser's default audio output sample rate
-    {
+    // Detect browser's default audio output sample rate. After the first
+    // frame: making an audio context can be slow on a phone, and nothing on
+    // the first screen needs the rate.
+    wasm_bindgen_futures::spawn_local(async move {
         use web_sys::AudioContext;
+        crate::web_util::after_next_paint().await;
         if let Ok(ctx) = AudioContext::new() {
             let rate = ctx.sample_rate() as u32;
             if rate > 0 {
@@ -97,7 +100,7 @@ pub fn App() -> impl IntoView {
             }
             let _ = ctx.close();
         }
-    }
+    });
 
     // Auto-load demo sound from URL hash (e.g. #XC928094)
     if let Some(window) = web_sys::window() {

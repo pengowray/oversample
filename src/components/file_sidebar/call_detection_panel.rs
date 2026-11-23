@@ -1058,7 +1058,6 @@ fn MethodPicker() -> impl IntoView {
             }
         })
         .collect::<Vec<_>>();
-    let options = StoredValue::new(options);
     view! {
         <div class="cd-method" node_ref=wrap on:keydown=on_key>
             <button
@@ -1077,7 +1076,7 @@ fn MethodPicker() -> impl IntoView {
                 aria-label="Method"
                 style:display=move || if open.get() { "" } else { "none" }
             >
-                {options.into_inner()}
+                {options}
             </div>
             <div class="detection-status-note cd-method-help">{move || method_description(method())}</div>
         </div>
