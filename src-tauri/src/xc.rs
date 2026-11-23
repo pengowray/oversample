@@ -1,13 +1,24 @@
 use oversample_ipc::xc::XcCachedFile;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use xc_lib::metadata::{parse_xc_json_metadata, recording_to_metadata};
 use xc_lib::{api, cache, key_store, taxonomy, XcGroupTaxonomy, XcSearchResult};
 
 /// Shared state for XC operations.
 pub struct XcState {
-    pub client: reqwest::Client,
+    /// Made on first use, not at start-up, where building it held up the
+    /// app's window.
+    pub client: LazyLock<reqwest::Client>,
     pub cache_root: PathBuf,
+}
+
+impl XcState {
+    pub fn new(cache_root: PathBuf) -> Self {
+        Self {
+            client: LazyLock::new(xc_lib::http_client),
+            cache_root,
+        }
+    }
 }
 
 // ── API Key management ────────────────────────────────────────────────

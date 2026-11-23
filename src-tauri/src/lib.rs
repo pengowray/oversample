@@ -57,11 +57,10 @@ pub fn run() {
                 .map(|d| d.join("xc-cache"))
                 .unwrap_or_else(|_| std::path::PathBuf::from("xc-cache"));
             let _ = std::fs::create_dir_all(&cache_root);
+            // Stays here, on the thread Android starts the app on: it is a
+            // few JNI calls, and has only been tried from this thread.
             tls::init_platform_verifier();
-            app.manage(Mutex::new(xc::XcState {
-                client: xc_lib::http_client(),
-                cache_root,
-            }));
+            app.manage(Mutex::new(xc::XcState::new(cache_root)));
             Ok(())
         })
         // Debug builds only: run the JavaScript in OVERSAMPLE_DEV_EVAL after each page
