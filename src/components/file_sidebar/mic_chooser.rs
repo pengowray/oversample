@@ -1,3 +1,4 @@
+use oversample_core::erased_sort::SortErased;
 use crate::state::store_fields::*;
 use crate::state::{
     AppState, MicAcquisitionState, MicBackend, MicDeviceInfo, MicPendingAction, MicStrategy,
@@ -127,7 +128,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                 }
                             }
                         }
-                        rates.sort();
+                        rates.sort_erased();
                         let rates_summary = rates
                             .iter()
                             .map(|&r| {

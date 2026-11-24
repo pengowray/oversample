@@ -1,3 +1,4 @@
+use oversample_core::erased_sort::SortErased;
 use crate::audio::source::{ChannelView, DEFAULT_ANALYSIS_WINDOW_SECS};
 use crate::dsp::bit_analysis::{self, BitAnalysis, BitCaution};
 use crate::dsp::lsb_autocorr::{self, LsbAutocorrResult, LsbVerdict};
@@ -293,7 +294,7 @@ pub(crate) fn AnalysisPanel() -> impl IntoView {
                     .zip(&zc.off_mask)
                     .filter_map(|(&f, &of)| (!of && f > 0.0).then_some(f))
                     .collect();
-                freqs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                freqs.sort_erased_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 let dur_text = crate::format_time::format_duration(zc.duration_secs(), 3);
                 report.push_str("=== Anabat ZC Recording ===\n");
                 report.push_str(&format!("  File type: {}\n", md.file_type));
@@ -1428,7 +1429,7 @@ fn render_zc_file_info(f: &crate::state::LoadedFile) -> impl IntoView {
         .zip(&zc.off_mask)
         .filter_map(|(&f, &off)| (!off && f > 0.0).then_some(f))
         .collect();
-    freqs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    freqs.sort_erased_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let freq_range = if freqs.is_empty() {
         None
     } else {

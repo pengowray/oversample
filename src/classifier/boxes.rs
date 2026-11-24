@@ -20,6 +20,7 @@
 //! [`LIST_FROM`] ([`box_species`]). The run makes sure the 1.5 s grid is
 //! scored (`super::run_task`).
 
+use oversample_core::erased_sort::SortErased;
 use super::{ClassifierRun, Score, SpeciesLabel};
 use oversample_ipc::classifier::boxes::{
     fuse, limit_to_content, padded_end_s, MergedBox, RawBox, CLIP_HOP_S, CLIP_S,
@@ -144,7 +145,7 @@ pub fn box_species<'a>(
         }
     }
     best.retain(|s| s.confidence >= LIST_FROM);
-    best.sort_by(|a, b| b.confidence.total_cmp(&a.confidence));
+    best.sort_erased_by(|a, b| b.confidence.total_cmp(&a.confidence));
     best.truncate(LIST_MAX);
     best
 }

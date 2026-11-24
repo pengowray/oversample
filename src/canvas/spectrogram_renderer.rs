@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only OR MIT OR Apache-2.0
+use oversample_core::erased_sort::SortErased;
 use crate::canvas::colors::{
     coherence_rgb, db_to_greyscale, flow_rgb_scheme, greyscale_to_cividis, greyscale_to_inferno,
     greyscale_to_magma, greyscale_to_plasma, greyscale_to_turbo, greyscale_to_viridis,
@@ -508,7 +509,7 @@ impl TileCanvasLru {
             // Evict oldest entries by LRU stamp
             let mut stamps: Vec<(TileKey, u64)> =
                 self.entries.iter().map(|(&k, e)| (k, e.stamp)).collect();
-            stamps.sort_unstable_by_key(|&(_, s)| s);
+            stamps.sort_erased_by_key(|&(_, s)| s);
             let to_remove = self.entries.len() - 128;
             for (k, _) in stamps.into_iter().take(to_remove) {
                 self.entries.remove(&k);

@@ -1,3 +1,4 @@
+use oversample_core::erased_sort::SortErased;
 use crate::state::store_fields::*;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -94,7 +95,7 @@ fn pick_suggestions(pool: &[DemoEntry], count: usize, seed: Option<u64>) -> Vec<
         .into_iter()
         .map(|i| bats[i].clone())
         .collect();
-    picked.sort_by(|a, b| {
+    picked.sort_erased_by(|a, b| {
         display_name(a)
             .to_lowercase()
             .cmp(&display_name(b).to_lowercase())

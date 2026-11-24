@@ -87,6 +87,7 @@ pub use oversample_ipc::classifier::{
 };
 pub use types::{ClassifierRun, DownloadStatus, RunStatus, SpeciesLabel, WindowScores};
 
+use oversample_core::erased_sort::SortErased;
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
@@ -212,7 +213,7 @@ pub async fn ensure_downloaded(
     choice: ModelChoice,
 ) -> Result<(), ClassifierError> {
     let mut files = choice.files();
-    files.sort_by_key(|f| f.size);
+    files.sort_erased_by_key(|f| f.size);
     for f in files {
         download_file(state, f).await?;
     }
@@ -595,7 +596,7 @@ pub async fn ensure_files(
     state: AppState,
     mut files: Vec<&'static ModelFile>,
 ) -> Result<(), ClassifierError> {
-    files.sort_by_key(|f| f.size);
+    files.sort_erased_by_key(|f| f.size);
     for f in files {
         download_file(state, f).await?;
     }

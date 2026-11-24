@@ -4,6 +4,7 @@ pub mod bit_depth_certainty;
 pub mod canvas;
 pub mod device_hint;
 pub mod dsp;
+pub mod erased_sort;
 pub mod heterodyne_hint;
 pub mod position;
 pub mod species_range;

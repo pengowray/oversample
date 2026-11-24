@@ -12,6 +12,7 @@
 //! - the embedding over the last 15 s: the dimensions that vary most, one row
 //!   each.
 
+use oversample_core::erased_sort::SortErased;
 use crate::classifier::{self, Method};
 use crate::live_embedding::{self, SessionPoint};
 use crate::state::{AppState, ClassifierStateStoreFields};
@@ -61,7 +62,7 @@ pub fn top_variance_dims(points: &[&[f32]], k: usize) -> Vec<usize> {
             (j, v)
         })
         .collect();
-    var.sort_by(|a, b| b.1.total_cmp(&a.1));
+    var.sort_erased_by(|a, b| b.1.total_cmp(&a.1));
     var.into_iter().take(k).map(|(j, _)| j).collect()
 }
 

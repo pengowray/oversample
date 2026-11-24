@@ -6,6 +6,7 @@
 //! those from earlier versions of the detector (`auto=calls-1`). Annotations
 //! without such a tag are never removed.
 
+use oversample_core::erased_sort::SortErased;
 use crate::annotations::{Annotation, AnnotationId, AnnotationKind, Region};
 use oversample_core::annotation_tags::{self, Tag, AUTO, CALL, TRAIN};
 use oversample_core::dsp::call_detect::{
@@ -88,7 +89,7 @@ pub fn detector_tags_in(annotations: &[Annotation]) -> Vec<String> {
         .filter_map(|a| annotation_tags::value_of(&a.tags, None, AUTO))
         .filter(|v| is_detector_id(v))
         .collect();
-    values.sort();
+    values.sort_erased();
     values.dedup();
     values
         .into_iter()
@@ -340,7 +341,7 @@ mod tests {
             call(3.2, 30.1, CallKind::Bat),
             call(6.0, 50.0, CallKind::Bat),
         ];
-        calls.sort_by(|a, b| a.start_s.total_cmp(&b.start_s));
+        calls.sort_erased_by(|a, b| a.start_s.total_cmp(&b.start_s));
         let trains = group_trains(&calls, &TrainParams::default());
         (calls, trains)
     }

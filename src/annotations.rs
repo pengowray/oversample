@@ -1,3 +1,4 @@
+use oversample_core::erased_sort::SortErased;
 use serde::{Deserialize, Serialize};
 
 /// Multi-layered file identity for matching annotations to audio files across sessions.
@@ -655,7 +656,7 @@ pub fn build_annotation_tree(annotations: &[Annotation]) -> Vec<AnnotationNode> 
 
     // Sort each group by sort_order then by created_at
     for list in children_map.values_mut() {
-        list.sort_by(|a, b| {
+        list.sort_erased_by(|a, b| {
             let oa = a.sort_order.unwrap_or(f64::MAX);
             let ob = b.sort_order.unwrap_or(f64::MAX);
             oa.partial_cmp(&ob)
@@ -722,7 +723,7 @@ pub fn renumber_children(annotations: &mut [Annotation], parent_id: Option<&Anno
         .map(|(i, _)| i)
         .collect();
     // Sort by existing sort_order then created_at
-    indices.sort_by(|&i, &j| {
+    indices.sort_erased_by(|&i, &j| {
         let a = &annotations[i];
         let b = &annotations[j];
         let oa = a.sort_order.unwrap_or(f64::MAX);

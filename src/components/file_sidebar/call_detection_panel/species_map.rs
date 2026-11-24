@@ -4,6 +4,7 @@
 //! with this file's windows as highlighted dots. Drawn by `species-map.js`
 //! with Apache ECharts; positions come from `crate::classifier::species_map`.
 
+use oversample_core::erased_sort::SortErased;
 use super::rows::show_window;
 use crate::classifier::species_map::{map_spec, parse_map, place_windows, MapSpec};
 use crate::classifier::summary::{window_kind, WindowKind};
@@ -83,7 +84,7 @@ fn windows_json(
         .iter()
         .map(|p| run.windows[p.index].top[0].class)
         .collect();
-    found.sort_unstable();
+    found.sort_erased();
     found.dedup();
     let unlikely_found: Vec<u16> = found.iter().copied().filter(|&c| unlikely(c)).collect();
     let windows: Vec<_> = placed

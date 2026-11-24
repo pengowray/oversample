@@ -10,6 +10,7 @@
 //! panes show one at a time. Both lists load their next page as they are scrolled near
 //! the end; the server sorts them (column headings), since it sends them a page at a time.
 
+use oversample_core::erased_sort::SortErased;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 
@@ -1441,7 +1442,7 @@ pub fn FindRecordings() -> impl IntoView {
 
     let country_menu = move || {
         let mut list = facets.get().map(|f| f.countries).unwrap_or_default();
-        list.sort_by(|a, b| a.name.cmp(&b.name));
+        list.sort_erased_by(|a, b| a.name.cmp(&b.name));
         let current = country.get();
         let mut options: Vec<_> = list
             .iter()

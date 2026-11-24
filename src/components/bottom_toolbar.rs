@@ -15,6 +15,7 @@
 // Hearing-DSP controls (HFR, Band, EQ, Notch, Gain) live in `HearingBar`.
 // Visualization controls (View, Anno, Book, Tool) live in `ViewBar`.
 
+use oversample_core::erased_sort::SortErased;
 use crate::audio::source::ChannelView;
 use crate::audio::{microphone, playback};
 use crate::components::combo_button::ComboButton;
@@ -459,7 +460,7 @@ pub fn BottomToolbar() -> impl IntoView {
                 // into the extras (appended), which used to reshuffle the whole
                 // row; sorting here means only the swapped pair changes place and
                 // every other button stays put (the disorienting part).
-                extras.sort_by_key(|m| ModeBucket::from_mode(*m));
+                extras.sort_erased_by_key(|m| ModeBucket::from_mode(*m));
                 let buttons = extras.into_iter().map(|mode| {
                     let bucket = ModeBucket::from_mode(mode);
                     let label = bucket.label();

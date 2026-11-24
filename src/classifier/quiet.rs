@@ -41,6 +41,7 @@
 //! neighbours' tapers, so a click on a frame boundary is not lost and a loud
 //! sound outside the band leaks little into it.
 
+use oversample_core::erased_sort::SortErased;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -400,7 +401,7 @@ struct Marks {
 impl Marks {
     /// The marks of `f`, which is not empty; sorts it.
     fn of(f: &mut [f32]) -> Self {
-        f.sort_by(|a, b| b.total_cmp(a));
+        f.sort_erased_by(|a, b| b.total_cmp(a));
         Self {
             loudest: f[0],
             third: f[2.min(f.len() - 1)],
@@ -443,7 +444,7 @@ fn floors(levels: &FrameLevels) -> Vec<Option<f32>> {
             if v.is_empty() {
                 return None;
             }
-            v.sort_by(f32::total_cmp);
+            v.sort_erased_by(f32::total_cmp);
             Some(percentile(&v, FLOOR_PERCENTILE))
         })
         .collect()
@@ -729,7 +730,7 @@ mod tests {
         let r = window_frames(&levels, windows[3]);
         let mut whole: Vec<f32> = levels.db[r].to_vec();
         let mut all: Vec<f32> = levels.db.clone();
-        all.sort_by(f32::total_cmp);
+        all.sort_erased_by(f32::total_cmp);
         let floor = percentile(&all, FLOOR_PERCENTILE);
         assert!(Marks::of(&mut whole).over(floor).loudest < 6.0);
         let q = quiet_windows(&levels, &windows);

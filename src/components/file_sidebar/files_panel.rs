@@ -1,3 +1,4 @@
+use oversample_core::erased_sort::SortErased;
 use super::file_badges;
 use super::file_groups;
 use crate::audio::playback;
@@ -963,27 +964,27 @@ fn compute_sorted_indices(
     let mut indices: Vec<usize> = (0..files.len()).collect();
     match mode {
         FileSortMode::AddOrder => {
-            indices.sort_by_key(|&i| files[i].add_order);
+            indices.sort_erased_by_key(|&i| files[i].add_order);
         }
         FileSortMode::ByName => {
-            indices.sort_by(|&a, &b| names[a].to_lowercase().cmp(&names[b].to_lowercase()));
+            indices.sort_erased_by(|&a, &b| names[a].to_lowercase().cmp(&names[b].to_lowercase()));
         }
         FileSortMode::ByDate => {
-            indices.sort_by(|&a, &b| {
+            indices.sort_erased_by(|&a, &b| {
                 let da = files[a].last_modified_ms.unwrap_or(f64::MAX);
                 let db = files[b].last_modified_ms.unwrap_or(f64::MAX);
                 da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
             });
         }
         FileSortMode::ByMetadataDate => {
-            indices.sort_by(|&a, &b| {
+            indices.sort_erased_by(|&a, &b| {
                 let ta = guano_timestamp(&files[a]).unwrap_or_default();
                 let tb = guano_timestamp(&files[b]).unwrap_or_default();
                 ta.cmp(&tb)
             });
         }
         FileSortMode::Grouped => {
-            indices.sort_by(|&a, &b| {
+            indices.sort_erased_by(|&a, &b| {
                 let ga = groups[a]
                     .track
                     .as_ref()
@@ -1016,7 +1017,7 @@ fn compute_sorted_indices(
                         .or_insert(order);
                 }
             }
-            indices.sort_by(|&a, &b| {
+            indices.sort_erased_by(|&a, &b| {
                 let ka = combined_group_key(&groups[a]);
                 let kb = combined_group_key(&groups[b]);
                 match (&ka, &kb) {
@@ -1064,7 +1065,7 @@ fn compute_sorted_indices(
                         .or_insert(t);
                 }
             }
-            indices.sort_by(|&a, &b| {
+            indices.sort_erased_by(|&a, &b| {
                 let ka = combined_group_key(&groups[a]);
                 let kb = combined_group_key(&groups[b]);
                 let time_a = match &ka {

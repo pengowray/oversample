@@ -2,6 +2,7 @@
 //! windows at or above the minimum confidence, the species they name, and the
 //! annotations made from them.
 
+use oversample_core::erased_sort::SortErased;
 use super::{ClassifierRun, Method, MethodFacts, SpeciesLabel};
 use crate::annotations::{Annotation, AnnotationId, AnnotationKind, Region};
 use oversample_core::annotation_tags::{self, Tag, AUTO, UNLIKELY_HERE};
@@ -54,7 +55,7 @@ pub fn colour_order(run: &ClassifierRun) -> Vec<u16> {
             None => best.push((top.class, top.confidence)),
         }
     }
-    best.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    best.sort_erased_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     best.into_iter().map(|(c, _)| c).collect()
 }
 
@@ -147,7 +148,7 @@ pub fn summarise(run: &ClassifierRun, min_confidence: f32) -> Summary {
         }
     }
     // Most windows first, or with overlapping windows most time first.
-    rows.sort_by(|a, b| {
+    rows.sort_erased_by(|a, b| {
         let more = if out.overlapping {
             b.secs.total_cmp(&a.secs)
         } else {

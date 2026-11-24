@@ -19,6 +19,7 @@
 //! playhead) but not the noise settings, which are the difference being
 //! compared.**
 
+use oversample_core::erased_sort::SortErased;
 use crate::components::file_sidebar::file_groups::{
     denoise_pair_members, multitrack_members, sequential_members, FileGroupInfo,
 };
@@ -153,7 +154,7 @@ pub fn share_members(setting: Setting, groups: &[FileGroupInfo], idx: usize) -> 
         }
         next += 1;
     }
-    members.sort_unstable();
+    members.sort_erased();
     members
 }
 

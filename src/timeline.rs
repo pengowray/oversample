@@ -1,3 +1,4 @@
+use oversample_core::erased_sort::SortErased;
 use crate::components::file_sidebar::file_groups::{self, TrackInfo};
 use crate::state::store_fields::*;
 use crate::state::{AppState, LoadedFile};
@@ -38,7 +39,7 @@ fn place_clips(clips: &[ClipIn], arrangement: Arrangement) -> (Vec<(usize, f64)>
     match arrangement {
         Arrangement::RecordingTime => {
             let mut order: Vec<usize> = (0..clips.len()).collect();
-            order.sort_by(|&a, &b| match (clips[a].start_ms, clips[b].start_ms) {
+            order.sort_erased_by(|&a, &b| match (clips[a].start_ms, clips[b].start_ms) {
                 (Some(ta), Some(tb)) => ta.partial_cmp(&tb).unwrap_or(std::cmp::Ordering::Equal),
                 (Some(_), None) => std::cmp::Ordering::Less,
                 (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -161,7 +162,7 @@ fn suggest_arrangement(clips: &[ClipIn]) -> Arrangement {
             None => spans.push((take, start, end)),
         }
     }
-    spans.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    spans.sort_erased_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     let mut end = f64::NEG_INFINITY;
     for &(_, start, span_end) in &spans {
         if end.is_finite() && (start < end - 0.05 || start - end > LONGEST_KEPT_GAP_SECS) {
@@ -382,7 +383,7 @@ fn plan_tracks(added: &[usize], channels: &[Option<TrackInfo>], track: Option<&s
             labels.push(&c.label);
         }
     }
-    labels.sort_by_key(|l| track_sort_key(l));
+    labels.sort_erased_by_key(|l| track_sort_key(l));
     let tracks: Vec<TrackOption> = if labels.len() < 2 {
         Vec::new()
     } else {
@@ -666,7 +667,7 @@ impl TimelineView {
                 )
             }))
             .collect();
-        spans.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        spans.sort_erased_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         spans
     }
 }
@@ -743,7 +744,7 @@ pub fn open(
     let files = state.library.files().get_untracked();
     file_indices.retain(|&i| i < files.len());
     let arrangement = arrangement.unwrap_or_else(|| {
-        file_indices.sort_by(|&a, &b| natural_name_order(&files[a].name, &files[b].name));
+        file_indices.sort_erased_by(|&a, &b| natural_name_order(&files[a].name, &files[b].name));
         TimelineView::suggested_arrangement(&file_indices, &files)
     });
     let tv = TimelineView::from_files(&file_indices, &files, None, arrangement)?;
@@ -1186,7 +1187,7 @@ mod tests {
             "alpha.wav",
             "rec_9.wav",
         ];
-        names.sort_by(|a, b| natural_name_order(a, b));
+        names.sort_erased_by(|a, b| natural_name_order(a, b));
         assert_eq!(
             names,
             vec![

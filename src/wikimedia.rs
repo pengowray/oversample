@@ -13,6 +13,7 @@
 //! it reads ten times too low. When a file carries P14424 we hand the factor
 //! to the loader, which reinterprets the samples at the true rate.
 
+use oversample_core::erased_sort::SortErased;
 use crate::source_site::{SiteMetadata, SourceSite};
 use crate::state::AppState;
 
@@ -657,7 +658,7 @@ fn collect_audio(json: &serde_json::Value, api_host: &str) -> Vec<WikiFile> {
         .filter_map(|p| parse_file_page(p, api_host))
         .filter(|f| f.mime.starts_with("audio/") || has_audio_ext(&f.name))
         .collect();
-    files.sort_by(|a, b| a.name.cmp(&b.name));
+    files.sort_erased_by(|a, b| a.name.cmp(&b.name));
     files
 }
 

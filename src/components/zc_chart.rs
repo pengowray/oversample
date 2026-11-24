@@ -1,3 +1,4 @@
+use oversample_core::erased_sort::SortErased;
 use crate::canvas::spectrogram_renderer::{self, FreqMarkerState, FreqShiftMode};
 use crate::components::axis_drag::{apply_axis_drag, freq_snap};
 use crate::components::gutter::{BandGutter, TimeGutter};
@@ -90,7 +91,7 @@ pub fn ZcDotChart() -> impl IntoView {
         if candidates.is_empty() {
             return None;
         }
-        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.sort_erased_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         Some(candidates[0].0)
     };
 

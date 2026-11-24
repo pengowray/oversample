@@ -1,3 +1,4 @@
+use oversample_core::erased_sort::SortErased;
 use crate::state::LoadedFile;
 use std::collections::HashMap;
 
@@ -310,7 +311,7 @@ pub fn compute_all_groups(names: &[String], files: &[LoadedFile]) -> Vec<FileGro
         if members.len() < 2 {
             continue;
         }
-        members.sort_by_key(|&(_, num)| num);
+        members.sort_erased_by_key(|&(_, num)| num);
 
         for (pos, &(file_idx, seq_num)) in members.iter().enumerate() {
             let gap = if pos == 0 {
@@ -362,7 +363,7 @@ pub fn denoise_pair_members(groups: &[FileGroupInfo], idx: usize) -> Vec<usize> 
         }
         next += 1;
     }
-    members.sort_unstable();
+    members.sort_erased();
     members
 }
 

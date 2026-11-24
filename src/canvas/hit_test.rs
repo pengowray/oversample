@@ -1,3 +1,4 @@
+use oversample_core::erased_sort::SortErased;
 use crate::annotations::{AnnotationId, AnnotationKind, AnnotationSet};
 use crate::canvas::spectrogram_renderer;
 use crate::state::store_fields::*;
@@ -103,7 +104,7 @@ pub fn hit_test_spec_handles(
     }
 
     // Sort by distance, then prefer HET over BandFF when tied
-    candidates.sort_by(|a, b| {
+    candidates.sort_erased_by(|a, b| {
         a.1.partial_cmp(&b.1)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| {

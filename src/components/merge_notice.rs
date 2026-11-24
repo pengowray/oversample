@@ -10,6 +10,7 @@
 //! found. A clean merge (nothing dropped) shows the heading and the summary
 //! only.
 
+use oversample_core::erased_sort::SortErased;
 use crate::cloud::sync::{self, ConflictWhat, MergeNotice, NoticeConflict};
 use crate::state::store_fields::*;
 use crate::state::AppState;
@@ -152,7 +153,7 @@ pub fn MergeNoticeView() -> impl IntoView {
         let notice = sync::merge_notice(&key)?;
         let mut rows: Vec<(String, bool)> = notice.conflicts.iter().map(row_text).collect();
         // Losses here first, so the short list shows them.
-        rows.sort_by_key(|(_, lost)| !*lost);
+        rows.sort_erased_by_key(|(_, lost)| !*lost);
         let total = rows.len();
         let shown = if show_all.get() {
             total

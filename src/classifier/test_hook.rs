@@ -16,6 +16,7 @@
 //! `"all"` or a file-name part such as `"EU"`, `"UK"` or `"USA-EAST"` (see
 //! `BatScope::stem`).
 
+use oversample_core::erased_sort::SortErased;
 use super::*;
 use wasm_bindgen::prelude::*;
 
@@ -97,7 +98,7 @@ fn status_json(state: AppState) -> String {
             .map(|(id, s)| format!("{id}: {}", download_text(s)))
             .collect()
     });
-    downloads.sort();
+    downloads.sort_erased();
     let run = run_text(&state.classifier.run().get_untracked());
     let results: Vec<serde_json::Value> = state.classifier.results().with_untracked(|m| {
         m.iter()

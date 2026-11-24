@@ -13,6 +13,7 @@
 //! species outside a window's top 10 has no score there: its cell is `None`
 //! and is drawn empty, apart from a stored low score.
 
+use oversample_core::erased_sort::SortErased;
 use super::{ClassifierRun, Method};
 
 /// A species picked for a score strip: the method whose results it comes from,
@@ -281,7 +282,7 @@ pub fn auto_species(run: &ClassifierRun, min_confidence: f32) -> Vec<u16> {
             None => best.push((top.class, top.confidence)),
         }
     }
-    best.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    best.sort_erased_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
     best.into_iter().map(|(c, _)| c).collect()
 }
 
@@ -489,7 +490,7 @@ pub fn find_classes(
             Some((rank, i))
         })
         .collect();
-    hits.sort_unstable();
+    hits.sort_erased();
     hits.into_iter()
         .take(limit)
         .filter_map(|(_, i)| u16::try_from(i).ok())

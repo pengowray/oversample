@@ -1,5 +1,6 @@
 //! Data the classifier keeps in [`crate::state::ClassifierState`].
 
+use oversample_core::erased_sort::SortErased;
 use super::catalog::ModelFile;
 use super::{BatScope, ClassifierError, Method, Score};
 use std::sync::Arc;
@@ -365,7 +366,7 @@ impl ClassifierRun {
             .filter(|w| w.live)
             .map(|w| w.slot)
             .collect();
-        old_slots.sort_unstable();
+        old_slots.sort_erased();
         let mut emb = Vec::with_capacity(old_slots.len() * len);
         for &s in &old_slots {
             match embedding(embeddings, self.method, s as usize) {
@@ -618,7 +619,7 @@ mod tests {
             .all(|&v| v == 0.0));
         // Every slot belongs to exactly one window.
         let mut slots: Vec<u32> = r.windows.iter().map(|w| w.slot).collect();
-        slots.sort_unstable();
+        slots.sort_erased();
         assert_eq!(slots, (0..r.windows.len() as u32).collect::<Vec<_>>());
         assert_tiled(&r.cells());
     }

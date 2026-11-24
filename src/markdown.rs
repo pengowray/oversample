@@ -7,6 +7,7 @@
 //! through `inner_html`: raw HTML in the source stays literal text, and only
 //! http and https links become links.
 
+use oversample_core::erased_sort::SortErased;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -524,7 +525,7 @@ fn escape_emphasis_in_bare_urls(src: &str) -> Cow<'_, str> {
     if escapes.is_empty() {
         return Cow::Borrowed(src);
     }
-    escapes.sort_unstable();
+    escapes.sort_erased();
     escapes.dedup();
     let mut out = String::with_capacity(src.len() + escapes.len());
     let mut copied = 0;

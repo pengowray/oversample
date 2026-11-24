@@ -15,6 +15,7 @@
 //! Nothing here touches the DOM or `js_sys`: ids and timestamps are passed in,
 //! so the conversions are tested on the host.
 
+use oversample_core::erased_sort::SortErased;
 use std::collections::HashMap;
 
 use oversample_core::annotation_tags::{self as tags, Tag};
@@ -407,7 +408,7 @@ pub fn export_set(
             !from_xc
         })
         .collect();
-    regions.sort_by(|a, b| a.1.time_start.total_cmp(&b.1.time_start));
+    regions.sort_erased_by(|a, b| a.1.time_start.total_cmp(&b.1.time_start));
 
     let mut no_species = 0;
     let mut no_freq = 0;

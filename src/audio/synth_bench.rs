@@ -10,6 +10,7 @@
 //! cost (FFT cost is content-independent) but is swept for visual coverage and
 //! to catch combos that fail to render.
 
+use oversample_core::erased_sort::SortErased;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -444,7 +445,7 @@ fn frame_stats(times: &[f64]) -> (f64, f64, f64, usize) {
     }
     let mean = deltas.iter().sum::<f64>() / deltas.len() as f64;
     let avg_fps = if mean > 0.0 { 1000.0 / mean } else { 0.0 };
-    deltas.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    deltas.sort_erased_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let max_delta = *deltas.last().unwrap();
     let min_fps = if max_delta > 0.0 {
         1000.0 / max_delta

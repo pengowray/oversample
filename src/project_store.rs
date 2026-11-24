@@ -6,6 +6,7 @@
 //! the account's projects and the device store's ones, so nothing made while
 //! signed out is hidden.
 
+use oversample_core::erased_sort::SortErased;
 use crate::cloud::store::{self, Store};
 use crate::project::BatProject;
 
@@ -130,7 +131,7 @@ pub async fn list_projects() -> Result<Vec<ProjectSummary>, String> {
     // Sort by modified_at descending (most recent first). modified_at is ISO-8601,
     // which is lexically sortable in chronological order, so a plain string compare
     // is correct; projects with no timestamp (None < Some) consistently sort last.
-    result.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+    result.sort_erased_by(|a, b| b.modified_at.cmp(&a.modified_at));
 
     Ok(result)
 }

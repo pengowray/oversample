@@ -36,6 +36,7 @@
 //! which is which, so two devices that merge the same copies upload the same
 //! content and stop there. Ties are broken by comparing content.
 
+use oversample_core::erased_sort::SortErased;
 use crate::annotations::{Annotation, AnnotationSet};
 use crate::source_site::RecordingSource;
 use oversample_core::annotation_tags::{self as tags, AUTO, XC_NS, XC_SET};
@@ -357,7 +358,7 @@ pub fn merge3(
     if let Some(kept) = noise_conflict {
         report.conflicts.push(Conflict::NoiseProfile { kept });
     }
-    report.conflicts.sort_by_key(conflict_order);
+    report.conflicts.sort_erased_by_key(conflict_order);
     (out, report)
 }
 
@@ -564,7 +565,7 @@ fn ordered(
         Some(order) => order.iter().filter_map(|id| merged.remove(id)).collect(),
         None => {
             let mut v: Vec<Annotation> = merged.into_values().collect();
-            v.sort_by(|p, q| {
+            v.sort_erased_by(|p, q| {
                 norm_time(&p.created_at)
                     .cmp(&norm_time(&q.created_at))
                     .then_with(|| p.id.as_str().cmp(q.id.as_str()))
@@ -779,7 +780,7 @@ mod tests {
         c.annotations.push(region("rb", 3.0, "from b", T1));
         let (m, r) = merge3(&base, &a, &c);
         let mut got = ids(&m);
-        got.sort();
+        got.sort_erased();
         assert_eq!(got, ["r1", "ra", "rb"]);
         assert_eq!(r.from_a.added, 1);
         assert_eq!(r.from_b.added, 1);
@@ -909,7 +910,7 @@ mod tests {
         c.annotations.push(tagged("b1", "auto=calls-2", T2));
         let (m, r) = merge3(&base, &a, &c);
         let mut got = ids(&m);
-        got.sort();
+        got.sort_erased();
         assert_eq!(got, ["b1", "mine"]);
         assert!(r.conflicts.contains(&Conflict::GeneratedTwice {
             tag: "auto=calls-2".into(),
@@ -927,7 +928,7 @@ mod tests {
         c.annotations.push(region("rb", 2.0, "mine", T1));
         let (m, r) = merge3(&base, &a, &c);
         let mut got = ids(&m);
-        got.sort();
+        got.sort_erased();
         assert_eq!(got, ["new", "rb"]);
         assert!(r.conflicts.is_empty());
     }
@@ -941,7 +942,7 @@ mod tests {
         c.annotations = vec![tagged("xb", "xc:set=77", T2), region("rb", 2.0, "mine", T2)];
         let (m, _) = merge3(&base, &a, &c);
         let mut got = ids(&m);
-        got.sort();
+        got.sort_erased();
         assert_eq!(got, ["rb", "xb"]);
     }
 

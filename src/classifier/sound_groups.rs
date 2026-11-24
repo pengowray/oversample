@@ -21,6 +21,7 @@
 //! Pure functions; the caching and scheduling are in
 //! `crate::components::sound_groups`.
 
+use oversample_core::erased_sort::SortErased;
 use super::ClassifierRun;
 use crate::pca::{SplitMix64, TopProjection};
 
@@ -293,7 +294,7 @@ fn number_by_size(assign: &[usize]) -> (Vec<u8>, Vec<usize>) {
         first[a] = first[a].min(i);
     }
     let mut order: Vec<usize> = (0..k).filter(|&c| size[c] > 0).collect();
-    order.sort_by(|&a, &b| size[b].cmp(&size[a]).then(first[a].cmp(&first[b])));
+    order.sort_erased_by(|&a, &b| size[b].cmp(&size[a]).then(first[a].cmp(&first[b])));
     let mut new_number = vec![0u8; k];
     for (n, &c) in order.iter().enumerate() {
         new_number[c] = n as u8;

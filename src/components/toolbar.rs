@@ -1,3 +1,4 @@
+use oversample_core::erased_sort::SortErased;
 use crate::audio::streaming_source;
 use crate::components::file_sidebar::file_badges::{
     self, get_xc_field, FileBadgeData, FileBadgeRow,
@@ -205,7 +206,7 @@ pub fn Toolbar() -> impl IntoView {
                 }
             })
             .collect();
-        matches.sort_by_key(|(_, _, n)| *n);
+        matches.sort_erased_by_key(|(_, _, n)| *n);
         Some(matches)
     });
 

@@ -5,6 +5,7 @@
 //! format in its FORMAT.md). Its `tools/bundle.py` checks the files and
 //! writes `src/data/bat_book.json`, which is compiled in here.
 
+use oversample_core::erased_sort::SortErased;
 use super::types::{BatBookEntry, BatBookManifest, BatBookRegion, BatSpecies, BookEntryDef};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -123,7 +124,7 @@ fn books() -> &'static HashMap<&'static str, Vec<BatBookEntry>> {
                     })
                     .collect();
                 // Stable sort: echolocating first, non-echolocating last
-                entries.sort_by_key(|e| if e.echolocates { 0u8 } else { 1 });
+                entries.sort_erased_by_key(|e| if e.echolocates { 0u8 } else { 1 });
                 (key.as_str(), entries)
             })
             .collect()
