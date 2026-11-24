@@ -8,4 +8,9 @@
 # Safari 16.4+, Chrome 91+, Firefox 89+ all support WASM SIMD128 — which is
 # already the compatibility floor we target elsewhere.
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "target-feature=+simd128"]
+#
+# erase_components: Leptos boxes each component's view instead of giving every
+# component its own copy of the view-building code. The app's wasm is 12%
+# smaller (14.96 MB to 13.10 MB with names stripped, 2026-11-24), so it
+# compiles sooner at start-up, and builds are quicker.
+rustflags = ["-C", "target-feature=+simd128", "--cfg", "erase_components"]

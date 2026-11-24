@@ -222,7 +222,12 @@ test("a large file shows its spot hash, and a saved hash has a Check button", as
   const copy = sha.locator('button[title="Copy full hash"]');
   await expect(check).toBeVisible();
   await expect(copy).toBeVisible();
-  expect((await check.boundingBox())!.x).toBeLessThan((await copy.boundingBox())!.x);
+  // Retried: the row can be drawn again between the two reads, and a button
+  // that has just been replaced has no position.
+  await expect(async () => {
+    const [a, b] = [await check.boundingBox(), await copy.boundingBox()];
+    expect(a!.x).toBeLessThan(b!.x);
+  }).toPass();
   await shot(page, group, "large-not-compared");
 
   await check.click();

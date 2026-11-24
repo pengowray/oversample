@@ -46,3 +46,4 @@ e2e/fixtures/
 
 # Claude Code agent worktrees
 .claude/worktrees/
+/index.release.html

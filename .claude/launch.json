@@ -59,6 +59,20 @@
       ],
       "port": 8787,
       "url": "http://127.0.0.1:8787"
+    },
+    {
+      "name": "static-own-dist-tests",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "21259",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "target/dist-own"
+      ],
+      "port": 21259
     }
   ]
 }

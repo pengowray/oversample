@@ -96,8 +96,9 @@
          the app calls functions those scripts define. -->
     <!-- The app. Named here because a second rust link (the worker below) stops
          Trunk from adding it on its own. An explicit link also turns on
-         wasm-opt, which the implicit one never ran; data-wasm-opt="0" keeps the
-         build as it was. -->
+         wasm-opt, which the implicit one never ran; data-wasm-opt="0" turns it
+         off for `trunk serve`. scripts/trunk-release.sh turns it on by
+         replacing this attribute, so keep the attributes in this order. -->
     <link data-trunk rel="rust" href="Cargo.toml" data-type="main" data-wasm-opt="0"/>
     <!-- BirdNET and BattyBirdNET engine, run in a Web Worker. Trunk writes
          birdnet-worker_loader.js, birdnet-worker.js and birdnet-worker_bg.wasm

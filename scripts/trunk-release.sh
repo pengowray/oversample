@@ -7,6 +7,9 @@
 # beforeBuildCommand (desktop and Android bundles). `trunk serve --release`
 # for local work keeps the names.
 #
+# Everything here is to make the app's wasm smaller, because a browser or a
+# phone's WebView compiles all of it before the app can start.
+#
 # --strip-all drops the wasm `name` section: 48 MB of the app's 60 MB wasm and
 # 6.6 MB of the BirdNET worker's 23 MB. Panic messages keep their file:line,
 # but stack frames show as wasm-function[N]. To find the function behind N,
@@ -34,4 +37,22 @@ cd "$(dirname "$0")/.."
 # them, which was 382 extra requests at start-up after a few weeks of builds.
 rm -rf "${CARGO_TARGET_DIR:-target}/wasm-bindgen/release/snippets"
 
-exec trunk build --release "$@"
+# One codegen unit: the app's code comes out 13% smaller (10.30 MB to 8.91 MB),
+# and the phone compiles all of it at every start. A full build takes about
+# twice as long, so `trunk serve --release` keeps Cargo's default.
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
+
+# wasm-opt -Os on the app: a further 12% (8.91 MB to 7.87 MB of code). It is
+# turned on in a copy of index.html so that `trunk serve --release` skips it:
+# it adds time to each rebuild and drops the function names. The copy has to
+# sit beside index.html, because Trunk finds the page's files from there. A
+# `trunk serve` running in this folder will see it and rebuild.
+page=index.release.html
+trap 'rm -f "$page"' EXIT
+sed 's/data-type="main" data-wasm-opt="0"/data-type="main" data-wasm-opt="s"/' index.html > "$page"
+grep -q 'data-type="main" data-wasm-opt="s"' "$page" || {
+    echo "trunk-release.sh: index.html has no data-type=\"main\" data-wasm-opt=\"0\" to turn on" >&2
+    exit 1
+}
+
+trunk build --release "$@" "$page"
