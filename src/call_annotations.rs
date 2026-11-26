@@ -239,6 +239,7 @@ pub fn build_call_annotations(
             sort_order: Some(p.sort_order as f64),
             tags: detector_tags(tag),
             label_default: None,
+            play: None,
         });
     }
     out

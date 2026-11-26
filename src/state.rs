@@ -448,7 +448,7 @@ fn parse_iso8601_to_epoch_ms(s: &str) -> Option<f64> {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Selection {
     pub time_start: f64,
     pub time_end: f64,
@@ -2652,6 +2652,19 @@ pub struct PlaybackState {
     pub start_mode: PlayStartMode,
     pub record_mode: RecordMode,
     pub from_here_time: f64,
+    /// What a play button on the selection or an annotation is playing.
+    /// None for any other playback.
+    pub item: Option<PlayingItem>,
+}
+
+/// What a play button beside a selection's or annotation's "..." button
+/// plays.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlayingItem {
+    /// The annotation; None for the selection.
+    pub annotation: Option<crate::annotations::AnnotationId>,
+    /// The annotation's own play setting, used instead of the app's.
+    pub setting: Option<crate::annotations::PlaySetting>,
 }
 
 /// Transient status / debug log / platform + viewport detection / file-hash.
@@ -2963,6 +2976,7 @@ impl AppState {
                 mode: PlaybackMode::Normal,
                 modes_extra: Vec::new(),
                 paused_hfr_for_normal: false,
+                item: None,
                 is_playing: false,
                 is_buffering: false,
                 playhead_time: 0.0,

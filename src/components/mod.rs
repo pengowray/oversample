@@ -33,6 +33,7 @@ pub mod mode_button;
 pub mod noise_button;
 pub mod fine_output;
 pub mod overflow_menu;
+pub mod item_play;
 pub mod overview;
 pub mod pinch;
 pub mod play_controls;

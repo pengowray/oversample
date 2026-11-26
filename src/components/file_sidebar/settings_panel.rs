@@ -985,6 +985,7 @@ fn group_selected(state: AppState) {
                 sort_order: order,
                 tags: Vec::new(),
                 label_default: Some(true),
+                play: None,
             };
             set.annotations.push(group);
 

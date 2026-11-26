@@ -1,8 +1,8 @@
-use crate::annotations::AnnotationKind;
+use crate::annotations::{AnnotationKind, PlaySetting};
 use crate::audio::source::{AudioSource, TimelineAudioSource, TimelineClip};
 use crate::audio::streaming_playback::{self, PlaybackParams};
 use crate::state::store_fields::*;
-use crate::state::{ActiveFocus, AppState, GainMode, PlaybackMode, Selection};
+use crate::state::{ActiveFocus, AppState, GainMode, PlaybackMode, PlayingItem, Selection};
 use crate::viewport;
 use leptos::prelude::*;
 use std::cell::RefCell;
@@ -17,6 +17,51 @@ thread_local! {
     /// `LoadedFile.id` of each file the newest timeline stream reads from, in
     /// timeline order. Empty when the newest stream is not a timeline.
     static STREAM_TIMELINE_FILE_IDS: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+    /// What the newest audio stream plays, for the e2e hook.
+    static STREAM_INFO: RefCell<Option<StreamInfo>> = const { RefCell::new(None) };
+}
+
+/// What the newest audio stream was started with (it may have finished
+/// since): its time range and the mode and main setting it plays with. For
+/// the e2e hook, which checks that a play button plays its own range and
+/// setting.
+#[derive(Clone, Debug)]
+pub struct StreamInfo {
+    pub start_secs: f64,
+    pub end_secs: f64,
+    pub mode: PlaybackMode,
+    pub het_freq: f64,
+    pub te_factor: f64,
+    pub ps_factor: f64,
+    pub zc_factor: f64,
+    /// The band a selection's frequency range limits playback to, when it does.
+    pub band: Option<(f64, f64)>,
+}
+
+pub fn stream_info() -> Option<StreamInfo> {
+    STREAM_INFO.with(|c| c.borrow().clone())
+}
+
+fn note_stream_info(params: &PlaybackParams, sample_rate: u32, start: usize, end: usize) {
+    let sr = sample_rate.max(1) as f64;
+    let band = streaming_playback::selection_freq_band(
+        params.sel_freq_low,
+        params.sel_freq_high,
+        params.has_selection,
+        sr / 2.0,
+    );
+    STREAM_INFO.with(|c| {
+        *c.borrow_mut() = Some(StreamInfo {
+            start_secs: start as f64 / sr,
+            end_secs: end as f64 / sr,
+            mode: params.mode,
+            het_freq: params.het_freq,
+            te_factor: params.te_factor,
+            ps_factor: params.ps_factor.signed(),
+            zc_factor: params.zc_factor,
+            band,
+        })
+    });
 }
 
 /// `LoadedFile.id` of the file the newest audio stream was started on (it may
@@ -362,6 +407,7 @@ pub fn stop(state: &AppState) {
     }
     state.playback.is_playing().set(false);
     state.playback.active_selection().set(None);
+    state.playback.item().set(None);
 }
 
 /// Continue playback from the current playhead position with fresh parameters.
@@ -393,14 +439,22 @@ pub fn replay_live(state: &AppState) {
         return;
     }
 
-    let params = snapshot_params(state, selection, sr);
+    // A play button's own setting stays in use when the app's settings change.
+    let setting = state
+        .playback
+        .item()
+        .get_untracked()
+        .and_then(|item| item.setting);
+    let params = snapshot_params_with(state, selection, sr, setting);
     let remaining_duration = (end_sample - start_sample) as f64 / sr as f64;
+    let playback_speed = playback_speed(&params, sr);
     let channel_view = state.viewmode.channel_view().get_untracked();
 
     // Play to real EOF when there's no bounded selection and the length is still
     // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
     let play_to_eof = selection.is_none() && target.source.length_is_estimated();
     note_stream_source(&target);
+    note_stream_info(&params, sr, start_sample, end_sample);
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,
@@ -412,14 +466,6 @@ pub fn replay_live(state: &AppState) {
     ) else {
         state.playback.is_playing().set(false);
         return;
-    };
-
-    // Compute correct playback speed for the current mode
-    let te_factor = state.transform.te_factor().get_untracked();
-    let playback_speed = match state.playback.mode().get_untracked() {
-        // The speed playback really runs at, which the output rate limits.
-        PlaybackMode::TimeExpansion => streaming_playback::te_playback_speed(sr, te_factor),
-        _ => 1.0,
     };
 
     start_playhead(
@@ -512,6 +558,7 @@ pub fn play_from_time(state: &AppState, start_secs: f64) {
 
 /// Inner implementation: play from `start_secs` to `sel_end` (or end of file).
 fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Selection>) {
+    state.playback.item().set(None);
     let Some(target) = playback_target(state) else {
         return;
     };
@@ -535,12 +582,14 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     }
 
     let params = snapshot_params(state, selection, sr);
+    let playback_speed = playback_speed(&params, sr);
     let channel_view = state.viewmode.channel_view().get_untracked();
 
     // Play to real EOF when there's no bounded selection and the length is still
     // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
     let play_to_eof = selection.is_none() && target.source.length_is_estimated();
     note_stream_source(&target);
+    note_stream_info(&params, sr, start_sample, end_sample);
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,
@@ -555,12 +604,6 @@ fn play_from_time_inner(state: &AppState, start_secs: f64, selection: Option<Sel
     };
 
     let play_duration = (end_sample - start_sample) as f64 / sr as f64;
-    let te_factor = state.transform.te_factor().get_untracked();
-    let playback_speed = match state.playback.mode().get_untracked() {
-        // The speed playback really runs at, which the output rate limits.
-        PlaybackMode::TimeExpansion => streaming_playback::te_playback_speed(sr, te_factor),
-        _ => 1.0,
-    };
 
     state.playback.active_selection().set(selection);
     state.playback.is_playing().set(true);
@@ -594,15 +637,42 @@ pub fn play(state: &AppState) {
         }
         sel
     };
+    start_range(state, target, selection, None);
+}
+
+/// Play just `selection` (its time range, and its frequency range where the
+/// mode can use one), then stop: the play button beside a selection's or
+/// annotation's "..." button. `item.setting`, when set, is used instead of the
+/// app's playback mode and its main setting.
+pub fn play_item(state: &AppState, selection: Selection, item: PlayingItem) {
+    stop(state);
+    let Some(target) = playback_target(state) else {
+        return;
+    };
+    let setting = item.setting;
+    if start_range(state, target, Some(selection), setting) {
+        state.playback.item().set(Some(item));
+    }
+}
+
+/// Start playing `selection`, or the whole of `target` without one. False
+/// when nothing started.
+fn start_range(
+    state: &AppState,
+    target: PlaybackTarget,
+    selection: Option<Selection>,
+    setting: Option<PlaySetting>,
+) -> bool {
     let sr = target.sample_rate;
 
     let (start_sample, end_sample) =
         extract_selection_range(sr, target.source.total_samples() as usize, selection);
     if end_sample <= start_sample {
-        return;
+        return false;
     }
 
-    let params = snapshot_params(state, selection, sr);
+    let params = snapshot_params_with(state, selection, sr, setting);
+    let playback_speed = playback_speed(&params, sr);
     let play_start_time = selection.map(|s| s.time_start).unwrap_or(0.0);
     let play_duration = (end_sample - start_sample) as f64 / sr as f64;
     let channel_view = state.viewmode.channel_view().get_untracked();
@@ -611,6 +681,7 @@ pub fn play(state: &AppState) {
     // an estimate (streaming MP3/OGG mid-decode) — see lows #8/#12.
     let play_to_eof = selection.is_none() && target.source.length_is_estimated();
     note_stream_source(&target);
+    note_stream_info(&params, sr, start_sample, end_sample);
     let Some(_) = streaming_playback::start_stream(
         target.source,
         channel_view,
@@ -620,14 +691,7 @@ pub fn play(state: &AppState) {
         params,
         play_to_eof,
     ) else {
-        return;
-    };
-
-    let te_factor = state.transform.te_factor().get_untracked();
-    let playback_speed = match state.playback.mode().get_untracked() {
-        // The speed playback really runs at, which the output rate limits.
-        PlaybackMode::TimeExpansion => streaming_playback::te_playback_speed(sr, te_factor),
-        _ => 1.0,
+        return false;
     };
 
     state.push_nav(); // save pre-play position so the back button can return here
@@ -646,6 +710,18 @@ pub fn play(state: &AppState) {
         playback_speed,
         play_to_eof,
     );
+    true
+}
+
+/// How fast the playhead moves: slower in TE, at the speed playback really
+/// runs at, which the output rate limits.
+fn playback_speed(params: &PlaybackParams, sample_rate: u32) -> f64 {
+    match params.mode {
+        PlaybackMode::TimeExpansion => {
+            streaming_playback::te_playback_speed(sample_rate, params.te_factor)
+        }
+        _ => 1.0,
+    }
 }
 
 /// Returns (start_sample, end_sample) for the current selection or full file.
@@ -671,7 +747,19 @@ pub(crate) fn snapshot_params(
     selection: Option<Selection>,
     sample_rate: u32,
 ) -> PlaybackParams {
-    let mut params = snapshot_dsp_params(state, selection, sample_rate);
+    snapshot_params_with(state, selection, sample_rate, None)
+}
+
+/// [`snapshot_params`] with an annotation's own play setting in place of the
+/// app's mode and its main setting. Gain is the app's: Auto gain's peak is
+/// measured with the app's mode.
+fn snapshot_params_with(
+    state: &AppState,
+    selection: Option<Selection>,
+    sample_rate: u32,
+    setting: Option<PlaySetting>,
+) -> PlaybackParams {
+    let mut params = snapshot_dsp_params_with(state, selection, sample_rate, setting);
     params.gain_db = state.gain.db().get_untracked();
     params.gain_mode = state.gain.mode().get_untracked();
     params.auto_peak_gain_db = if params.gain_mode == GainMode::AutoPeak {
@@ -691,31 +779,71 @@ pub(crate) fn snapshot_dsp_params(
     selection: Option<Selection>,
     sample_rate: u32,
 ) -> PlaybackParams {
+    snapshot_dsp_params_with(state, selection, sample_rate, None)
+}
+
+fn snapshot_dsp_params_with(
+    state: &AppState,
+    selection: Option<Selection>,
+    sample_rate: u32,
+    setting: Option<PlaySetting>,
+) -> PlaybackParams {
+    let t = state.transform;
+    let mode = setting
+        .and_then(PlaySetting::mode)
+        .unwrap_or_else(|| state.playback.mode().get_untracked());
+    let (mut het_freq, mut het_comb_count) = (
+        t.het_frequency().get_untracked(),
+        t.het_comb_count().get_untracked().max(1),
+    );
+    let mut te_factor = t.te_factor().get_untracked();
+    let mut ps_factor = t.ps_factor().get_untracked();
+    let mut zc_factor = t.zc_factor().get_untracked();
+    // The selection's band, which tunes HET to its centre.
+    let mut band = (
+        selection.and_then(|s| s.freq_low).unwrap_or(0.0),
+        selection
+            .and_then(|s| s.freq_high)
+            .unwrap_or(sample_rate as f64 / 2.0),
+    );
+    match setting {
+        Some(PlaySetting::Heterodyne { freq_hz }) => {
+            // One carrier at the saved frequency, as the setting says, so
+            // the band doesn't retune it.
+            het_freq = freq_hz;
+            het_comb_count = 1;
+            band = (0.0, sample_rate as f64 / 2.0);
+        }
+        Some(PlaySetting::TimeExpansion { factor }) => te_factor = factor,
+        Some(PlaySetting::PitchShift { factor }) => {
+            ps_factor = crate::dsp::pitch_shift::PitchFactor::from_signed(factor)
+        }
+        Some(PlaySetting::ZeroCrossing { factor }) => zc_factor = factor,
+        Some(PlaySetting::Direct | PlaySetting::Unknown) | None => {}
+    }
     PlaybackParams {
-        mode: state.playback.mode().get_untracked(),
-        het_freq: state.transform.het_frequency().get_untracked(),
-        het_cutoff: state.transform.het_cutoff().get_untracked(),
-        het_comb_count: state.transform.het_comb_count().get_untracked().max(1),
-        het_comb_spacing: state.transform.het_comb_spacing().get_untracked(),
-        het_ps_factor: state.transform.het_ps_factor().get_untracked(),
-        te_factor: state.transform.te_factor().get_untracked(),
-        ps_factor: state.transform.ps_factor().get_untracked(),
+        mode,
+        het_freq,
+        het_cutoff: t.het_cutoff().get_untracked(),
+        het_comb_count,
+        het_comb_spacing: t.het_comb_spacing().get_untracked(),
+        het_ps_factor: t.het_ps_factor().get_untracked(),
+        te_factor,
+        ps_factor,
         ps_shift_hz: {
             // Clamp stored shift to the post-divide low edge so the
             // heterodyne stage never folds output below zero. The user's
             // stored value stays unchanged; we just bound what the DSP
             // actually uses.
-            let stored = state.transform.ps_shift_hz().get_untracked();
+            let stored = t.ps_shift_hz().get_untracked();
             let band_lo = state.filter.band_ff_freq_lo().get_untracked();
-            let f = match state.playback.mode().get_untracked() {
-                crate::state::PlaybackMode::PitchShift => {
-                    state.transform.ps_factor().get_untracked().signed()
-                }
+            let f = match mode {
+                PlaybackMode::PitchShift => ps_factor.signed(),
                 _ => 1.0,
             };
             crate::components::fine_output::effective_ps_shift(stored, band_lo, f)
         },
-        zc_factor: state.transform.zc_factor().get_untracked(),
+        zc_factor,
         zc_lowest_bat_hz: state.lowest_bat_hz_untracked(),
         gain_db: 0.0,
         gain_mode: GainMode::Off,
@@ -730,10 +858,8 @@ pub(crate) fn snapshot_dsp_params(
         filter_db_above: state.filter.db_above().get_untracked(),
         filter_band_mode: state.filter.band_mode().get_untracked(),
         filter_quality: state.filter.quality().get_untracked(),
-        sel_freq_low: selection.and_then(|s| s.freq_low).unwrap_or(0.0),
-        sel_freq_high: selection
-            .and_then(|s| s.freq_high)
-            .unwrap_or(sample_rate as f64 / 2.0),
+        sel_freq_low: band.0,
+        sel_freq_high: band.1,
         has_selection: selection.is_some(),
         notch_enabled: state.notch.enabled().get_untracked(),
         notch_bands: state.notch.bands().get_untracked(),

@@ -24,6 +24,8 @@ pub enum Icon {
     Record,
     /// Filled pause bars.
     Pause,
+    /// Filled square.
+    Stop,
     /// Gear.
     Settings,
     /// Open hand (pan tool).
@@ -85,6 +87,7 @@ impl Icon {
             }
             Icon::Play => r#"<path d="M7 4l13 8-13 8z" fill="currentColor"/>"#,
             Icon::Record => r#"<circle cx="12" cy="12" r="7" fill="currentColor"/>"#,
+            Icon::Stop => r#"<rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor"/>"#,
             Icon::Pause => {
                 r#"<rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/>"#
             }

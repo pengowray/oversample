@@ -31,7 +31,9 @@
 //! imported by the user, is converted the same way
 //! ([`annota_from_file_units_at`]).
 
-use crate::annotations::{AnnotationKind, AnnotationSet, AudioFileMetadata, SavedTimeExpansion};
+use crate::annotations::{
+    AnnotationKind, AnnotationSet, AudioFileMetadata, PlaySetting, SavedTimeExpansion,
+};
 use crate::dsp::notch::{NoiseBand, NoiseProfile};
 use crate::dsp::spectral_sub::NoiseFloor;
 use crate::focus_stack::FocusRange;
@@ -143,6 +145,14 @@ impl RateChange {
         }
     }
 
+    /// An annotation's own play setting: a HET frequency is a frequency in
+    /// the recording, so it follows the rate. Factors stay.
+    pub fn play_setting(self, play: &mut Option<PlaySetting>) {
+        if let Some(PlaySetting::Heterodyne { freq_hz }) = play {
+            *freq_hz = self.freq(*freq_hz);
+        }
+    }
+
     /// A notch filter band. Its Q (centre over bandwidth) is unchanged.
     pub fn noise_band(self, band: &mut NoiseBand) {
         band.center_hz = self.freq(band.center_hz);
@@ -179,6 +189,7 @@ impl RateChange {
     pub fn annotation_set(self, set: &mut AnnotationSet) {
         for ann in &mut set.annotations {
             self.annotation_kind(&mut ann.kind);
+            self.play_setting(&mut ann.play);
         }
         if let Some(profile) = set.noise_profile.as_mut() {
             self.noise_profile(profile);
@@ -983,6 +994,7 @@ mod tests {
             sort_order: None,
             tags: Vec::new(),
             label_default: None,
+            play: None,
         }
     }
 
@@ -1057,6 +1069,25 @@ mod tests {
         assert!(!TENFOLD_UP.focus_range(FocusRange::inactive()).is_active());
         let band = TENFOLD_UP.focus_range(FocusRange::new(2_000.0, 6_000.0));
         assert_eq!((band.lo, band.hi), (20_000.0, 60_000.0));
+    }
+
+    #[test]
+    fn a_het_play_setting_follows_the_rate_and_factors_stay() {
+        let mut set = set_with(vec![
+            region(0.5, 0.75, Some(2_000.0), Some(5_000.0)),
+            region(0.1, 0.2, None, None),
+        ]);
+        set.annotations[0].play = Some(PlaySetting::Heterodyne { freq_hz: 4_000.0 });
+        set.annotations[1].play = Some(PlaySetting::TimeExpansion { factor: 10.0 });
+        TENFOLD_UP.annotation_set(&mut set);
+        assert_eq!(
+            set.annotations[0].play,
+            Some(PlaySetting::Heterodyne { freq_hz: 40_000.0 })
+        );
+        assert_eq!(
+            set.annotations[1].play,
+            Some(PlaySetting::TimeExpansion { factor: 10.0 })
+        );
     }
 
     #[test]

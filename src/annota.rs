@@ -174,6 +174,7 @@ pub fn import_set(
                     sort_order: Some(order),
                     tags: vec![Tag::namespaced(tags::XC_NS, tags::XC_SET, key.clone()).to_stored()],
                     label_default: None,
+                    play: None,
                 });
                 order += 1.0;
                 groups.insert(key.clone(), id.clone());
@@ -262,6 +263,7 @@ pub fn import_set(
             sort_order: Some(order),
             tags: t,
             label_default: None,
+            play: None,
         });
         order += 1.0;
     }
@@ -750,6 +752,7 @@ mod tests {
             sort_order: None,
             tags: tags_in.iter().map(|s| s.to_string()).collect(),
             label_default: None,
+            play: None,
         }
     }
 

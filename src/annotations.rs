@@ -284,6 +284,111 @@ pub struct Annotation {
     /// means the label (if any) is user-authored.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub label_default: Option<bool>,
+    /// How the annotation's own play button plays it. None: with the app's
+    /// playback settings at the time.
+    #[serde(skip_serializing_if = "play_setting_is_unset", default)]
+    pub play: Option<PlaySetting>,
+}
+
+/// The playback mode, and its main setting, that an annotation's own play
+/// button uses. Saved as `play: {mode: heterodyne, freq_hz: 45000}`. The other
+/// settings of the mode (HET's low-pass, PS's output shift, the filters and
+/// gain) are the app's.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum PlaySetting {
+    /// 1:1.
+    Direct,
+    /// One carrier at `freq_hz`, which also holds for an annotation with a
+    /// frequency range (playing a selection otherwise tunes to its centre).
+    Heterodyne { freq_hz: f64 },
+    TimeExpansion { factor: f64 },
+    /// Signed as [`crate::dsp::pitch_shift::PitchFactor`]: positive lowers.
+    PitchShift { factor: f64 },
+    ZeroCrossing { factor: f64 },
+    /// A mode saved by a later version of the app. Plays with the app's
+    /// settings, and is left out when the annotation is saved again.
+    #[serde(other)]
+    Unknown,
+}
+
+fn play_setting_is_unset(play: &Option<PlaySetting>) -> bool {
+    matches!(play, None | Some(PlaySetting::Unknown))
+}
+
+impl PlaySetting {
+    /// The mode; None for [`PlaySetting::Unknown`].
+    pub fn mode(self) -> Option<crate::state::PlaybackMode> {
+        use crate::state::PlaybackMode as M;
+        Some(match self {
+            Self::Direct => M::Normal,
+            Self::Heterodyne { .. } => M::Heterodyne,
+            Self::TimeExpansion { .. } => M::TimeExpansion,
+            Self::PitchShift { .. } => M::PitchShift,
+            Self::ZeroCrossing { .. } => M::ZeroCrossing,
+            Self::Unknown => return None,
+        })
+    }
+
+    /// Short text for the play button and menu: "HET 45 kHz", "TE ×10",
+    /// "PS ÷10", "ZC ÷8", "1:1".
+    pub fn short_label(self) -> String {
+        match self {
+            Self::Direct => "1:1".to_string(),
+            Self::Heterodyne { freq_hz } => {
+                format!("HET {}", crate::format_units::khz(freq_hz.round() as i64, 1))
+            }
+            Self::TimeExpansion { factor } => format!("TE \u{00D7}{}", fmt_factor(factor)),
+            Self::PitchShift { factor } if factor < 0.0 => {
+                format!("PS \u{00D7}{}", fmt_factor(-factor))
+            }
+            Self::PitchShift { factor } => format!("PS \u{00F7}{}", fmt_factor(factor)),
+            Self::ZeroCrossing { factor } => format!("ZC \u{00F7}{}", fmt_factor(factor)),
+            Self::Unknown => "?".to_string(),
+        }
+    }
+
+    /// The frequency or factor the mode is set to, as typed in the menu:
+    /// kHz for HET, the factor for the others. None for 1:1.
+    pub fn value(self) -> Option<f64> {
+        match self {
+            Self::Heterodyne { freq_hz } => Some(freq_hz / 1000.0),
+            Self::TimeExpansion { factor }
+            | Self::PitchShift { factor }
+            | Self::ZeroCrossing { factor } => Some(factor),
+            Self::Direct | Self::Unknown => None,
+        }
+    }
+
+    /// The same mode set to `value` (kHz for HET), or None when the value
+    /// can't be used: HET above 0 Hz, factors from 1 to 1000 (PS also -1000
+    /// to -1, a shift up).
+    pub fn with_value(self, value: f64) -> Option<Self> {
+        if !value.is_finite() {
+            return None;
+        }
+        let factor_ok = (1.0..=1000.0).contains(&value);
+        match self {
+            Self::Heterodyne { .. } if value > 0.0 => Some(Self::Heterodyne {
+                freq_hz: value * 1000.0,
+            }),
+            Self::TimeExpansion { .. } if factor_ok => Some(Self::TimeExpansion { factor: value }),
+            Self::PitchShift { .. } if factor_ok || (1.0..=1000.0).contains(&-value) => {
+                Some(Self::PitchShift { factor: value })
+            }
+            Self::ZeroCrossing { .. } if factor_ok => Some(Self::ZeroCrossing { factor: value }),
+            _ => None,
+        }
+    }
+}
+
+/// A factor without a trailing ".0": "10", "2.5".
+fn fmt_factor(f: f64) -> String {
+    if (f - f.round()).abs() < 1e-6 {
+        format!("{}", f.round() as i64)
+    } else {
+        format!("{:.1}", f)
+    }
 }
 
 /// Human-readable kind name used as the prefix for auto-generated labels
@@ -734,6 +839,67 @@ pub fn renumber_children(annotations: &mut [Annotation], parent_id: Option<&Anno
     });
     for (rank, &idx) in indices.iter().enumerate() {
         annotations[idx].sort_order = Some(rank as f64);
+    }
+}
+
+#[cfg(test)]
+mod play_setting_tests {
+    use super::*;
+
+    const REGION: &str = "id: a1\ntype: Region\ntime_start: 1.0\ntime_end: 1.5\n\
+        created_at: x\nmodified_at: x\n";
+
+    #[test]
+    fn an_annotation_without_a_play_setting_is_saved_as_before() {
+        let a: Annotation = yaml_serde::from_str(REGION).unwrap();
+        assert_eq!(a.play, None);
+        assert!(!yaml_serde::to_string(&a).unwrap().contains("play"));
+    }
+
+    #[test]
+    fn a_play_setting_survives_saving_and_loading() {
+        let mut a: Annotation = yaml_serde::from_str(REGION).unwrap();
+        for play in [
+            PlaySetting::Direct,
+            PlaySetting::Heterodyne { freq_hz: 45_000.0 },
+            PlaySetting::TimeExpansion { factor: 10.0 },
+            PlaySetting::PitchShift { factor: -4.0 },
+            PlaySetting::ZeroCrossing { factor: 8.0 },
+        ] {
+            a.play = Some(play);
+            let yaml = yaml_serde::to_string(&a).unwrap();
+            let back: Annotation = yaml_serde::from_str(&yaml).unwrap();
+            assert_eq!(back.play, Some(play), "{yaml}");
+            let json = serde_json::to_string(&a).unwrap();
+            let back: Annotation = serde_json::from_str(&json).unwrap();
+            assert_eq!(back.play, Some(play), "{json}");
+        }
+    }
+
+    #[test]
+    fn a_mode_from_a_later_version_loads_and_is_left_out_when_saved() {
+        let text = format!("{REGION}play:\n  mode: spectral_warp\n  amount: 3\n");
+        let a: Annotation = yaml_serde::from_str(&text).unwrap();
+        assert_eq!(a.play, Some(PlaySetting::Unknown));
+        assert!(!yaml_serde::to_string(&a).unwrap().contains("play"));
+    }
+
+    #[test]
+    fn labels_and_values() {
+        let het = PlaySetting::Heterodyne { freq_hz: 45_000.0 };
+        assert_eq!(het.short_label(), "HET 45\u{a0}kHz");
+        assert_eq!(het.value(), Some(45.0));
+        assert_eq!(
+            het.with_value(41.5),
+            Some(PlaySetting::Heterodyne { freq_hz: 41_500.0 })
+        );
+        assert_eq!(het.with_value(0.0), None);
+        let te = PlaySetting::TimeExpansion { factor: 10.0 };
+        assert_eq!(te.short_label(), "TE \u{d7}10");
+        assert_eq!(te.with_value(0.5), None);
+        assert_eq!(PlaySetting::PitchShift { factor: 2.5 }.short_label(), "PS \u{f7}2.5");
+        assert_eq!(PlaySetting::PitchShift { factor: -4.0 }.short_label(), "PS \u{d7}4");
+        assert_eq!(PlaySetting::ZeroCrossing { factor: 8.0 }.short_label(), "ZC \u{f7}8");
     }
 }
 

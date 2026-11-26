@@ -49,6 +49,7 @@ fn build(boxes: &[FoundBox], now: &str) -> Vec<Annotation> {
             sort_order: Some(order as f64),
             tags: vec![tag.clone()],
             label_default: None,
+            play: None,
         })
         .collect()
 }

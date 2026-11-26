@@ -362,6 +362,7 @@ pub fn build_annotations(
                 sort_order: Some(order as f64),
                 tags,
                 label_default: None,
+                play: None,
             }
         })
         .collect()

@@ -7,6 +7,10 @@ use crate::components::channel_delay_row::{ChannelDelayRow, DelayRegion};
 use crate::components::file_sidebar::export_section::open_export_panel;
 use crate::components::file_sidebar::settings_panel::{delete_annotation, toggle_annotation_lock};
 use crate::components::icons::Icon;
+use crate::components::item_play::{
+    play_button_width, selected_annotations_play, ItemPlayButton, PlaySettingRow, BTN_GAP,
+    BTN_SIZE,
+};
 use crate::components::surface_3d::open_surface_3d;
 use crate::state::store_fields::*;
 use crate::state::{ActiveFocus, AppState, Selection};
@@ -74,6 +78,7 @@ pub fn annotate_selection(state: &AppState) {
                     sort_order: None,
                     tags: Vec::new(),
                     label_default: Some(true),
+                    play: None,
                 });
             }
         });
@@ -149,6 +154,7 @@ pub fn add_marker_at_time(state: &AppState, time: f64) {
                 sort_order: None,
                 tags: Vec::new(),
                 label_default: Some(true),
+                play: None,
             });
         }
     });
@@ -370,7 +376,6 @@ pub fn CanvasOverflowMenus() -> impl IntoView {
     }
 }
 
-const BTN_SIZE: f64 = 22.0;
 const BTN_MARGIN: f64 = 4.0;
 
 /// Menus this close to the canvas's right edge open leftward. Wider than the
@@ -380,16 +385,18 @@ const MENU_FLIP_DISTANCE: f64 = 220.0;
 /// Menus with less room than this below the "..." button open upward. Calls often
 /// sit low on the chart, where a downward menu would run off the bottom of the
 /// window and hide its action buttons. Taller than the tallest menu, which is the
-/// annotation menu at about 300 px.
-const MENU_FLIP_UP_DISTANCE: f64 = 330.0;
+/// annotation menu at about 330 px.
+const MENU_FLIP_UP_DISTANCE: f64 = 360.0;
 
 /// Inline style and class for the "..." anchor at the top-left corner of a
-/// selection or annotation. `x` and `y` are canvas coordinates. The button stays
-/// on the canvas when the corner is near its right edge.
-fn overflow_anchor(x: f64, y: f64, canvas_w: f64) -> (String, &'static str) {
+/// selection or annotation. `x` and `y` are canvas coordinates. The buttons
+/// ("..." and the play button, `play_w` wide) stay on the canvas when the
+/// corner is near its right edge.
+fn overflow_anchor(x: f64, y: f64, canvas_w: f64, play_w: f64) -> (String, &'static str) {
     let chart = chart_canvas_box();
+    let buttons_w = BTN_SIZE + BTN_GAP + play_w;
     let left = (x + BTN_MARGIN)
-        .min((canvas_w - BTN_SIZE - BTN_MARGIN).max(0.0))
+        .min((canvas_w - buttons_w - BTN_MARGIN).max(0.0))
         .max(0.0);
     let top = (y + BTN_MARGIN).max(0.0);
     let window_height = web_sys::window()
@@ -595,13 +602,23 @@ fn SelectionOverflowMenu() -> impl IntoView {
         }
     });
 
+    // What the play button plays: the selection, when it has a length.
+    let play_range = Signal::derive(move || {
+        state
+            .interaction
+            .selection()
+            .get()
+            .filter(|s| s.time_end - s.time_start >= 0.0001)
+    });
+
     view! {
         {move || {
             let (x, y) = match pos.get() { Some(p) => p, None => return None };
             let canvas_w = state.viewmode.spectrogram_canvas_width().get();
 
 
-            let (anchor_style, anchor_class) = overflow_anchor(x, y, canvas_w);
+            let (anchor_style, anchor_class) =
+                overflow_anchor(x, y, canvas_w, play_button_width(None));
 
             Some(view! {
                 <div
@@ -618,6 +635,9 @@ fn SelectionOverflowMenu() -> impl IntoView {
                     >
                         "\u{22EF}"
                     </button>
+                    {move || play_range.get().map(|range| view! {
+                        <ItemPlayButton range=range annotation=None setting=None />
+                    })}
 
                     {move || is_open.get().then(|| {
                         view! {
@@ -919,6 +939,30 @@ fn AnnotationOverflowMenu() -> impl IntoView {
         state.annotations.dirty().set(true);
     });
 
+    // What the play button plays, and the annotation's own play setting.
+    let play_target = Memo::new(move |_| selected_annotations_play(state));
+
+    // The one selected annotation's play setting and frequency range, for
+    // the "Play with" row.
+    let play_row = Memo::new(move |_| {
+        let ids = state.annotations.selected_ids().get();
+        if ids.len() != 1 {
+            return None;
+        }
+        let file_id = state.current_file_id_tracked()?;
+        state.annotations.store().with(|store| {
+            let ann = store.get(file_id)?.annotations.iter().find(|a| a.id == ids[0])?;
+            match &ann.kind {
+                AnnotationKind::Region(r) => Some((
+                    ann.id.clone(),
+                    ann.play,
+                    r.freq_low.zip(r.freq_high),
+                )),
+                _ => None,
+            }
+        })
+    });
+
     view! {
         {move || {
             // The label editor opens over this corner.
@@ -928,8 +972,8 @@ fn AnnotationOverflowMenu() -> impl IntoView {
             let (x, y) = match pos.get() { Some(p) => p, None => return None };
             let canvas_w = state.viewmode.spectrogram_canvas_width().get();
 
-
-            let (anchor_style, anchor_class) = overflow_anchor(x, y, canvas_w);
+            let play_w = play_button_width(play_target.get().and_then(|t| t.2));
+            let (anchor_style, anchor_class) = overflow_anchor(x, y, canvas_w, play_w);
 
             Some(view! {
                 <div
@@ -946,6 +990,9 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                     >
                         "\u{22EF}"
                     </button>
+                    {move || play_target.get().map(|(range, id, setting)| view! {
+                        <ItemPlayButton range=range annotation=Some(id) setting=setting />
+                    })}
 
                     {move || is_open.get().then(|| {
                         view! {
@@ -986,6 +1033,9 @@ fn AnnotationOverflowMenu() -> impl IntoView {
                                                 on_expand=on_expand
                                                 on_contract=on_contract
                                             />
+                                            {move || play_row.get().map(|(id, play, band)| view! {
+                                                <PlaySettingRow id=id play=play band=band />
+                                            })}
                                             <ChannelDelayRow region=delay_region />
                                             {(!tags.is_empty()).then(move || view! {
                                                 <div class="canvas-overflow-info" style="color: #8cf; font-size: 10px;">

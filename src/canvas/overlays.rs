@@ -2590,9 +2590,12 @@ pub fn draw_annotations(
                 "rgba(210, 255, 220, 0.9)"
             };
             ctx.set_fill_style_str(label_color);
-            // A selected annotation has its "..." button in this corner.
+            // A selected annotation has its "..." and play buttons in this
+            // corner, 4 px in from it.
             let label_inset = if is_selected && annotations_focused {
-                30.0
+                use crate::components::item_play::{play_button_width, BTN_GAP, BTN_SIZE};
+                let play = annotation.play.filter(|_| selected_ids.len() == 1);
+                4.0 + BTN_SIZE + BTN_GAP + play_button_width(play) + 4.0
             } else {
                 3.0
             };
