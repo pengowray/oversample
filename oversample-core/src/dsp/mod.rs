@@ -21,6 +21,7 @@ pub mod pitch_shift;
 pub mod psd;
 pub mod reassign;
 pub mod resonators;
+pub mod sound_box;
 pub mod spectral_sub;
 pub mod spectrum_level;
 pub mod surface_grid;
