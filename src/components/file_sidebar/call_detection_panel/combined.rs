@@ -85,7 +85,9 @@ struct Row {
 /// The rows for file `file`, from every model's results. Reactive.
 fn rows(state: AppState, file: u64) -> Vec<Row> {
     let mut out = Vec::new();
-    let boxes_apply = classifier::finds_boxes_for(state, file);
+    // V3.0's birds are listed by their boxes once boxes were looked for;
+    // before that (an Analyse with BirdNET+ V3.0 alone), by their windows.
+    let boxes_apply = boxes::found_for(state, file);
 
     // Birds: the bird boxes, one row per name.
     let drawn = boxes::drawn(state);
@@ -121,10 +123,11 @@ fn rows(state: AppState, file: u64) -> Vec<Row> {
     }
     for r in &mut birds {
         r.found = count(r.n, "box", "boxes");
-        r.title = format!(
-            "{}: {} drawn by BirdBox Just-Bird and named by BirdNET+ V3.0. Press to show the one with the best score.",
-            r.name, r.found
-        );
+        r.title = if r.best.is_some() {
+            "Go to the box with this bird's highest confidence".to_string()
+        } else {
+            "Go to the first box".to_string()
+        };
     }
     out.extend(birds);
 
@@ -152,7 +155,11 @@ fn rows(state: AppState, file: u64) -> Vec<Row> {
                 let name = kind_label(kind).to_string();
                 out.push(Row {
                     group,
-                    title: format!("{name}: {found} by the in-built bat call detector. Press to show the first."),
+                    title: if animal {
+                        "Go to the first call".to_string()
+                    } else {
+                        "Go to the first detection".to_string()
+                    },
                     name,
                     species: false,
                     found,
@@ -177,6 +184,7 @@ fn rows(state: AppState, file: u64) -> Vec<Row> {
             let order = classifier::kept_order::colour_order(file, method, run, min);
             let is_bird = boxes::bird_test(&run.labels);
             let by = method.info().name;
+            let window = summary::step_text(run.window_secs);
             for sp in &s.species {
                 let Some(label) = run.labels.get(sp.class as usize) else {
                     continue;
@@ -201,7 +209,7 @@ fn rows(state: AppState, file: u64) -> Vec<Row> {
                 out.push(Row {
                     group,
                     title: format!(
-                        "{name}: top class of {found} at a score of {min:.2} or more, from {by}. Press to show the window with the best score."
+                        "Go to the window with the highest confidence. Found counts the {window} {by} windows where this species is the top match at confidence {min:.2} or above."
                     ),
                     name,
                     species: !label.is_sound,
@@ -216,7 +224,9 @@ fn rows(state: AppState, file: u64) -> Vec<Row> {
                 let found = count(s.not_species_windows, "window", "windows");
                 out.push(Row {
                     group: Group::Noise,
-                    title: format!("Noise and other sounds: {found} from {by}"),
+                    title: format!(
+                        "The {window} {by} windows where the top match is noise or another sound that is not a species, at confidence {min:.2} or above"
+                    ),
                     name: "Noise and other sounds".to_string(),
                     species: false,
                     found,
@@ -286,6 +296,32 @@ pub(super) fn CombinedSection() -> impl IntoView {
             .with(|m| combined_status(m, &f))
     });
     let busy = move || current_file.get().is_some_and(|f| combined::busy(state, f));
+
+    // A new BattyBirdNET region relabels this file's bat results from the
+    // stored embeddings, as for BattyBirdNET on its own.
+    let bat_scope = Memo::new(move |_| classifier::bat_pick::bat_scope(state));
+    Effect::new(move |_| {
+        let region = bat_scope.get();
+        let Some(file) = current_file.get() else {
+            return;
+        };
+        let have = state.classifier.results().with(|m| {
+            m.get(&(file, Method::Bats))
+                .filter(|r| !r.windows.is_empty())
+                .and_then(|r| r.region)
+        });
+        if have.is_some_and(|h| h != region)
+            && !state.classifier.run().with_untracked(|r| r.is_busy())
+        {
+            if let Err(error) = classifier::rescore(state, file, region) {
+                state.classifier.run().set(RunStatus::Failed {
+                    file_id: file,
+                    method: Method::Bats,
+                    error,
+                });
+            }
+        }
+    });
     let analysed = Memo::new(move |_| {
         current_file
             .get()
@@ -486,7 +522,7 @@ pub(super) fn CombinedSection() -> impl IntoView {
         if rows.is_empty() {
             return view! {
                 <div class="cd-notes"><div class="detection-status-note">
-                    {move || if analysed.get() { "Nothing found." } else { "Analyse to list the species found in this recording." }}
+                    {move || if analysed.get() { "No birds, bats or other sounds found in this recording." } else { "Analyse to list the species found in this recording." }}
                 </div></div>
             }
             .into_any();
@@ -524,7 +560,7 @@ pub(super) fn CombinedSection() -> impl IntoView {
                     <tr>
                         <th></th>
                         <th class="detection-col-num">"Found"</th>
-                        <th class="detection-col-num" title="Best score">"Best"</th>
+                        <th class="detection-col-num" title="Best confidence">"Best"</th>
                     </tr>
                 </thead>
                 <tbody>{body}</tbody>

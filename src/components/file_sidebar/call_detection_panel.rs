@@ -1011,7 +1011,7 @@ fn method_description(method: DetectionMethod) -> &'static str {
     match method.classifier() {
         None if method == DetectionMethod::Combined => {
             // The models it uses are listed under its action button.
-            "Draws a box round each bird and bat call and names the species."
+            "Finds bird, bat and other animal calls, and marks noise."
         }
         None => "Finds bat calls. Runs automatically.",
         Some(m) => m.info().description,

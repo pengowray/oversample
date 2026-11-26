@@ -349,3 +349,17 @@ test("Birds and bats is the default and lists bird boxes by species, whatever Fi
   await pickMethod(page, "BirdNET+ V3.0");
   await expect(page.locator(".cd-list tr", { hasText: "European Robin" })).toBeVisible();
 });
+
+test("Birds and bats lists BirdNET+ V3.0's birds by window when no boxes were looked for", async ({ page }) => {
+  await openFile(page);
+  const err = await page.evaluate(
+    (a) => (window as unknown as { __oversample_classifier: Hook }).__oversample_classifier.seed(a),
+    V3_SEED,
+  );
+  expect(err).toBe("");
+  const list = page.locator(".cd-recording .cd-list");
+  await expect(list.locator("tr", { hasText: "Common Blackbird" })).toContainText("2 windows");
+  await expect(list.locator("tr", { hasText: "European Robin" })).toContainText("1 window");
+  // Not analysed for boxes yet, so Analyse is still the main action.
+  await expect(page.locator(".detection-primary-btn")).toHaveText("Download models (93 MB)");
+});

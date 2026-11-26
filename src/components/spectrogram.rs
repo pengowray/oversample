@@ -168,7 +168,7 @@ fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Opti
                 windows = w;
             }
         }
-        let boxes = crate::classifier::finds_boxes_for(state, file);
+        let boxes = crate::classifier::boxes::found_for(state, file);
         let not_birds = |run: &crate::classifier::ClassifierRun, class: u16| {
             !boxes || !crate::classifier::boxes::bird_test(&run.labels)(class)
         };

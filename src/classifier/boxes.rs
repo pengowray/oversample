@@ -332,6 +332,24 @@ fn drawn_now(state: crate::state::AppState) -> Vec<DrawnBox> {
     })
 }
 
+/// True when file `file` has bird boxes from an Analyse at its present
+/// sample rate (none found counts). Reactive.
+pub fn found_for(state: crate::state::AppState, file: u64) -> bool {
+    use crate::state::store_fields::*;
+    use crate::state::ClassifierStateStoreFields;
+    use leptos::prelude::*;
+    let rate = state.library.files().with(|files| {
+        files
+            .iter()
+            .find(|f| f.id == file)
+            .map(|f| f.audio.sample_rate)
+    });
+    state
+        .classifier
+        .boxes()
+        .with(|m| m.get(&file).is_some_and(|b| Some(b.source_rate) == rate))
+}
+
 /// The boxes drawn last ([`drawn`]), without tracking.
 pub fn last_drawn() -> Arc<Vec<DrawnBox>> {
     DRAWN.with(|d| d.borrow().clone())

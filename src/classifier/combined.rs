@@ -85,13 +85,20 @@ pub fn methods(state: AppState, file_id: u64) -> Vec<Method> {
         .collect()
 }
 
-/// True when every method of the combined scan has results for the whole of
-/// file `file_id` from an Analyse. Reactive.
+/// True when every method of the combined scan has results for file
+/// `file_id` from an Analyse, and the bird boxes have been looked for where
+/// they apply. Reactive.
 pub fn analysed(state: AppState, file_id: u64) -> bool {
-    let methods = methods(state, file_id);
+    let stages = stages(state, file_id);
+    if stages
+        .iter()
+        .any(|s| s.boxes && !super::boxes::found_for(state, file_id))
+    {
+        return false;
+    }
     state.classifier.results().with(|m| {
-        methods.iter().all(|&method| {
-            m.get(&(file_id, method))
+        stages.iter().all(|s| {
+            m.get(&(file_id, s.choice.method()))
                 .is_some_and(|r| r.analysed_windows() > 0)
         })
     })
