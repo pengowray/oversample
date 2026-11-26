@@ -1,4 +1,4 @@
-//! Wind and handling noise in the current file, for Birds and bats
+//! Low rumble (the detector's wind) and handling noise in the current file, for Birds and bats
 //! (`super::combined`): `oversample_core::dsp::noise_events` run over the
 //! whole file a piece at a time, with the page drawing in between, while the
 //! Call detection tab shows Birds and bats. Results are kept per file for
@@ -30,10 +30,12 @@ fn version() -> ArcRwSignal<u32> {
     VERSION.with(|v| v.clone())
 }
 
-/// The name a kind has on screen.
+/// The name a kind has on screen. The detector's Wind is shown as "Low
+/// rumble" (the user's choice, 2026-11-26): it also finds thunder, engines,
+/// music and low animal calls, and it missed the recordings labelled as wind.
 pub fn kind_name(kind: NoiseKind) -> &'static str {
     match kind {
-        NoiseKind::Wind => "Wind",
+        NoiseKind::Wind => "Low rumble",
         NoiseKind::Handling => "Handling noise",
     }
 }
