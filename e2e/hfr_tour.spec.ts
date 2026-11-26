@@ -105,7 +105,7 @@ test.describe("HFR card and tutorial", () => {
       const s = getComputedStyle(el);
       return { name: s.animationName, count: s.animationIterationCount };
     };
-    expect(await card.evaluate(anim)).toEqual({ name: "hfr-nudge-ring", count: "2" });
+    expect(await card.evaluate(anim)).toEqual({ name: "play-card-ring", count: "2" });
 
     await page.emulateMedia({ reducedMotion: "reduce" });
     await openWav(page, 192_000);

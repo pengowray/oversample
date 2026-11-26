@@ -10206,21 +10206,20 @@ button.canvas-overflow-action-btn.disabled {
     border-top-color: transparent; border-left-color: transparent; border-right-color: transparent;
 }
 
-/* ── Card above Play: "playing at 1:1 without HFR" ─────────────────────────
-   A PopupPanel (portalled, position: fixed) anchored to .hfr-nudge-anchor:
+/* ── Cards above Play (play_card.rs): "Playing 1:1" (HFR) and quiet playback
+   (Gain) ─────────────────────────────────────────────────────────────────
+   A PopupPanel (portalled, position: fixed) anchored to .play-card-anchor:
    an empty box at the toolbar's top edge, in line with Play's left edge
    (the toolbar's 12px padding). Absolute, so it takes no room in the
    toolbar's wrapping flex rows and Play does not move. */
-.hfr-nudge-anchor {
+.play-card-anchor {
     position: absolute;
     left: 12px;
     top: 0;
     width: 0;
     height: 0;
 }
-/* The "quiet playback" card (gain_nudge.rs) has the same look and place. */
-.layer-panel.hfr-nudge,
-.layer-panel.gain-nudge {
+.layer-panel.play-card {
     /* Under the phone Hear sheet (45) and its backdrop (44), so opening Hear
        covers the card; menus (50) still open over it. */
     z-index: 43;
@@ -10233,16 +10232,16 @@ button.canvas-overflow-action-btn.disabled {
        then it stays still. Only box-shadow moves: PopupPanel measures the
        panel's box to place it. */
     border-color: #4a5fa0;
-    animation: hfr-nudge-ring 0.9s ease-out 0.15s 2;
+    animation: play-card-ring 0.9s ease-out 0.15s 2;
 }
-.hfr-nudge-body {
-    animation: hfr-nudge-fade 0.2s ease-out;
+.play-card-body {
+    animation: play-card-fade 0.2s ease-out;
 }
-@keyframes hfr-nudge-ring {
+@keyframes play-card-ring {
     0% { box-shadow: 0 4px 24px rgba(0, 0, 0, 0.7), 0 0 0 0 rgba(127, 156, 245, 0.85); }
     100% { box-shadow: 0 4px 24px rgba(0, 0, 0, 0.7), 0 0 0 16px rgba(127, 156, 245, 0); }
 }
-@keyframes hfr-nudge-fade {
+@keyframes play-card-fade {
     from { opacity: 0; }
     to { opacity: 1; }
 }
@@ -10261,13 +10260,13 @@ button.canvas-overflow-action-btn.disabled {
     border-color: #7f9cf5;
     backdrop-filter: none;
 }
-.hfr-nudge-under-btn .hfr-nudge-text {
+.hfr-nudge-under-btn .play-card-text {
     color: #fff;
 }
-.hfr-nudge-under-btn .hfr-nudge-close {
+.hfr-nudge-under-btn .play-card-close {
     color: #c5d0f5;
 }
-.hfr-nudge-under-btn .hfr-nudge-close:hover {
+.hfr-nudge-under-btn .play-card-close:hover {
     background: #354a85;
 }
 /* While the card says "press the HFR button", the HFR control has a blue
@@ -10284,27 +10283,26 @@ body.hfr-nudge-on .hfr-switch {
     100% { outline-width: 2px; }
 }
 @media (prefers-reduced-motion: reduce) {
-    .layer-panel.hfr-nudge,
-    .layer-panel.gain-nudge,
-    .hfr-nudge-body,
+    .layer-panel.play-card,
+    .play-card-body,
     body.hfr-nudge-on .hfr-switch {
         animation: none;
     }
 }
-.hfr-nudge-text {
+.play-card-text {
     margin: 0 28px 10px 0;
     text-wrap: balance;
     font-size: 13px;
     line-height: 1.4;
     color: #ddd;
 }
-.hfr-nudge-actions {
+.play-card-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
 }
-.hfr-nudge-btn {
+.play-card-btn {
     font: inherit;
     font-size: 13px;
     min-height: 32px;
@@ -10315,22 +10313,22 @@ body.hfr-nudge-on .hfr-switch {
     color: #ddd;
     cursor: pointer;
 }
-.hfr-nudge-btn:hover {
+.play-card-btn:hover {
     background: #333;
     color: #fff;
 }
-.hfr-nudge-btn.primary {
+.play-card-btn.primary {
     background: #2b3a6a;
     border-color: #3d4f8a;
     color: #e6ecff;
 }
-.hfr-nudge-btn.primary:hover {
+.play-card-btn.primary:hover {
     background: #354a85;
     border-color: #4a5fa0;
     color: #fff;
 }
 /* The rare choice: plain text, pushed to the far end of the row. */
-.hfr-nudge-link {
+.play-card-link {
     font: inherit;
     font-size: 12px;
     min-height: 32px;
@@ -10341,11 +10339,11 @@ body.hfr-nudge-on .hfr-switch {
     color: #999;
     cursor: pointer;
 }
-.hfr-nudge-link:hover {
+.play-card-link:hover {
     color: #ddd;
     text-decoration: underline;
 }
-.hfr-nudge-close {
+.play-card-close {
     position: absolute;
     top: 4px;
     right: 4px;
@@ -10359,7 +10357,7 @@ body.hfr-nudge-on .hfr-switch {
     line-height: 1;
     cursor: pointer;
 }
-.hfr-nudge-close:hover {
+.play-card-close:hover {
     color: #fff;
     background: #2a2a2a;
 }

@@ -13,11 +13,11 @@
 // recording by default, which can be loud while the HFR band is quiet; then
 // the button turns on AGC instead, which works on what is played.
 //
-// It shares its look and place with the HFR card (hfr_tour.rs, the
-// .hfr-nudge classes in style.css) and never shows while that card does.
+// It is a `PlayCard`, like the HFR card (hfr_tour.rs), and never shows while
+// that card does.
 
 use crate::audio::streaming_playback::{self, OutputLevelReport};
-use crate::components::popup::{Align, PopupPanel, Side};
+use crate::components::play_card::{PlayCard, PlayCardBody};
 use crate::state::store_fields::*;
 use crate::state::{AppState, GainMode};
 use leptos::prelude::*;
@@ -28,7 +28,6 @@ use std::rc::Rc;
 const NUDGE_GAIN: &str = "Turn on Gain";
 const NUDGE_NEVER: &str = "Don't show again";
 const NUDGE_NEVER_TIP: &str = "Turn back on in Settings > Playback";
-const NUDGE_CLOSE: &str = "Close";
 
 /// Settings > Playback checkbox that allows the card.
 pub const NUDGE_SETTING: &str = "Suggest Gain when playback is very quiet";
@@ -156,33 +155,20 @@ pub fn GainNudge() -> impl IntoView {
         crate::settings::set_bool(crate::settings::keys::GAIN_NUDGE_ENABLED, false);
     };
 
-    let anchor = NodeRef::<leptos::html::Div>::new();
     // Hidden while the phone Hear sheet is open: it would show through it.
     let showing = Signal::derive(move || {
         state.dialogs.gain_nudge().get() && !state.panels.hear_sheet_open().get()
     });
 
     view! {
-        <div class="hfr-nudge-anchor" node_ref=anchor></div>
-        <PopupPanel
-            is_open=showing
-            anchor=anchor
-            preferred_side=Side::Above
-            preferred_align=Align::Start
-            class="layer-panel gain-nudge"
-        >
-            <div class="hfr-nudge-body" role="status"
-                on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
+        <PlayCard is_open=showing class="layer-panel play-card gain-nudge">
+            <PlayCardBody
+                text=Signal::derive(move || nudge_text(peak_db.get()))
+                on_close=Callback::new(move |()| hide(state))
             >
-                <button class="hfr-nudge-close" title=NUDGE_CLOSE aria-label=NUDGE_CLOSE
-                    on:click=move |_| hide(state)
-                >"\u{00D7}"</button>
-                <p class="hfr-nudge-text">{move || nudge_text(peak_db.get())}</p>
-                <div class="hfr-nudge-actions">
-                    <button class="hfr-nudge-btn primary" on:click=turn_on_gain>{NUDGE_GAIN}</button>
-                    <button class="hfr-nudge-link" title=NUDGE_NEVER_TIP on:click=never>{NUDGE_NEVER}</button>
-                </div>
-            </div>
-        </PopupPanel>
+                <button class="play-card-btn primary" on:click=turn_on_gain>{NUDGE_GAIN}</button>
+                <button class="play-card-link" title=NUDGE_NEVER_TIP on:click=never>{NUDGE_NEVER}</button>
+            </PlayCardBody>
+        </PlayCard>
     }
 }

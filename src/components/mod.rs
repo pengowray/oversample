@@ -22,6 +22,7 @@ pub mod hearing_bar;
 pub mod hfr_switch;
 pub mod hfr_tour;
 pub mod gain_nudge;
+pub mod play_card;
 pub mod icons;
 pub mod inertia;
 pub mod layer_panel;

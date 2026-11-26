@@ -14,12 +14,13 @@
 //     "Turn on HFR" leaves the card up for NUDGE_ON_MS as "HFR is on", with
 //     the tutorial button. That card moves to just under the HFR switch,
 //     filled blue, and the button gets a blue ring (body.hfr-nudge-on).
-//     The card pulses twice as it opens (style.css, .hfr-nudge): it appears
+//     The card pulses twice as it opens (style.css, .play-card): it appears
 //     while sound plays and was easy to miss.
 //
 // Entry points for the tutorial: the card, the Band presets menu beside HFR,
 // and Settings > Bats.
 
+use crate::components::play_card::{PlayCard, PlayCardBody};
 use crate::components::popup::{Align, PopupPanel, Side};
 use crate::state::store_fields::*;
 use crate::state::{AppState, MainView, PlaybackMode};
@@ -71,7 +72,6 @@ const NUDGE_ON_MS: i32 = 10_000;
 const NUDGE_HFR: &str = "Turn on HFR";
 const NUDGE_NEVER: &str = "Don't show again";
 const NUDGE_NEVER_TIP: &str = "Turn back on in Settings > Bats";
-const NUDGE_CLOSE: &str = "Close";
 
 /// Settings > Bats checkbox that allows the card.
 pub const NUDGE_SETTING: &str = "Suggest HFR when playing or listening\u{a0}1:1";
@@ -612,10 +612,6 @@ pub fn HfrNudge() -> impl IntoView {
         crate::settings::set_bool(crate::settings::keys::HFR_NUDGE_ENABLED, false);
     };
 
-    // An empty box at the toolbar's top edge, in line with Play (see
-    // .hfr-nudge-anchor). The card sits above it and is portalled, so a
-    // resized (scrolling) toolbar cannot clip it.
-    let anchor = NodeRef::<leptos::html::Div>::new();
     // An empty box over the HFR switch, for the "HFR is on" card.
     let btn_anchor = NodeRef::<leptos::html::Div>::new();
     // Hidden while the phone Hear sheet is open: it would show through it.
@@ -630,72 +626,55 @@ pub fn HfrNudge() -> impl IntoView {
     let open_above_play = Signal::derive(move || showing.get() && !under_btn.get());
     let open_under_btn = Signal::derive(move || showing.get() && under_btn.get());
 
+    let text = Signal::derive(move || {
+        if under_btn.get() {
+            NUDGE_ON_TEXT_UNDER_BTN
+        } else if hfr_on_state.get() {
+            NUDGE_ON_TEXT
+        } else if state.mic.listening().get() {
+            NUDGE_TEXT_LIVE
+        } else {
+            NUDGE_TEXT
+        }
+        .to_string()
+    });
     // The card's contents: the same in both places.
     let card = move || {
         view! {
-            <div class="hfr-nudge-body" role="status" node_ref=body_ref
-                on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
-                on:pointerenter=move |ev: web_sys::PointerEvent| {
-                    if ev.pointer_type() == "mouse" {
-                        held.set(true);
-                    }
-                }
-                on:pointerleave=move |_| held.set(false)
+            <PlayCardBody text=text on_close=Callback::new(move |()| hide_nudge(state))
+                body_ref=body_ref hover=held
             >
-                <button class="hfr-nudge-close" title=NUDGE_CLOSE aria-label=NUDGE_CLOSE
-                    on:click=move |_| hide_nudge(state)
-                >"\u{00D7}"</button>
-                <p class="hfr-nudge-text">
-                    {move || if under_btn.get() {
-                        NUDGE_ON_TEXT_UNDER_BTN
-                    } else if hfr_on_state.get() {
-                        NUDGE_ON_TEXT
-                    } else if state.mic.listening().get() {
-                        NUDGE_TEXT_LIVE
-                    } else {
-                        NUDGE_TEXT
-                    }}
-                </p>
-                <div class="hfr-nudge-actions">
-                    <Show when=move || !hfr_on_state.get()>
-                        <button class="hfr-nudge-btn primary" on:click=turn_on_hfr>{NUDGE_HFR}</button>
-                    </Show>
-                    // Stays a plain button once HFR is on: filled, it read as
-                    // a required next step rather than an offer.
-                    <Show when=move || tour_available(state)>
-                        <button class="hfr-nudge-btn" on:click=show_me>{TOUR_NAME}</button>
-                    </Show>
-                    <Show when=move || !hfr_on_state.get()>
-                        <button class="hfr-nudge-link" title=NUDGE_NEVER_TIP on:click=never>{NUDGE_NEVER}</button>
-                    </Show>
-                </div>
-            </div>
+                <Show when=move || !hfr_on_state.get()>
+                    <button class="play-card-btn primary" on:click=turn_on_hfr>{NUDGE_HFR}</button>
+                </Show>
+                // Stays a plain button once HFR is on: filled, it read as
+                // a required next step rather than an offer.
+                <Show when=move || tour_available(state)>
+                    <button class="play-card-btn" on:click=show_me>{TOUR_NAME}</button>
+                </Show>
+                <Show when=move || !hfr_on_state.get()>
+                    <button class="play-card-link" title=NUDGE_NEVER_TIP on:click=never>{NUDGE_NEVER}</button>
+                </Show>
+            </PlayCardBody>
         }
     };
 
     view! {
-        <div class="hfr-nudge-anchor" node_ref=anchor></div>
         <div class="hfr-nudge-btn-anchor" node_ref=btn_anchor
             style=move || {
                 let (l, t, w, h) = btn_rect.get().unwrap_or_default();
                 format!("left: {l}px; top: {t}px; width: {w}px; height: {h}px;")
             }
         ></div>
-        <PopupPanel
-            is_open=open_above_play
-            anchor=anchor
-            preferred_side=Side::Above
-            preferred_align=Align::Start
-            class="layer-panel hfr-nudge"
-        >
+        <PlayCard is_open=open_above_play class="layer-panel play-card hfr-nudge">
             {card()}
-        </PopupPanel>
+        </PlayCard>
         <PopupPanel
             is_open=open_under_btn
             anchor=btn_anchor
             preferred_side=Side::Below
             preferred_align=Align::Start
-            class="layer-panel hfr-nudge hfr-nudge-under-btn"
+            class="layer-panel play-card hfr-nudge hfr-nudge-under-btn"
         >
             {card()}
         </PopupPanel>
