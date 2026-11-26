@@ -13,7 +13,7 @@ book step). A caption above the app says what each clip shows.
 | `playback-modes.mp4` | 18 s | XForm on, then HET, TE, PS and ZC |
 | `views.mp4` | 8 s | Spec, Wave and Dots |
 | `mark-call.mp4` | 14 s | Zoom in, Selection tool, box round a call, Annotate Region, type a label |
-| `call-detection.mp4` | 8 s | Open the Call detection panel; its boxes appear round the calls |
+| `call-detection.mp4` | 9 s | Open the Call detection panel; its boxes appear round the calls |
 | `bat-book.mp4` | 7 s | Bat book on, then a second species to compare |
 
 ```html

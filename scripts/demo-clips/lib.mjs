@@ -269,7 +269,14 @@ export class Demo {
 
     /** Sets the caption band's text; `null` empties it. */
     async caption(main, sub = '') {
-        if (!this.captions) return;
+        if (this.captions) await this.showCaption(main, sub);
+        if (this.beginOnCaption && !this.segments.length) {
+            if (this.captions) await this.wait(300);
+            this.begin();
+        }
+    }
+
+    async showCaption(main, sub) {
         await this.page.evaluate(async ([main, sub]) => {
             const b = document.getElementById('demo-band');
             if (!b) return;
@@ -282,10 +289,6 @@ export class Demo {
             s.textContent = sub ?? '';
             b.classList.remove('fade');
         }, [main, sub]);
-        if (this.beginOnCaption && !this.segments.length) {
-            await this.wait(300);
-            this.begin();
-        }
     }
 
     /** Full-screen title card for `ms`, then fades away. */
@@ -387,6 +390,7 @@ export class Demo {
      */
     async finish(out, { gif = false } = {}) {
         this.end();
+        if (!this.segments.length) throw new Error('The clip never started (no begin())');
         if (!this.posterShot) await this.poster();
         const video = this.page.video();
         await this.ctx.close();
