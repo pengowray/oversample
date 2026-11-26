@@ -4207,9 +4207,9 @@ impl AppState {
         (-3.0 - peak_db).min(60.0)
     }
 
-    /// Peak of what playback would play (the selection with its frequency
-    /// band, or the first 30 s), after the playback filters and mode and
-    /// before gain. `None` until measured; `Some(None)` when it was silent.
+    /// True peak of what playback would play (the selection with its
+    /// frequency band, or the first 30 s), after the playback filters and
+    /// mode and before gain. `None` until measured; `Some(None)` when it was silent.
     /// Starts a scan when the settings differ from the last measurement.
     /// Re-runs when the measurement arrives and when the main DSP settings
     /// or the selection change.

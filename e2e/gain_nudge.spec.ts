@@ -10,12 +10,16 @@ import { test, expect, type Page } from "@playwright/test";
 
 /** Mono 16-bit WAV: `seconds` of a 1 kHz tone at `amp` (0 to 1). */
 function wav(seconds: number, amp: number): Buffer {
+  return wavOf(seconds, (i, rate) => Math.sin((2 * Math.PI * 1000 * i) / rate) * amp);
+}
+
+/** Mono 16-bit 48 kHz WAV of `sample(i, rate)` (-1 to 1). */
+function wavOf(seconds: number, sample: (i: number, rate: number) => number): Buffer {
   const rate = 48_000;
   const n = Math.round(rate * seconds);
   const data = Buffer.alloc(n * 2);
   for (let i = 0; i < n; i++) {
-    const v = Math.sin((2 * Math.PI * 1000 * i) / rate) * amp;
-    data.writeInt16LE(Math.round(v * 32767), i * 2);
+    data.writeInt16LE(Math.round(sample(i, rate) * 32767), i * 2);
   }
   const h = Buffer.alloc(44);
   h.write("RIFF", 0);
@@ -37,7 +41,7 @@ function wav(seconds: number, amp: number): Buffer {
 /** About −46 dBFS. */
 const QUIET = 0.005;
 
-async function openWav(page: Page, amp: number, clearSetting = true) {
+async function openWav(page: Page, amp: number, clearSetting = true, buffer = wav(8, amp)) {
   await page.goto("/");
   await expect(page.locator(".app").first()).toBeVisible({ timeout: 30_000 });
   if (clearSetting) {
@@ -46,7 +50,7 @@ async function openWav(page: Page, amp: number, clearSetting = true) {
   await page.locator('input[type="file"]').first().setInputFiles({
     name: `tone-${amp}.wav`,
     mimeType: "audio/wav",
-    buffer: wav(8, amp),
+    buffer,
   });
   await expect(page.locator(".band-gutter").first()).toBeVisible({ timeout: 30_000 });
 }
@@ -82,6 +86,16 @@ test.describe("Quiet playback card", () => {
     await expect.poll(async () => (await testState(page)).outputPeakDb, { timeout: 10_000 }).not.toBeNull();
     expect((await testState(page)).outputPeakDb as number).toBeGreaterThan(-7);
     await expect(card(page)).toHaveCount(0);
+  });
+
+  test("the level is the waveform's peak between the samples", async ({ page }) => {
+    // A 12 kHz tone sampled 45 degrees off its crests, scaled so the samples
+    // reach full scale: the waveform through them peaks 3 dB higher.
+    const tone = wavOf(8, (i) => Math.sin((Math.PI / 2) * i + Math.PI / 4) / Math.SQRT1_2);
+    await openWav(page, 1, true, tone);
+    await page.locator(".play-main-btn").click();
+    await expect.poll(async () => (await testState(page)).outputPeakDb, { timeout: 10_000 }).not.toBeNull();
+    expect((await testState(page)).outputPeakDb as number).toBeCloseTo(3.0, 0);
   });
 
   test("no card for silence", async ({ page }) => {

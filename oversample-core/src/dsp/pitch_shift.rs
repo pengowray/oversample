@@ -75,7 +75,7 @@ const ALIGN_RANGE: usize = 64;
 /// Samples compared when lining a grain up with the grain before it.
 const ALIGN_WINDOW: usize = GRAIN - GRAIN_HOP;
 /// Taps on each side of the resampling kernel.
-const KERNEL_HALF: usize = 16;
+pub(crate) const KERNEL_HALF: usize = 16;
 /// Kernel rows per input sample: the fractional position is rounded to
 /// 1/4096 of a sample, which leaves an error about 70 dB under the signal.
 const KERNEL_PHASES: usize = 4096;
@@ -128,6 +128,14 @@ fn kernel() -> &'static [f32] {
         }
         table
     })
+}
+
+/// The waveform of `samples` at position `pos` (in samples, may be
+/// fractional), by the same windowed-sinc interpolation the shifter uses.
+/// Samples outside the buffer are 0.
+#[inline]
+pub(crate) fn interpolate(samples: &[f32], pos: f64) -> f32 {
+    sample_at(samples, pos, kernel())
 }
 
 /// The input at position `pos` (in samples, may be fractional or outside the

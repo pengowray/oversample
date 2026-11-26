@@ -277,8 +277,8 @@ pub(crate) fn processed_fingerprint(
     h.finish()
 }
 
-/// Measure the peak of `range_secs` after the playback filters and mode,
-/// before gain, in the background, and store it in `processed_peak_cache`.
+/// Measure the true peak ([`crate::dsp::true_peak`]) of `range_secs` after
+/// the playback filters and mode, before gain, in the background, and store it in `processed_peak_cache`.
 /// `params` must come from `snapshot_dsp_params`. Runs in 2 s slices with a
 /// yield between them; stops if the file is closed.
 pub(crate) fn start_processed_peak_scan(
@@ -315,7 +315,7 @@ pub(crate) fn start_processed_peak_scan(
             for buf in
                 crate::audio::export::process_region(source.as_ref(), &views, sr, t, t1, &params)
             {
-                peak = buf.iter().fold(peak, |p, s| p.max(s.abs()));
+                peak = peak.max(crate::dsp::true_peak::true_peak(&buf));
             }
             t = t1;
             crate::canvas::tile_cache::yield_to_browser().await;

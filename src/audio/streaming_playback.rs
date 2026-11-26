@@ -94,7 +94,10 @@ const OUTPUT_LEVEL_SECS: f64 = 3.0;
 const OUTPUT_LEVEL_MIN_SECS: f64 = 0.3;
 
 /// The peak level of the start of a stream played with gain off: after the
-/// filters and the playback mode, so it is the level the user hears.
+/// filters and the playback mode, so it is the level the user hears. It is
+/// the true peak (between the samples too), which is what the browser's
+/// resampler and the speaker get: a recording clipped at 0 dBFS reads above
+/// 0 dB.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct OutputLevelReport {
     /// Peak in dBFS; `None` when the output was digital silence.
@@ -113,7 +116,8 @@ pub(crate) fn last_output_level() -> Option<OutputLevelReport> {
     LAST_OUTPUT_LEVEL.with(|l| l.get())
 }
 
-/// Running peak of a stream's output while gain is off.
+/// Running true peak of a stream's output while gain is off. Each chunk is
+/// measured on its own: gaps near its ends are read at their sample values.
 struct OutputLevelMeter {
     rate: u32,
     peak: f32,
@@ -136,7 +140,7 @@ impl OutputLevelMeter {
         if self.done {
             return;
         }
-        let peak_of = |s: &[f32]| s.iter().fold(0.0f32, |p, v| p.max(v.abs()));
+        let peak_of = crate::dsp::true_peak::true_peak;
         let p = match chunk {
             ChunkAudio::Mono(s) => peak_of(s),
             ChunkAudio::Stereo { left, right } => peak_of(left).max(peak_of(right)),
@@ -548,7 +552,6 @@ async fn chunk_loop(
         .await;
         pos = new_pos;
 
-        level.add(&chunk);
         prebuf.push(chunk);
 
         // Yield between pre-buffer chunks so the UI stays responsive
@@ -592,6 +595,8 @@ async fn chunk_loop(
             scheduled_time += advance(&chunk);
             SCHEDULED_END.with(|s| s.set(scheduled_time));
         }
+        // Measured after scheduling, so it never delays the first sound.
+        level.add(&chunk);
     }
     level.maybe_report(generation, pos >= playback_end_bound(&source, end_sample, play_to_eof));
 
@@ -624,14 +629,14 @@ async fn chunk_loop(
         )
         .await;
         pos = new_pos;
-        level.add(&chunk);
-        level.maybe_report(generation, false);
 
         if chunk.frames() > 0 {
             chunk.schedule(&ctx, &gain_node, final_rate, scheduled_time);
             scheduled_time += advance(&chunk);
             SCHEDULED_END.with(|s| s.set(scheduled_time));
         }
+        level.add(&chunk);
+        level.maybe_report(generation, false);
 
         // Yield to browser so UI stays responsive
         yield_to_browser().await;
