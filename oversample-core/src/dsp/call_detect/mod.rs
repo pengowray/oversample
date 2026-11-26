@@ -27,7 +27,7 @@ pub mod spectrum;
 pub mod trains;
 
 #[cfg(test)]
-mod test_util;
+pub(crate) mod test_util;
 
 pub use classify::{CallClassifier, CallKind, Verdict};
 pub use detector::{CallDetector, CallEvent};

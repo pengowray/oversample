@@ -14,6 +14,7 @@ pub mod float_grid;
 pub mod harmonics;
 pub mod heterodyne;
 pub mod lsb_autocorr;
+pub mod noise_events;
 pub mod notch;
 pub mod pipistrelle;
 pub mod pitch_shift;

@@ -57,6 +57,17 @@ pub fn no_bat_sounds_dir() -> PathBuf {
     corpus_root("NO_BAT_SOUNDS_DIR", "../batchi-extras/no-bat-sounds").join("sounds")
 }
 
+/// Recordings of rain, wind, thunder, traffic and voices from Wikimedia
+/// Commons (`SOUND_EVENT_SOUNDS_DIR`, default
+/// `../batchi-extras/sound-event-sounds`).
+pub fn sound_event_sounds_dir() -> PathBuf {
+    corpus_root(
+        "SOUND_EVENT_SOUNDS_DIR",
+        "../batchi-extras/sound-event-sounds",
+    )
+    .join("sounds")
+}
+
 /// FNV-1a over a byte stream, for snapshot hashes.
 pub struct Fnv(pub u64);
 
