@@ -17,6 +17,7 @@ use crate::classifier::{
     self, boxes, combined, summary, DownloadStatus, Method, MethodFacts, RunStatus,
 };
 use crate::dsp::call_detect::CallKind;
+use oversample_core::dsp::digital_signals::DigitalKind;
 use oversample_core::dsp::noise_events::NoiseKind;
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
@@ -197,6 +198,31 @@ fn rows(state: AppState, file: u64) -> Vec<Row> {
                 name: classifier::noise_scan::kind_name(kind).to_string(),
                 species: false,
                 found,
+                n,
+                best: None,
+                swatch: Swatch::Noise,
+                show: Some(Show::Time(first.start_s, first.end_s)),
+            });
+        }
+    }
+
+    // Square waves and modulated carriers from electronics.
+    if let Some(rate) = state.library.files().with(|fs| {
+        fs.iter().find(|f| f.id == file).map(|f| f.audio.sample_rate)
+    }) {
+        let events = classifier::noise_scan::digital(file, rate).unwrap_or_default();
+        for kind in [DigitalKind::SquareWave, DigitalKind::Modulated] {
+            let of_kind: Vec<_> = events.iter().filter(|e| e.kind == kind).collect();
+            let Some(first) = of_kind.first() else {
+                continue;
+            };
+            let n = of_kind.len();
+            out.push(Row {
+                group: Group::Noise,
+                title: "Go to the first detection".to_string(),
+                name: classifier::noise_scan::digital_kind_name(kind).to_string(),
+                species: false,
+                found: count(n, "detection", "detections"),
                 n,
                 best: None,
                 swatch: Swatch::Noise,

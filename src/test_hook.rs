@@ -216,6 +216,27 @@ pub fn install(state: AppState) {
             "streamFile",
             name_of(crate::audio::playback::stream_file_id()),
         );
+        // What the newest audio stream plays: its range, mode and main setting.
+        set(
+            &o,
+            "lastStream",
+            match crate::audio::playback::stream_info() {
+                Some(info) => {
+                    let so = js_sys::Object::new();
+                    set(&so, "startSecs", JsValue::from_f64(info.start_secs));
+                    set(&so, "endSecs", JsValue::from_f64(info.end_secs));
+                    set(&so, "mode", JsValue::from_str(&format!("{:?}", info.mode)));
+                    set(&so, "hetFreq", JsValue::from_f64(info.het_freq));
+                    set(&so, "teFactor", JsValue::from_f64(info.te_factor));
+                    set(&so, "psFactor", JsValue::from_f64(info.ps_factor));
+                    set(&so, "zcFactor", JsValue::from_f64(info.zc_factor));
+                    set(&so, "bandLow", opt_f64(info.band.map(|b| b.0)));
+                    set(&so, "bandHigh", opt_f64(info.band.map(|b| b.1)));
+                    so.into()
+                }
+                None => JsValue::NULL,
+            },
+        );
         // The open timeline: the files its clips show for the chosen channel,
         // the takes left empty because that channel's file is not loaded, and
         // the files the newest timeline audio stream reads from.
