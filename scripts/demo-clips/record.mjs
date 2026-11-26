@@ -93,6 +93,15 @@ const CLIPS = {
         await opened(d, rec.pip);
         await s.batBook(d);
     },
+    live: async (d) => {
+        await d.openRecording(rec.pip);
+        await s.hideFiles(d, { quick: true });
+        await d.wait(1500);
+        await s.startReplay(d);
+        await d.place();
+        d.beginWithCaption();
+        await s.listenLive(d, rec.pip);
+    },
     'view-3d': async (d) => {
         await opened(d, rec.pip);
         await s.view3d(d, rec.pip);
@@ -159,7 +168,7 @@ const gif = flag('--gif');
 const captions = !flag('--no-captions');
 const phone = flag('--phone');
 /** Clips whose steps work in the phone layout. */
-const PHONE_CLIPS = ['tour', 'open-recording', 'hfr-demo', 'bat-book'];
+const PHONE_CLIPS = ['tour', 'open-recording', 'hfr-demo', 'bat-book', 'live'];
 const available = phone ? PHONE_CLIPS : Object.keys(CLIPS);
 const names = args.length ? args : available;
 const unknown = names.filter((n) => !available.includes(n));

@@ -30,7 +30,7 @@ export const TIMELINE_FILES = [
 ];
 
 export const TEXT = {
-    title: ['Oversample', 'Free browser app for recordings of bats and other wildlife'],
+    title: ['Oversample', 'Free app for recordings of bats and other wildlife'],
     open: 'Find recordings on Xeno-canto by species name',
     zoom: ['Zoom in and move along the recording', 'Zoom: Ctrl + scroll wheel'],
     hear: 'Hear bat calls at a lower pitch',
@@ -41,7 +41,8 @@ export const TEXT = {
     book: 'Bat book: typical calls of UK bats',
     view3d: 'Select bat calls and view them in 3D',
     timeline: "Create a timeline from a night's recordings",
-    end: ['app.oversample.com', 'Also available for Windows, macOS, Linux and Android'],
+    live: ['Hear bat calls live at a lower pitch', 'Test signal here: a replayed bat recording'],
+    end: ['app.oversample.com', 'Also for Windows, macOS, Linux and Android'],
 };
 
 const MAIN = '.main-view .chart-stage > canvas';
@@ -295,4 +296,34 @@ export async function timeline(d, names) {
     }
     await d.hold(500);
     await d.click(page.getByRole('button', { name: 'Create Timeline' }), { ms: 700, after: 2500 });
+}
+
+/**
+ * Starts live listening fed by the app's Replay test signal (the open
+ * recording, looped), zoomed in so the calls are wide enough to see. Run
+ * before the clip starts: the title bar says "Test signal: Replay" throughout.
+ */
+export async function startReplay(d) {
+    await d.page.evaluate(() => window.__synthStart('replay'));
+    await d.page.waitForFunction(() => window.__oversample_test().liveActive, null, { timeout: 30000 });
+    const b = await d.page.locator(MAIN).first().boundingBox();
+    await d.page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await d.page.keyboard.down('Control');
+    for (let i = 0; i < 30 && (await d.state()).visibleTime > 2.6; i++) {
+        await d.page.mouse.wheel(0, -100);
+        await d.wait(40);
+    }
+    await d.page.keyboard.up('Control');
+    await d.wait(3000);
+}
+
+/** Live view scrolling; HFR on and a band chosen on the frequency strip. */
+export async function listenLive(d, rec) {
+    await d.caption(...TEXT.live);
+    await d.hold(2200);
+    if (!(await d.state()).hfrOn) {
+        await d.click('.hearing-bar .hfr-switch .switch-btn-top', { ms: 800, after: 900 });
+    }
+    const [top, bottom] = rec.band;
+    await d.drag(await d.stripAt(top), await d.stripAt(bottom), { ms: 1100, after: 2600 });
 }
