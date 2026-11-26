@@ -3432,9 +3432,22 @@ impl AppState {
         }
     }
 
-    /// The selected file's `(bits_per_sample, is_float)`. Reactive.
+    /// The file whose levels set the spectrogram's colours: the selected
+    /// file, or on a timeline (which has no selected file) its first file, as
+    /// the spectrogram's other display levels use. Reactive.
+    pub fn display_file_index(&self) -> Option<usize> {
+        match self.timeline.active().with(|tl| {
+            tl.as_ref()
+                .map(|tl| tl.primary_segment().map(|s| s.file_index))
+        }) {
+            Some(primary) => primary,
+            None => self.library.current_index().get(),
+        }
+    }
+
+    /// The `(bits_per_sample, is_float)` of [`Self::display_file_index`]. Reactive.
     pub fn current_sample_format(&self) -> Option<(u16, bool)> {
-        let idx = self.library.current_index().get()?;
+        let idx = self.display_file_index()?;
         self.library.files().with(|files| {
             files
                 .get(idx)
@@ -3442,18 +3455,18 @@ impl AppState {
         })
     }
 
-    /// Top of the spectrogram Range for the selected file: 120 dB for 16-bit
+    /// Top of the spectrogram Range for [`Self::display_file_index`]: 120 dB for 16-bit
     /// audio, 170 dB for 24-bit, 32-bit and float. Reactive.
     pub fn spect_max_range_db(&self) -> f32 {
         let (bits, is_float) = self.current_sample_format().unwrap_or((16, false));
         oversample_core::dsp::depth_range::max_display_range_db(bits, is_float)
     }
 
-    /// The selected file's noise floor in dBFS per bin at the current
-    /// baseline FFT size. `None` until it is measured, or when the file had no
-    /// sound to measure. Reactive.
+    /// The noise floor of [`Self::display_file_index`] in dBFS per bin at the
+    /// current baseline FFT size. `None` until it is measured, or when the file
+    /// had no sound to measure. Reactive.
     pub fn current_noise_floor_dbfs(&self) -> Option<f32> {
-        let idx = self.library.current_index().get()?;
+        let idx = self.display_file_index()?;
         let id = self
             .library
             .files()
@@ -3470,7 +3483,7 @@ impl AppState {
     }
 
     /// The spectrogram's display floor and range. With Auto on, the range
-    /// reaches 10 dB below the selected file's noise floor. Either way it is
+    /// reaches 10 dB below the noise floor of [`Self::display_file_index`]. Either way it is
     /// limited to what the file's format can show: a Range raised to 170 dB for
     /// a 24-bit file shows a 16-bit file at 120 dB. Reactive.
     pub fn spect_floor_range(&self) -> (f32, f32) {
@@ -3495,7 +3508,7 @@ impl AppState {
         /// Frames sampled across the file: enough for a stable percentile,
         /// few enough to run in a few milliseconds.
         const FRAMES: usize = 400;
-        let Some(idx) = self.library.current_index().get() else {
+        let Some(idx) = self.display_file_index() else {
             return;
         };
         // `is_recording` stays set on an unsaved web recording after it stops,
