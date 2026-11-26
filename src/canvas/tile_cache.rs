@@ -292,39 +292,6 @@ pub fn fallback_tile_info(
     (fb_tile, fb_src_start, fb_src_end)
 }
 
-/// Aggregate dense STFT columns into fewer columns by taking the max magnitude
-/// per frequency bin across each group of `factor` columns. This preserves
-/// transient peaks (like bat calls) that sparse hop sizes would miss.
-fn aggregate_columns_max(
-    cols: &[crate::types::SpectrogramColumn],
-    factor: usize,
-) -> Vec<crate::types::SpectrogramColumn> {
-    if factor <= 1 || cols.is_empty() {
-        return cols.to_vec();
-    }
-    let n_output = cols.len() / factor;
-    (0..n_output)
-        .map(|i| {
-            let group_start = i * factor;
-            let group_end = (group_start + factor).min(cols.len());
-            let group = &cols[group_start..group_end];
-            let n_bins = group[0].magnitudes.len();
-            let mut max_mags = vec![0.0f32; n_bins];
-            for col in group {
-                for (bin, &mag) in col.magnitudes.iter().enumerate().take(n_bins) {
-                    if mag > max_mags[bin] {
-                        max_mags[bin] = mag;
-                    }
-                }
-            }
-            crate::types::SpectrogramColumn {
-                magnitudes: max_mags,
-                time_offset: group[0].time_offset,
-            }
-        })
-        .collect()
-}
-
 // ── Cache data structures ────────────────────────────────────────────────────
 
 // The tile container, `Tile`, and the in-flight timeout/spawn-count helpers
@@ -967,8 +934,9 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
         let tile_hop = (config_hop / decim_m).max(1);
         let baseline_hop = (BASELINE_HOP / decim_m).max(1);
 
-        // For coarse LODs (hop > baseline), use quality downscaling:
-        // compute STFT at baseline resolution and aggregate via per-bin max.
+        // For coarse LODs (hop > baseline), use quality downscaling: compute
+        // the STFT at baseline resolution and join each group of columns so a
+        // short call stays visible and the background keeps its level.
         let cols = if config_hop > BASELINE_HOP {
             let oversample = config_hop / BASELINE_HOP;
             let compute_fft = fft_mode.fft_for_lod(LOD_BASELINE);
@@ -980,7 +948,7 @@ pub fn schedule_tile_lod(state: AppState, file_idx: usize, lod: u8, tile_idx: us
                 0,
                 TILE_COLS * oversample,
             );
-            aggregate_columns_max(&dense_cols, oversample)
+            oversample_core::dsp::column_pool::pool_columns(&dense_cols, oversample)
         } else {
             compute_stft_columns(&samples, effective_rate, actual_fft, tile_hop, 0, TILE_COLS)
         };
