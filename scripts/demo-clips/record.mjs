@@ -106,6 +106,8 @@ const CLIPS = {
         await s.markCall(d, rec.pip);
         await s.detectCalls(d);
         await s.batBook(d);
+        // The end card would make a nearly black poster.
+        await d.poster();
         await d.caption(null);
         await d.endCard(...s.TEXT.end, 2600);
     },

@@ -1,8 +1,8 @@
 # Media for web pages
 
 Short silent videos of Oversample for web pages and posts: 1280 × 720 MP4,
-each with a `<name>-poster.jpg`. A caption above the app says what each clip
-shows.
+each with a `<name>-poster.jpg` (its last frame; the tour's is from the bat
+book step). A caption above the app says what each clip shows.
 
 | Clip | Length | Shows |
 |---|---|---|
