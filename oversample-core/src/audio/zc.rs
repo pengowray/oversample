@@ -39,7 +39,7 @@
 //!   ----- interval data from data_pointer -----
 //! ```
 //!
-//! Interval-data encoding (variable-length per dot):
+//! Interval-data encoding (variable-length per dot), types 131 and 132:
 //!
 //! | First byte    | Meaning                                                     |
 //! |---------------|-------------------------------------------------------------|
@@ -48,6 +48,18 @@
 //! | `0xA0..=0xBF` | 21-bit absolute; next 2 bytes                                |
 //! | `0xC0..=0xDF` | 29-bit absolute; next 3 bytes                                |
 //! | `0xE0..=0xFF` | Status byte: low 5 bits = status code; next byte = dot count |
+//!
+//! Type 130 is the same except that `0xE0..=0xFF` is a one-byte code that
+//! turns off the number of dots in its low 5 bits. Type 129 has the same
+//! one-byte delta, then:
+//!
+//! | First byte    | Meaning                                                     |
+//! |---------------|-------------------------------------------------------------|
+//! | `0x80..=0xF7` | absolute interval: bits 3-6 are a shift N, bits 0-2 and the next byte an 11-bit value, interval = value << N |
+//! | `0xF8..=0xFF` | one-byte code that turns off the number of dots in its low 3 bits |
+//!
+//! A turn-off or status code carries no interval: the next delta is added to
+//! the interval before it.
 //!
 //! Frequency at dot `i` is derived from a 2-dot rolling period:
 //!
@@ -244,7 +256,7 @@ pub fn parse_zc(bytes: &[u8]) -> Result<ZcData, String> {
         }
     }
 
-    let (intervals_us, off_mask) = decode_intervals(&bytes[data_pointer..])?;
+    let (intervals_us, off_mask) = decode_intervals(&bytes[data_pointer..], file_type)?;
     let time_factor = if res1 == DEFAULT_RES1 {
         1.0
     } else {
@@ -375,7 +387,8 @@ fn parse_guano_text(bytes: &[u8]) -> Vec<(String, String)> {
 
 /// Decode the variable-length interval section. Returns interval values
 /// in *microseconds before time_factor scaling*, plus a per-dot OFF mask.
-fn decode_intervals(data: &[u8]) -> Result<(Vec<u32>, Vec<bool>), String> {
+/// The codes above 0x7F depend on `file_type`: see the module doc.
+fn decode_intervals(data: &[u8], file_type: u8) -> Result<(Vec<u32>, Vec<bool>), String> {
     let mut intervals: Vec<u32> = Vec::with_capacity(4096);
     let mut off_intervals: Vec<(usize, u8)> = Vec::new();
     let mut last_diff: i64 = 0;
@@ -383,6 +396,32 @@ fn decode_intervals(data: &[u8]) -> Result<(Vec<u32>, Vec<bool>), String> {
 
     while i < data.len() && intervals.len() < MAX_DOTS {
         let b = data[i];
+        // Type 129: an interval given as a shifted 11-bit value, or a
+        // one-byte code turning off up to 7 dots.
+        if file_type == 129 && b >= 0x80 {
+            if b >= 0xF8 {
+                off_intervals.push((intervals.len(), b & 0x07));
+                i += 1;
+                continue;
+            }
+            if i + 1 >= data.len() {
+                break;
+            }
+            let shift = ((b >> 3) & 0x0F) as u32;
+            let value = (((b & 0x07) as u32) << 8) | data[i + 1] as u32;
+            let acc = value << shift;
+            last_diff = acc as i64;
+            intervals.push(acc);
+            i += 2;
+            continue;
+        }
+        // Type 130: a one-byte code turning off up to 31 dots, where 131 and
+        // 132 have a two-byte status code.
+        if file_type == 130 && b >= 0xE0 {
+            off_intervals.push((intervals.len(), b & 0x1F));
+            i += 1;
+            continue;
+        }
         match b {
             0x00..=0x7F => {
                 // 7-bit signed delta from current `last_diff`.
@@ -609,13 +648,20 @@ mod tests {
     }
 
     /// Build a synthetic minimum-viable v129 .zc file with a single
-    /// absolute interval + two 7-bit deltas.
+    /// absolute interval + two 7-bit deltas. `0x80 0x32` reads as 50 in
+    /// every file type: a 13-bit value in 130 to 132, and an unshifted
+    /// value in 129.
     fn synth_zc_minimal() -> Vec<u8> {
+        synth_zc(129)
+    }
+
+    /// The same file as `synth_zc_minimal`, of the given file type.
+    fn synth_zc(file_type: u8) -> Vec<u8> {
         let mut buf = vec![0u8; 0x120]; // header + small data_info area + small data area
                                         // u16le data_info_pointer = 0x11a
         buf[0] = 0x1a;
         buf[1] = 0x01;
-        buf[3] = 129;
+        buf[3] = file_type;
         // header text fields stay null
         // data_info @ 0x11a: data_pointer = 0x120, res1 = 25000, divratio = 8, vres = 0
         let data_pointer: u16 = 0x120;
@@ -685,7 +731,8 @@ mod tests {
         //   0x10              -> +16 delta -> 66 µs          (dot 1, OFF)
         //   0x10              -> +16 delta -> 82 µs          (dot 2, OFF)
         //   0x10              -> +16 delta -> 98 µs          (dot 3, ON again)
-        let mut buf = synth_zc_minimal();
+        // The two-byte status code is types 131 and 132's.
+        let mut buf = synth_zc(131);
         // Replace the trailing [0x10, 0x10] with [0xE1, 0x02, 0x10, 0x10, 0x10].
         let abs_end = buf.len() - 2;
         buf.truncate(abs_end);
@@ -701,6 +748,51 @@ mod tests {
         assert!(r.off_mask[1], "dot 1 should be OFF (status start)");
         assert!(r.off_mask[2], "dot 2 should be OFF (status count)");
         assert!(!r.off_mask[3], "dot 3 should be ON again");
+    }
+
+    /// The data section of `synth_zc(file_type)` replaced by `data`.
+    fn with_data(file_type: u8, data: &[u8]) -> Vec<u8> {
+        let mut buf = synth_zc(file_type);
+        buf.truncate(0x120);
+        buf.extend_from_slice(data);
+        buf
+    }
+
+    /// Microsecond intervals between dots, from the parsed times.
+    fn intervals_us(r: &ZcData) -> Vec<u32> {
+        let mut prev = 0.0;
+        r.times_s
+            .iter()
+            .map(|&t| {
+                let iv = ((t - prev) * 1e6).round() as u32;
+                prev = t;
+                iv
+            })
+            .collect()
+    }
+
+    #[test]
+    fn type_129_reads_shifted_intervals_and_one_byte_turn_off_codes() {
+        // From Corben's format note: 128,100 is 100; a shift of 2 on
+        // (5 * 256 + 213) is 5972; 251 (0xFB) turns off the next 3 dots, and
+        // carries no interval, so the delta after it adds to the one before.
+        let r = parse_zc(&with_data(129, &[0x80, 100, 0x95, 213, 0xFB, 0x01, 0x01, 0x01, 0x01])).unwrap();
+        assert_eq!(intervals_us(&r), vec![100, 5972, 5973, 5974, 5975, 5976]);
+        assert_eq!(r.off_mask, vec![false, false, true, true, true, false]);
+    }
+
+    #[test]
+    fn type_130_turns_dots_off_with_one_byte() {
+        // 0xE2 turns off the next 2 dots; in 131 it would be a status code
+        // whose count is the byte after it.
+        let r = parse_zc(&with_data(130, &[0x80, 50, 0xE2, 0x02, 0x02, 0x02])).unwrap();
+        assert_eq!(intervals_us(&r), vec![50, 52, 54, 56]);
+        assert_eq!(r.off_mask, vec![false, true, true, false]);
+        // The same bytes in a type 131 file: 0xE2 0x02 is "normal" status
+        // for 2 dots, and nothing is off.
+        let r = parse_zc(&with_data(131, &[0x80, 50, 0xE2, 0x02, 0x02, 0x02])).unwrap();
+        assert_eq!(intervals_us(&r), vec![50, 52, 54]);
+        assert!(r.off_mask.iter().all(|&off| !off));
     }
 
     #[test]
