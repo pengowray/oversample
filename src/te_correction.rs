@@ -418,9 +418,11 @@ pub fn set_time_expansion(
         crate::audio::playback::stop(&state);
     }
     // The "Playing 1:1" card above Play says whether the file holds sound
-    // above hearing range, which the new rate changes.
+    // above hearing range, which the new rate changes. The "quiet playback"
+    // card's level was measured at the old rate.
     if is_current {
         state.dialogs.hfr_nudge().set(false);
+        state.dialogs.gain_nudge().set(false);
     }
 
     const HOP_SIZE: usize = 512;

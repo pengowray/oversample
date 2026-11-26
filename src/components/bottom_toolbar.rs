@@ -503,6 +503,7 @@ pub fn BottomToolbar() -> impl IntoView {
             // button), reminding the user that pressing Play right now
             // won't produce anything audible.
             <crate::components::hfr_tour::HfrNudge/>
+            <crate::components::gain_nudge::GainNudge/>
             {move || has_file().then(|| view! {
                 <div class:inaudible-warning=move || play_inaudible.get() style="display: contents;">
                 <ComboButton

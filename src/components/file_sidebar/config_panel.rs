@@ -95,6 +95,22 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         on:change=on_follow_cursor
                     />
                 </div>
+                <div class="setting-row">
+                    <label class="setting-label wraps" for="gain-nudge-enabled">
+                        {crate::components::gain_nudge::NUDGE_SETTING}
+                    </label>
+                    <input
+                        id="gain-nudge-enabled"
+                        type="checkbox"
+                        class="setting-checkbox"
+                        prop:checked=move || state.dialogs.gain_nudge_enabled().get()
+                        on:change=move |ev| {
+                            let on = event_target_checked(&ev);
+                            state.dialogs.gain_nudge_enabled().set(on);
+                            crate::settings::set_bool(crate::settings::keys::GAIN_NUDGE_ENABLED, on);
+                        }
+                    />
+                </div>
             </div>
 
             <div class="setting-group">

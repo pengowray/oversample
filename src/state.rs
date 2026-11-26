@@ -2612,6 +2612,13 @@ pub struct DialogsState {
     /// Persisted: the card may show (Settings > Bats). "Don't show again"
     /// turns it off.
     pub hfr_nudge_enabled: bool,
+    /// The "quiet playback" card above the Play button is showing
+    /// (`components::gain_nudge`).
+    pub gain_nudge: bool,
+    /// That card has been shown this session (it shows at most once).
+    pub gain_nudge_shown: bool,
+    /// Persisted: that card may show (Settings > Playback).
+    pub gain_nudge_enabled: bool,
 }
 
 /// Loaded-file library + load queue.
@@ -3106,6 +3113,12 @@ impl AppState {
                 hfr_nudge_shown: false,
                 hfr_nudge_enabled: crate::settings::get_bool(
                     crate::settings::keys::HFR_NUDGE_ENABLED,
+                    true,
+                ),
+                gain_nudge: false,
+                gain_nudge_shown: false,
+                gain_nudge_enabled: crate::settings::get_bool(
+                    crate::settings::keys::GAIN_NUDGE_ENABLED,
                     true,
                 ),
             }),
@@ -4508,6 +4521,30 @@ impl AppState {
     }
 
     /// Toggle HFR on/off. Saves/restores playback mode, bandpass, and gain.
+    /// Set the playback gain mode, keeping `gain.auto` and the mode the Gain
+    /// switch turns back on in step.
+    pub fn set_gain_mode(&self, mode: GainMode) {
+        if mode.is_auto() {
+            self.gain.mode_last_auto().set(mode);
+        }
+        self.gain.mode().set(mode);
+        self.gain.auto().set(mode.is_auto());
+    }
+
+    /// The Gain switch for playback: off, or back to the last auto mode.
+    pub fn toggle_gain(&self) {
+        let mode = self.gain.mode().get_untracked();
+        if mode == GainMode::Off {
+            self.set_gain_mode(self.gain.mode_last_auto().get_untracked());
+        } else {
+            if mode.is_auto() {
+                self.gain.mode_last_auto().set(mode);
+            }
+            self.gain.mode().set(GainMode::Off);
+            self.gain.auto().set(false);
+        }
+    }
+
     pub fn toggle_hfr(&self) {
         // Swap gain_db between HFR-on and HFR-off so we don't blast eardrums
         let current_gain = self.gain.db().get_untracked();

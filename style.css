@@ -10218,7 +10218,9 @@ button.canvas-overflow-action-btn.disabled {
     width: 0;
     height: 0;
 }
-.layer-panel.hfr-nudge {
+/* The "quiet playback" card (gain_nudge.rs) has the same look and place. */
+.layer-panel.hfr-nudge,
+.layer-panel.gain-nudge {
     /* Under the phone Hear sheet (45) and its backdrop (44), so opening Hear
        covers the card; menus (50) still open over it. */
     z-index: 43;
@@ -10283,6 +10285,7 @@ body.hfr-nudge-on .hfr-switch {
 }
 @media (prefers-reduced-motion: reduce) {
     .layer-panel.hfr-nudge,
+    .layer-panel.gain-nudge,
     .hfr-nudge-body,
     body.hfr-nudge-on .hfr-switch {
         animation: none;

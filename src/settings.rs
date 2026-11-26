@@ -21,6 +21,9 @@ pub mod keys {
     /// "false" after "Don't show again" on the card that suggests HFR when an
     /// ultrasonic recording plays at 1:1. Settings > Bats turns it back on.
     pub const HFR_NUDGE_ENABLED: &str = "oversample_hfr_nudge_enabled";
+    /// "false" after "Don't show again" on the card that suggests Gain when
+    /// playback is very quiet. Settings > Playback turns it back on.
+    pub const GAIN_NUDGE_ENABLED: &str = "oversample_gain_nudge_enabled";
     pub const BAT_BOOK_MODE: &str = "oversample_bat_book_mode";
     pub const BAT_BOOK_REGION: &str = "oversample_bat_book_region";
     pub const BAT_BOOK_FAVOURITES: &str = "oversample_bat_book_favourites";

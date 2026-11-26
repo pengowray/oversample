@@ -307,6 +307,20 @@ pub fn install(state: AppState) {
             "hfrNudge",
             JsValue::from_bool(state.dialogs.hfr_nudge().get_untracked()),
         );
+        set(
+            &o,
+            "gainNudge",
+            JsValue::from_bool(state.dialogs.gain_nudge().get_untracked()),
+        );
+        // Peak level (dBFS) of the start of the current stream with gain off;
+        // null until measured or when silent.
+        set(
+            &o,
+            "outputPeakDb",
+            crate::audio::streaming_playback::last_output_level()
+                .and_then(|r| r.peak_db)
+                .map_or(JsValue::NULL, JsValue::from_f64),
+        );
         // Live capture
         let listening = state.mic.listening().get_untracked();
         let recording = state.mic.recording().get_untracked();

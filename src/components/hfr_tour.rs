@@ -395,7 +395,7 @@ pub fn HfrTour() -> impl IntoView {
 
 /// True when the recording now playing can hold sound above hearing range
 /// and is being played unchanged, so the user hears little or nothing of it.
-fn playing_ultrasound_at_1_1(state: AppState) -> bool {
+pub(crate) fn playing_ultrasound_at_1_1(state: AppState) -> bool {
     if state.viewmode.hfr_enabled().get_untracked()
         || state.playback.mode().get_untracked() != PlaybackMode::Normal
         // The app turned HFR off itself for a 1:1 play of a selection.

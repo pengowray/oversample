@@ -144,18 +144,7 @@ pub(crate) fn GainCombo() -> impl IntoView {
             // Live ignores the gain mode, so there is nothing to turn off.
             return;
         }
-        let mode = state.gain.mode().get_untracked();
-        if mode == GainMode::Off {
-            let last = state.gain.mode_last_auto().get_untracked();
-            state.gain.mode().set(last);
-            state.gain.auto().set(last.is_auto());
-        } else {
-            if mode.is_auto() {
-                state.gain.mode_last_auto().set(mode);
-            }
-            state.gain.mode().set(GainMode::Off);
-            state.gain.auto().set(false);
-        }
+        state.toggle_gain();
     });
     let toggle_menu = Callback::new(move |()| {
         toggle_panel(&state, LayerPanel::Gain);
@@ -178,24 +167,19 @@ pub(crate) fn GainCombo() -> impl IntoView {
         >
             <button class=move || layer_opt_class(state.gain.mode().get() == GainMode::Manual)
                 on:click=move |_| {
-                    state.gain.mode().set(GainMode::Manual);
-                    state.gain.auto().set(false);
+                    state.set_gain_mode(GainMode::Manual);
                     state.panels.layer_panel_open().set(None);
                 }
             >"Manual \u{2014} Slider boost only"</button>
             <button class=move || layer_opt_class(state.gain.mode().get() == GainMode::AutoPeak)
                 on:click=move |_| {
-                    state.gain.mode().set(GainMode::AutoPeak);
-                    state.gain.mode_last_auto().set(GainMode::AutoPeak);
-                    state.gain.auto().set(true);
+                    state.set_gain_mode(GainMode::AutoPeak);
                     state.panels.layer_panel_open().set(None);
                 }
             >"Peak \u{2014} Normalize to peak"</button>
             <button class=move || layer_opt_class(state.gain.mode().get() == GainMode::Adaptive)
                 on:click=move |_| {
-                    state.gain.mode().set(GainMode::Adaptive);
-                    state.gain.mode_last_auto().set(GainMode::Adaptive);
-                    state.gain.auto().set(true);
+                    state.set_gain_mode(GainMode::Adaptive);
                     state.panels.layer_panel_open().set(None);
                 }
             >"AGC \u{2014} Evens out loud and quiet parts"</button>

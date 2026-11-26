@@ -78,6 +78,100 @@ thread_local! {
     /// While this is true the already-scheduled tail is draining normally and
     /// `audio_buffer_ahead_secs` should not be interpreted as an underrun.
     static SCHEDULER_DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Called once per stream with the peak level of what it played (see
+    /// [`OutputLevelReport`]). Set by the "quiet playback" card.
+    static OUTPUT_LEVEL_HOOK: RefCell<Option<std::rc::Rc<dyn Fn(OutputLevelReport)>>> =
+        const { RefCell::new(None) };
+    /// The last report, for the test hook.
+    static LAST_OUTPUT_LEVEL: std::cell::Cell<Option<OutputLevelReport>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Seconds of output measured before the level is reported. A stream that
+/// ends sooner reports what it played, if it played at least
+/// [`OUTPUT_LEVEL_MIN_SECS`].
+const OUTPUT_LEVEL_SECS: f64 = 3.0;
+const OUTPUT_LEVEL_MIN_SECS: f64 = 0.3;
+
+/// The peak level of the start of a stream played with gain off: after the
+/// filters and the playback mode, so it is the level the user hears.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct OutputLevelReport {
+    /// Peak in dBFS; `None` when the output was digital silence.
+    pub peak_db: Option<f64>,
+    /// Seconds of output measured.
+    pub secs: f64,
+}
+
+/// Set (or clear) the function told each stream's output level.
+pub(crate) fn set_output_level_hook(hook: Option<std::rc::Rc<dyn Fn(OutputLevelReport)>>) {
+    OUTPUT_LEVEL_HOOK.with(|h| *h.borrow_mut() = hook);
+}
+
+/// The output level of the current stream, once measured.
+pub(crate) fn last_output_level() -> Option<OutputLevelReport> {
+    LAST_OUTPUT_LEVEL.with(|l| l.get())
+}
+
+/// Running peak of a stream's output while gain is off.
+struct OutputLevelMeter {
+    rate: u32,
+    peak: f32,
+    frames: usize,
+    done: bool,
+}
+
+impl OutputLevelMeter {
+    fn new(rate: u32, gain_mode: GainMode) -> Self {
+        Self {
+            rate,
+            peak: 0.0,
+            frames: 0,
+            // With gain on the output is not the pre-gain level.
+            done: gain_mode != GainMode::Off,
+        }
+    }
+
+    fn add(&mut self, chunk: &ChunkAudio) {
+        if self.done {
+            return;
+        }
+        let peak_of = |s: &[f32]| s.iter().fold(0.0f32, |p, v| p.max(v.abs()));
+        let p = match chunk {
+            ChunkAudio::Mono(s) => peak_of(s),
+            ChunkAudio::Stereo { left, right } => peak_of(left).max(peak_of(right)),
+        };
+        self.peak = self.peak.max(p);
+        self.frames += chunk.frames();
+    }
+
+    fn secs(&self) -> f64 {
+        self.frames as f64 / self.rate.max(1) as f64
+    }
+
+    /// Report once enough is measured, or (`ended`) at the end of a short
+    /// stream. Only for the current stream.
+    fn maybe_report(&mut self, generation: u32, ended: bool) {
+        if self.done {
+            return;
+        }
+        let secs = self.secs();
+        if secs < OUTPUT_LEVEL_SECS && !(ended && secs >= OUTPUT_LEVEL_MIN_SECS) {
+            return;
+        }
+        self.done = true;
+        if STREAM_GEN.with(|g| *g.borrow()) != generation {
+            return;
+        }
+        let report = OutputLevelReport {
+            peak_db: (self.peak > 1e-10).then(|| 20.0 * (self.peak as f64).log10()),
+            secs,
+        };
+        LAST_OUTPUT_LEVEL.with(|l| l.set(Some(report)));
+        if let Some(hook) = OUTPUT_LEVEL_HOOK.with(|h| h.borrow().clone()) {
+            hook(report);
+        }
+    }
 }
 
 /// Upper sample bound for the scheduler this iteration.
@@ -321,6 +415,7 @@ pub(crate) fn start_stream(
     play_to_eof: bool,
 ) -> Option<u32> {
     stop_stream();
+    LAST_OUTPUT_LEVEL.with(|l| l.set(None));
 
     let final_rate = match params.mode {
         PlaybackMode::TimeExpansion => te_output_rate(sample_rate, params.te_factor),
@@ -426,6 +521,7 @@ async fn chunk_loop(
     // Process PREBUFFER_CHUNKS chunks before scheduling anything, so Web Audio
     // has a comfortable lead and the first audible chunk doesn't skip.
     let mut prebuf: Vec<ChunkAudio> = Vec::with_capacity(PREBUFFER_CHUNKS);
+    let mut level = OutputLevelMeter::new(final_rate, params.gain_mode);
 
     for _ in 0..PREBUFFER_CHUNKS {
         let effective_end = playback_end_bound(&source, end_sample, play_to_eof);
@@ -452,6 +548,7 @@ async fn chunk_loop(
         .await;
         pos = new_pos;
 
+        level.add(&chunk);
         prebuf.push(chunk);
 
         // Yield between pre-buffer chunks so the UI stays responsive
@@ -496,6 +593,7 @@ async fn chunk_loop(
             SCHEDULED_END.with(|s| s.set(scheduled_time));
         }
     }
+    level.maybe_report(generation, pos >= playback_end_bound(&source, end_sample, play_to_eof));
 
     // ── Streaming phase ──────────────────────────────────────────────────────
     // Continue processing remaining chunks with lookahead throttling.
@@ -526,6 +624,8 @@ async fn chunk_loop(
         )
         .await;
         pos = new_pos;
+        level.add(&chunk);
+        level.maybe_report(generation, false);
 
         if chunk.frames() > 0 {
             chunk.schedule(&ctx, &gain_node, final_rate, scheduled_time);
@@ -549,6 +649,7 @@ async fn chunk_loop(
     // Scheduler finished naturally — mark so the playhead animation treats the
     // draining tail as healthy rather than an underrun. Guard on generation so
     // a concurrent stop_stream (which already reset the flag) wins.
+    level.maybe_report(generation, true);
     let current_gen = STREAM_GEN.with(|g| *g.borrow());
     if current_gen == generation {
         SCHEDULER_DONE.with(|d| d.set(true));
