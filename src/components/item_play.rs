@@ -9,7 +9,8 @@ use crate::state::store_fields::*;
 use crate::state::{AppState, PlaybackMode, PlayingItem, Selection};
 use leptos::prelude::*;
 
-/// Width of the "..." and play buttons, in CSS pixels (`button.canvas-overflow-btn`).
+/// Width of the "..." and play buttons, in CSS pixels (`button.canvas-overflow-btn`,
+/// `button.canvas-item-play`).
 pub(crate) const BTN_SIZE: f64 = 22.0;
 /// Space between the "..." and play buttons (`.canvas-overflow-anchor` gap).
 pub(crate) const BTN_GAP: f64 = 4.0;
@@ -121,7 +122,7 @@ pub(crate) fn ItemPlayButton(
     };
     view! {
         <button
-            class="canvas-overflow-btn canvas-item-play"
+            class="canvas-item-play"
             class:playing=move || playing.get()
             title=title
             on:click=on_click
@@ -168,7 +169,7 @@ fn set_annotation_play(state: AppState, id: &AnnotationId, play: Option<PlaySett
     }
 }
 
-/// The modes in the "Play with" list, after "Current settings".
+/// The modes in the "Play with" list, after "Hear settings".
 const MODES: [(PlaybackMode, &str); 5] = [
     (PlaybackMode::Normal, "1:1"),
     (PlaybackMode::Heterodyne, "HET"),
@@ -215,7 +216,7 @@ fn setting_for(
     }
 }
 
-/// "Play with" row of an annotation's "..." menu: "Current settings" (the
+/// "Play with" row of an annotation's "..." menu: "Hear settings" (the
 /// app's playback settings) or a mode with its frequency or factor, which the
 /// annotation's play button then uses.
 #[component]
@@ -305,7 +306,7 @@ pub(crate) fn PlaySettingRow(
             <label class="canvas-overflow-freq-text" for="annotation-play-mode">"Play with"</label>
             <div class="canvas-overflow-btn-group">
                 <select id="annotation-play-mode" class="play-setting-mode" on:change=on_select>
-                    <option value="" selected=selected_key.is_empty()>"Current settings"</option>
+                    <option value="" selected=selected_key.is_empty()>"Hear settings"</option>
                     {options}
                 </select>
                 {value_input}
