@@ -446,13 +446,52 @@ fn tones_and_natural_harmonics_are_quiet() {
 fn mains_buzz_is_left_to_the_hum_finder() {
     // 50 Hz with odd harmonics at 1/n: below the lowest fundamental looked
     // for, and its harmonics too close together to be lines.
-    let rate = 48_000;
-    let lv: Vec<f64> = (2..60)
-        .map(|h| if h % 2 == 1 { 1.0 / h as f64 } else { 0.0 })
-        .collect();
-    let mut buzz = harmonic_tone(rate, 50.0, &lv, 0.1, 3.0);
-    add(&mut buzz, 0, &hiss(rate, 3.0));
-    assert_quiet("mains buzz", rate, &buzz);
+    for rate in [48_000, 256_000] {
+        let lv: Vec<f64> = (2..60)
+            .map(|h| if h % 2 == 1 { 1.0 / h as f64 } else { 0.0 })
+            .collect();
+        let mut buzz = harmonic_tone(rate, 50.0, &lv, 0.1, 3.0);
+        add(&mut buzz, 0, &hiss(rate, 3.0));
+        assert_quiet("mains buzz", rate, &buzz);
+    }
+}
+
+#[test]
+fn a_wandering_pitch_is_not_a_square_wave() {
+    // A sawtooth-like tone (harmonics at 1/n) with a slow 1% vibrato, like
+    // an insect's wing tone.
+    for rate in [48_000, 256_000] {
+        let n = secs(rate, 3.0);
+        let mut phase = 0.0f64;
+        let mut x: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f64 / rate as f64;
+                let f = 600.0 * (1.0 + 0.01 * (TAU * 2.0 * t).sin());
+                phase += TAU * f / rate as f64;
+                let v: f64 = (1..=12).map(|h| (h as f64 * phase).sin() / h as f64).sum();
+                (0.05 * v) as f32
+            })
+            .collect();
+        add(&mut x, 0, &hiss(rate, 3.0));
+        assert_quiet("tone with vibrato", rate, &x);
+    }
+}
+
+#[test]
+fn audiomoth_chime_is_at_most_a_carrier_near_18_khz() {
+    // The chime is on-off keying of an 18 kHz carrier; chime_scan decodes
+    // it. This scanner may call it a modulated carrier, nothing else.
+    for rate in [48_000, 192_000] {
+        let carrier = chime::encode::render(rate, &[1, 2, 3, 4, 5, 6, 7, 8], &[]).carrier;
+        let mut x = hiss(rate, 1.0);
+        x.extend(carrier.iter().map(|&c| (0.1 * c) as f32));
+        x.extend(hiss(rate, 1.0));
+        let ev = scan_digital(&x, rate);
+        for e in &ev {
+            assert_eq!(e.kind, DigitalKind::Modulated, "{rate}: {ev:?}");
+            assert!(e.lo_hz < 18_000.0 && e.hi_hz > 18_000.0, "{rate}: {ev:?}");
+        }
+    }
 }
 
 #[test]
@@ -465,7 +504,7 @@ fn animal_like_sounds_and_noise_are_quiet() {
         add(&mut x, 0, &hiss(rate, 3.0));
         assert_quiet("CF bat calls", rate, &x);
     }
-    for rate in [48_000, 384_000] {
+    for rate in [48_000, 256_000, 384_000] {
         for trill in [false, true] {
             let mut x = cricket(rate, 3.0, trill);
             add(&mut x, 0, &hiss(rate, 3.0));

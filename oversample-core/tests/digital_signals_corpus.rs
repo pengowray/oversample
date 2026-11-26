@@ -177,6 +177,18 @@ fn digital_signals_corpus() {
         with(DigitalKind::SquareWave),
         with(DigitalKind::Modulated)
     );
+    // Slowest recordings at least 5 s long.
+    let mut slow: Vec<&FileResult> = results.iter().filter(|r| r.secs >= 5.0).collect();
+    slow.sort_by(|a, b| (a.secs / a.scan_ms).total_cmp(&(b.secs / b.scan_ms)));
+    println!("Slowest:");
+    for r in slow.iter().take(6) {
+        println!(
+            "  {:.0}x real time\t{} Hz\t{}",
+            1000.0 * r.secs / r.scan_ms,
+            r.rate,
+            r.name
+        );
+    }
     // Speed by sample rate.
     let mut rates: Vec<u32> = results.iter().map(|r| r.rate).collect();
     rates.sort_unstable();

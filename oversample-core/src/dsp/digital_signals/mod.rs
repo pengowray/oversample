@@ -114,12 +114,17 @@
 //!
 //! ## Cost
 //!
-//! Single-threaded release build, on the corpus run (2026-11): about 250x
-//! real time at 384 kHz, 175x at 500 kHz, 520x at 192 kHz and 1900x at 48
-//! kHz. The frame FFTs are most of it; a block with a candidate band adds one
-//! FFT of the whole block and a few of the band. At 500 kHz the scanner
-//! holds about 2 MB of samples, 2 MB of frame spectra and 6 MB for the
-//! block FFT, plus up to a few MB while a wide band is tested.
+//! Single-threaded release build, on the corpus run (2026-11): about 180x
+//! real time at 384 kHz, 125x to 165x at 500 kHz, 440x at 192 kHz and 1100x
+//! at 48 kHz. The frame FFTs are most of it. A block with a candidate band
+//! adds one FFT of the whole block and a few of the band, so recordings with
+//! a band in every block that fails the tests run at 40x to 80x (a band that
+//! has failed twice in a row is tested again only every
+//! [`RETEST_FAILED_BLOCKS`] blocks). Memory: at 500 kHz the scanner keeps
+//! about 2 MB of samples, 2 MB of frame spectra and 4 to 6 MB of block-FFT
+//! buffers; testing a 20 kHz-wide band peaked at 16 MB in all (11 MB at 384
+//! kHz), and the widest bands with every test run could reach about twice
+//! that for a moment.
 
 mod modulated;
 mod spectra;
@@ -244,6 +249,9 @@ pub const MIN_BAND_HZ: f32 = 500.0;
 /// A band with a steady envelope and no lines is at least this wide at
 /// -3 dB, Hz.
 pub const MIN_STEADY_BAND_HZ: f32 = 1000.0;
+/// A band that failed the tests in the two blocks before is tested again
+/// only in every this many blocks.
+pub const RETEST_FAILED_BLOCKS: u64 = 3;
 /// Frames per block are `2 * BLOCK_FRAMES - 1`.
 const BLOCK_FRAMES: usize = 32;
 
@@ -412,6 +420,9 @@ pub struct DigitalScanner {
     /// Candidates of the last block that touched its end but were not
     /// confirmed, so an event found in the next block can start earlier.
     pending: Vec<Hit>,
+    /// Bands that failed the tests in blocks in a row: (low, high, middle,
+    /// last block, failures in a row).
+    failed: Vec<(f32, f32, f32, u64, u32)>,
     trace: Option<Vec<String>>,
 }
 
@@ -442,6 +453,7 @@ impl DigitalScanner {
             open: Vec::new(),
             done: Vec::new(),
             pending: Vec::new(),
+            failed: Vec::new(),
             trace: None,
         }
     }
@@ -557,7 +569,7 @@ impl DigitalScanner {
         let frame_time =
             |me: &Self, r: &Run| (me.time(r.first * me.hop), me.time(r.last * me.hop + me.n));
         let mut hits = Vec::new();
-        if std::env::var_os("DIGITAL_TRACE_LINES").is_some() {
+        if self.trace.is_some() && std::env::var_os("DIGITAL_TRACE_LINES").is_some() {
             let t0 = self.time(0);
             for (l, st) in lines.iter().zip(&steady) {
                 self.trace(|| {
@@ -691,6 +703,26 @@ impl DigitalScanner {
                 }
             }
             let continuing = cont.is_some();
+            // A band that has failed the tests in the blocks before is
+            // tested again only every RETEST_FAILED_BLOCKS blocks (a steady
+            // hump of noise would otherwise be tested in every block).
+            let block = self.block;
+            let bin_hz = self.bin_hz;
+            let failed_at = self.failed.iter().position(|f| {
+                f.3 + 1 == block && bands_match((f.0, f.1, f.2), (lo, hi, mid), bin_hz)
+            });
+            let skip = !continuing
+                && failed_at.is_some_and(|i| {
+                    self.failed[i].4 >= 2 && !block.is_multiple_of(RETEST_FAILED_BLOCKS)
+                });
+            if skip {
+                let i = failed_at.unwrap();
+                self.failed[i].3 = block;
+                if run.last + 1 + MAX_DROPOUT_FRAMES >= frames {
+                    hits.push(hit);
+                }
+                continue;
+            }
             if !big_done {
                 let len = self.block_len;
                 let big = self.big.get_or_insert_with(|| BlockFft::new(len));
@@ -707,21 +739,28 @@ impl DigitalScanner {
                 }
             };
             let t0 = self.time(0);
-            let what = match &cand {
-                Cand::Plateau(p) => format!(
-                    "plateau {:.0}-{:.0} b3 {:.0} top {:.1} run {}-{}",
-                    p.lo_hz,
-                    p.hi_hz,
-                    p.b3(),
-                    p.top_db,
-                    p.run.first,
-                    p.run.last
-                ),
-                Cand::Cluster(c) => {
-                    format!("cluster {:?} run {}-{}", c.freqs, c.run.first, c.run.last)
+            if self.trace.is_some() {
+                let what = match &cand {
+                    Cand::Plateau(p) => format!(
+                        "plateau {:.0}-{:.0} b3 {:.0} top {:.1} run {}-{}",
+                        p.lo_hz,
+                        p.hi_hz,
+                        p.b3(),
+                        p.top_db,
+                        p.run.first,
+                        p.run.last
+                    ),
+                    Cand::Cluster(c) => {
+                        format!("cluster {:?} run {}-{}", c.freqs, c.run.first, c.run.last)
+                    }
+                };
+                self.trace(|| format!("{t0:.2}s {what} -> {:?} {feats:?}", found.is_some()));
+            }
+            if found.is_some() {
+                if let Some(i) = failed_at {
+                    self.failed.swap_remove(i);
                 }
-            };
-            self.trace(|| format!("{t0:.2}s {what} -> {:?} {feats:?}", found.is_some()));
+            }
             match found {
                 Some(m) => {
                     hit.lo_hz = m.lo_hz;
@@ -734,6 +773,13 @@ impl DigitalScanner {
                 }
                 None if continuing => hits.push(hit),
                 None => {
+                    match failed_at {
+                        Some(i) => {
+                            self.failed[i].3 = block;
+                            self.failed[i].4 += 1;
+                        }
+                        None => self.failed.push((lo, hi, mid, block, 1)),
+                    }
                     if run.last + 1 + MAX_DROPOUT_FRAMES >= frames {
                         // Kept for one block: an event found next can start
                         // here.
@@ -743,6 +789,8 @@ impl DigitalScanner {
                 }
             }
         }
+        let block = self.block;
+        self.failed.retain(|f| f.3 == block);
         hits
     }
 
