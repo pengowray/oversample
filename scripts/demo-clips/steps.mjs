@@ -18,6 +18,17 @@ export const RECORDINGS = {
     },
 };
 
+/**
+ * Recordings joined in the timeline clip, opened from bat-demo-sounds: one
+ * night in Sweden (2025-09-27), all 500 kHz, by Alessandra Munari, CC BY-NC-SA
+ * 4.0. Files at the same rate keep the same colours on one timeline.
+ */
+export const TIMELINE_FILES = [
+    'XC1084197 - Western Barbastelle - Barbastella barbastellus.wav',
+    'XC1084199 - Eurasian Particolored Bat - Vespertilio murinus.wav',
+    'XC1084195 - Natterer\'s Myotis - Myotis nattereri.wav',
+];
+
 export const TEXT = {
     title: ['Oversample', 'Free browser app for recordings of bats and other wildlife'],
     open: 'Find recordings on Xeno-canto by species name',
@@ -28,6 +39,8 @@ export const TEXT = {
     mark: 'Select a bat call and annotate it',
     detect: 'Detect bat calls automatically',
     book: 'Bat book: typical calls of UK bats',
+    view3d: 'Select bat calls and view them in 3D',
+    timeline: "Create a timeline from a night's recordings",
     end: ['app.oversample.com', 'Also available for Windows, macOS, Linux and Android'],
 };
 
@@ -47,7 +60,15 @@ const button = (page, text, scope = '') =>
 
 /** Hides the file list so the spectrogram gets the width. */
 export async function hideFiles(d, { quick = false } = {}) {
-    if (!(await d.page.locator('.file-sidebar, .sidebar:not(.right-sidebar)').first().isVisible())) return;
+    const files = d.page.locator('.sidebar:not(.right-sidebar)').first();
+    const open = async () => {
+        const b = (await files.isVisible()) ? await files.boundingBox() : null;
+        return !!b && b.x + b.width > 1;
+    };
+    // On phones the list is a panel that slides off the left edge by itself
+    // once a recording opens.
+    for (let i = 0; d.phone && i < 30 && (await open()); i++) await d.wait(100);
+    if (!(await open())) return;
     if (quick) await d.page.locator('.toolbar-sidebar-tab-left').click();
     else await d.click('.toolbar-sidebar-tab-left', { ms: 500, after: 400 });
 }
@@ -56,7 +77,10 @@ export async function hideFiles(d, { quick = false } = {}) {
 export async function openFromSearch(d, rec) {
     const { page } = d;
     await d.caption(TEXT.open);
-    await d.click(page.getByRole('button', { name: 'Find recordings' }), { ms: 800 });
+    const find = page.getByRole('button', { name: 'Find recordings' });
+    // On phones it is in the Files panel, which starts closed.
+    if (!(await find.isVisible())) await d.click('.toolbar-sidebar-tab-left', { ms: 700, after: 600 });
+    await d.click(find, { ms: 800 });
     await d.click('.find-search', { ms: 600, after: 200 });
     await d.type('soprano pip', 90);
     const species = page.locator('.find-species-row', { hasText: 'Soprano Pipistrelle' }).first();
@@ -233,4 +257,42 @@ export async function batBook(d) {
     await d.click(page.locator('label.overlay-check', { hasText: 'Bat book' }), { ms: 800, after: 2000 });
     const other = page.locator('.bat-book-chip', { hasText: 'Common Pipistrelle' }).first();
     await d.click(other, { ms: 800, after: 2200 });
+}
+
+/** Selection round a few calls, then "..." > View in 3D, then drag to turn it. */
+export async function view3d(d, rec) {
+    const { page } = d;
+    await d.caption(TEXT.view3d);
+    await d.click('.tool-combo-btn', { ms: 800, after: 400 });
+    await d.click(page.locator('.layer-panel button', { hasText: 'Selection' }), { ms: 500, after: 400 });
+    const v = await d.state();
+    const t0 = v.scrollOffset + v.visibleTime * 0.08;
+    const t1 = v.scrollOffset + v.visibleTime * 0.32;
+    await d.drag(await d.at(t0, 95), await d.at(t1, 15), { ms: 1000, after: 500 });
+    await d.click('.canvas-overflow-btn', { ms: 600, after: 500 });
+    await d.click(page.locator('.canvas-overflow-item', { hasText: 'View in 3D' }), { ms: 500, after: 300 });
+    // Software WebGL in headless Chromium takes a while to draw the surface.
+    d.cut();
+    await page.locator('.surface-3d-plot .main-svg').first().waitFor({ state: 'attached', timeout: 120000 });
+    await page.locator('.surface-3d-status').waitFor({ state: 'detached', timeout: 120000 });
+    await d.wait(3000);
+    d.resume();
+    await d.hold(800);
+    // A small turn: a long drag spins it to a top-down view.
+    const plot = await page.locator('.surface-3d-plot').boundingBox();
+    const cy = plot.y + plot.height * 0.3;
+    await d.drag([plot.x + plot.width * 0.58, cy], [plot.x + plot.width * 0.46, cy], { ms: 1800, after: 2200 });
+}
+
+/** Files tab: Select, pick three recordings, Create Timeline. */
+export async function timeline(d, names) {
+    const { page } = d;
+    await d.caption(TEXT.timeline);
+    const select = page.getByRole('button', { name: 'Select', exact: true });
+    await d.click(select, { ms: 800, after: 500 });
+    for (const n of names) {
+        await d.click(page.locator('.file-item', { hasText: n.slice(0, 9) }).first(), { ms: 500, after: 350 });
+    }
+    await d.hold(500);
+    await d.click(page.getByRole('button', { name: 'Create Timeline' }), { ms: 700, after: 2500 });
 }

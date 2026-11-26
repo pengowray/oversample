@@ -1,7 +1,7 @@
 // Shared harness for the demo clips: opens Oversample in headless Chromium,
 // records the page, draws a pointer, captions and title cards over it, then
 // trims the recording and encodes it. See record.mjs for how to run it.
-import { chromium } from 'playwright';
+import { chromium, devices } from 'playwright';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,6 +11,9 @@ export const W = 1280;
 export const H = 720;
 /** Height of the caption band above the app, in CSS pixels. */
 const BAND = 56;
+/** Phone clips: a Pixel 7 (412 x 839 page, touch), recorded at twice its CSS pixels. */
+const PHONE = devices['Pixel 7'];
+const PHONE_BAND = 64;
 
 const MIME = {
     '.html': 'text/html',
@@ -54,7 +57,7 @@ async function serveDist(ctx, origin, root) {
  * cards, and adds the pointer, the caption band, the key badge and the title
  * card. Headless video has no pointer of its own.
  */
-function overlay({ band }) {
+function overlay({ band, phone }) {
     try {
         localStorage.setItem('oversample_hfr_nudge_enabled', 'false');
         localStorage.setItem('oversample_gain_nudge_enabled', 'false');
@@ -62,12 +65,19 @@ function overlay({ band }) {
     const arrow =
         '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 20 20">' +
         '<path d="M2 2 L2 16 L6 12 L9 18 L11.5 17 L8.6 11 L14 11 Z" fill="white" stroke="black" stroke-width="1.2"/></svg>';
+    // A fingertip on phones, an arrow elsewhere.
+    const pointer = phone
+        ? `width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%;
+           background: rgba(255, 255, 255, .35); border: 2px solid rgba(255, 255, 255, .85);`
+        : `width: 26px; height: 26px; margin: -3px 0 0 -3px;
+           background: url("data:image/svg+xml,${encodeURIComponent(arrow)}") no-repeat;`;
+    const press = phone
+        ? `#demo-cursor.down { background: rgba(240, 192, 80, .55); border-color: #f0c050; }`
+        : `#demo-cursor.down::after { content: ''; position: absolute; left: -14px; top: -14px;
+             width: 28px; height: 28px; border: 3px solid #f0c050; border-radius: 50%; }`;
     const css = `
-      #demo-cursor { position: fixed; z-index: 2147483647; pointer-events: none; left: 50%; top: 50%;
-        width: 26px; height: 26px; margin: -3px 0 0 -3px;
-        background: url("data:image/svg+xml,${encodeURIComponent(arrow)}") no-repeat; }
-      #demo-cursor.down::after { content: ''; position: absolute; left: -14px; top: -14px;
-        width: 28px; height: 28px; border: 3px solid #f0c050; border-radius: 50%; }
+      #demo-cursor { position: fixed; z-index: 2147483647; pointer-events: none; left: 50%; top: 50%; ${pointer} }
+      ${press}
       #demo-keys { position: absolute; left: 24px; top: 22px; display: none; gap: 4px; }
       #demo-keys.on { display: flex; }
       #demo-keys span { font: 600 13px/1 system-ui, sans-serif; color: #111; background: #f2f2f2;
@@ -76,16 +86,18 @@ function overlay({ band }) {
         display: flex; flex-direction: column; align-items: center; justify-content: center;
         background: #0c0c0c; border-bottom: 1px solid #2c2c2c; pointer-events: none;
         font-family: "Segoe UI", system-ui, sans-serif; }
-      #demo-band .main { color: #f4f4f4; font-size: 21px; font-weight: 600; transition: opacity .25s; }
-      #demo-band .sub { color: #a8b0a8; font-size: 13px; margin-top: 2px; transition: opacity .25s; }
+      #demo-band .main { color: #f4f4f4; font-size: ${phone ? 17 : 21}px; font-weight: 600;
+        line-height: 1.2; text-align: center; padding: 0 12px; transition: opacity .25s; }
+      #demo-band .sub { color: #a8b0a8; font-size: ${phone ? 12 : 13}px; margin-top: 2px;
+        text-align: center; padding: 0 12px; transition: opacity .25s; }
       #demo-band .sub:empty { display: none; }
       #demo-band.fade .main, #demo-band.fade .sub { opacity: 0; }
       #demo-card { position: fixed; z-index: 2147483646; inset: 0; display: flex; flex-direction: column;
         align-items: center; justify-content: center; gap: 14px; background: rgba(12, 12, 12, .96);
         font-family: "Segoe UI", system-ui, sans-serif; opacity: 0; pointer-events: none; transition: opacity .35s; }
       #demo-card.on { opacity: 1; }
-      #demo-card .title { color: #f4f4f4; font-size: 64px; font-weight: 700; letter-spacing: -.5px; }
-      #demo-card .sub { color: #b8c0b8; font-size: 24px; }
+      #demo-card .title { color: #f4f4f4; font-size: ${phone ? 40 : 64}px; font-weight: 700; letter-spacing: -.5px; }
+      #demo-card .sub { color: #b8c0b8; font-size: ${phone ? 17 : 24}px; text-align: center; padding: 0 28px; }
       ${band ? `.app { height: calc(100dvh - ${band}px) !important; margin-top: ${band}px; }
         .app-toast-container { top: ${44 + band}px !important; }` : ''}
     `;
@@ -126,7 +138,8 @@ async function centreOf(page, target, fx = 0.5, fy = 0.5) {
     const loc = typeof target === 'string' ? page.locator(target).first() : target;
     await loc.waitFor({ state: 'visible', timeout: 30000 });
     let b = await loc.boundingBox();
-    if (b.y < 0 || b.y + b.height > H || b.x < 0 || b.x + b.width > W) {
+    const { width: vw, height: vh } = page.viewportSize();
+    if (b.y < 0 || b.y + b.height > vh || b.x < 0 || b.x + b.width > vw) {
         // Off screen in a scrolling panel: scroll it into view as a person would.
         await loc.evaluate((el) => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
         await page.waitForTimeout(700);
@@ -136,25 +149,33 @@ async function centreOf(page, target, fx = 0.5, fy = 0.5) {
 }
 
 export class Demo {
-    static async start({ url, dist, captions = true }) {
+    static async start({ url, dist, captions = true, phone = false }) {
         const d = new Demo();
         d.origin = new URL(url).origin;
         d.url = url;
         d.captions = captions;
+        d.phone = phone;
+        d.w = phone ? PHONE.viewport.width : W;
+        d.h = phone ? PHONE.viewport.height : H;
         d.browser = await chromium.launch();
         d.videoDir = mkdtempSync(join(tmpdir(), 'oversample-demo-'));
+        const view = phone
+            ? { ...PHONE, deviceScaleFactor: 2 }
+            : { viewport: { width: W, height: H } };
+        const scale = phone ? 2 : 1;
         d.ctx = await d.browser.newContext({
-            viewport: { width: W, height: H },
-            recordVideo: { dir: d.videoDir, size: { width: W, height: H } },
+            ...view,
+            recordVideo: { dir: d.videoDir, size: { width: d.w * scale, height: d.h * scale } },
             serviceWorkers: 'block',
         });
         if (dist) await serveDist(d.ctx, d.origin, resolve(dist));
-        await d.ctx.addInitScript(overlay, { band: captions ? BAND : 0 });
+        const band = captions ? (phone ? PHONE_BAND : BAND) : 0;
+        await d.ctx.addInitScript(overlay, { band, phone });
         d.page = await d.ctx.newPage();
         // The video starts when the page is made.
         d.t0 = Date.now();
-        d.x = W / 2;
-        d.y = H / 2;
+        d.x = d.w / 2;
+        d.y = d.h / 2;
         // Parts of the recording that make the clip: [start, end] in seconds.
         d.segments = [];
         d.beginOnCaption = false;
@@ -325,7 +346,7 @@ export class Demo {
     }
 
     /** Puts the pointer somewhere at once (before a clip starts). */
-    async place(x = W / 2, y = H * 0.6) {
+    async place(x = this.w / 2, y = this.h * 0.6) {
         await this.page.mouse.move(x, y);
         this.x = x;
         this.y = y;

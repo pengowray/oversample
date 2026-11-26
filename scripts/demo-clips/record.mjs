@@ -16,6 +16,8 @@
 //   --out DIR       where to write the clips (default media)
 //   --gif           also write a GIF of each clip (960 px wide, 12 fps)
 //   --no-captions   no caption band above the app
+//   --phone         record the clips that work on a phone-sized page (Pixel
+//                   7: 412 x 839, touch) as <name>-phone.mp4, 824 x 1678
 //
 // Each clip is <name>.mp4 (H.264, no sound, 1280 x 720) and
 // <name>-poster.jpg. MP4, not GIF: on the 17.5 s HFR clip, MP4 was 810 KB,
@@ -91,6 +93,22 @@ const CLIPS = {
         await opened(d, rec.pip);
         await s.batBook(d);
     },
+    'view-3d': async (d) => {
+        await opened(d, rec.pip);
+        await s.view3d(d, rec.pip);
+    },
+    timeline: async (d) => {
+        await d.goto('');
+        await d.page
+            .locator('input[type=file]')
+            .first()
+            .setInputFiles(s.TIMELINE_FILES.map((f) => join(soundsDir, f)));
+        await d.page.locator('.file-item:not(.loading)').nth(s.TIMELINE_FILES.length - 1).waitFor({ timeout: 60000 });
+        await d.place();
+        await d.wait(2500);
+        d.beginWithCaption();
+        await s.timeline(d, s.TIMELINE_FILES);
+    },
     tour: async (d) => {
         await d.goto('');
         await d.place();
@@ -101,6 +119,15 @@ const CLIPS = {
         await d.card(...s.TEXT.title, 2200);
         await s.openFromSearch(d, rec.pip);
         await s.hideFiles(d);
+        if (d.phone) {
+            // The other steps use controls the phone layout keeps in sheets.
+            await s.hearWithHfr(d, rec.pip);
+            await s.batBook(d);
+            await d.poster();
+            await d.caption(null);
+            await d.endCard(...s.TEXT.end, 2600);
+            return;
+        }
         await s.hearWithHfr(d, rec.pip, { timeStrip: false });
         await s.playbackModes(d, { backToPs: false });
         await s.markCall(d, rec.pip);
@@ -130,20 +157,24 @@ const dist = opt('--dist');
 const outDir = opt('--out', 'media');
 const gif = flag('--gif');
 const captions = !flag('--no-captions');
-const names = args.length ? args : Object.keys(CLIPS);
-const unknown = names.filter((n) => !CLIPS[n]);
+const phone = flag('--phone');
+/** Clips whose steps work in the phone layout. */
+const PHONE_CLIPS = ['tour', 'open-recording', 'hfr-demo', 'bat-book'];
+const available = phone ? PHONE_CLIPS : Object.keys(CLIPS);
+const names = args.length ? args : available;
+const unknown = names.filter((n) => !available.includes(n));
 if (unknown.length) {
-    console.error(`Unknown clip: ${unknown.join(', ')}. Clips: ${Object.keys(CLIPS).join(', ')}`);
+    console.error(`Unknown clip${phone ? ' for --phone' : ''}: ${unknown.join(', ')}. Clips: ${available.join(', ')}`);
     process.exit(2);
 }
 
 let failed = 0;
 for (const name of names) {
-    const d = await Demo.start({ url, dist, captions });
+    const d = await Demo.start({ url, dist, captions, phone });
     try {
         await CLIPS[name](d);
         d.end();
-        const secs = await d.finish(join(outDir, name), { gif });
+        const secs = await d.finish(join(outDir, phone ? `${name}-phone` : name), { gif });
         console.log(`${name}: ${secs.toFixed(1)} s`);
     } catch (e) {
         failed++;
