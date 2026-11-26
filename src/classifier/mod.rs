@@ -63,6 +63,7 @@
 pub mod bat_pick;
 pub mod boxes;
 pub mod combined;
+pub mod noise_scan;
 pub mod kept_order;
 pub mod location;
 pub mod method_info;

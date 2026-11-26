@@ -285,6 +285,17 @@ pub fn found_boxes(state: AppState, file: u64) -> Vec<FoundBox> {
             })
         });
     }
+    for b in super::noise_scan::boxes(state) {
+        out.push(FoundBox {
+            t0: b.t0,
+            t1: b.t1,
+            f0: b.f0,
+            f1: b.f1,
+            label: b.label,
+            scientific: None,
+            class: b.class,
+        });
+    }
     out.sort_by(|a, b| a.t0.total_cmp(&b.t0));
     out
 }

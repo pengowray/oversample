@@ -390,6 +390,13 @@ pub fn Spectrogram() -> impl IntoView {
     // The bird sound boxes, merged and named once per change of their inputs,
     // not on every frame.
     let bird_boxes = Memo::new(move |_| crate::classifier::boxes::drawn(state));
+    // Birds and bats' other boxes: wind and handling noise.
+    let labelled_boxes = Memo::new(move |_| {
+        if state.call_detection.method().get() != crate::state::DetectionMethod::Combined {
+            return Vec::new();
+        }
+        crate::classifier::noise_scan::boxes(state)
+    });
     Effect::new({
         let disposed = disposed.clone();
         move || {
@@ -459,6 +466,7 @@ pub fn Spectrogram() -> impl IntoView {
                 .get()
                 .or(state.call_detection.picked_box().get());
             bird_boxes.track();
+            labelled_boxes.track();
             let detection_file = state
                 .call_detection
                 .scanned()
@@ -1293,6 +1301,20 @@ pub fn Spectrogram() -> impl IntoView {
                             bb::UNNAMED,
                             &bb::card_first,
                             bb::CARD_NONE,
+                            min_freq,
+                            max_freq,
+                            scroll,
+                            time_res,
+                            zoom,
+                            display_w as f64,
+                            display_h as f64,
+                            species_strip.as_ref().map_or(0.0, SpeciesStrip::height),
+                        );
+                    });
+                    labelled_boxes.with_untracked(|boxes| {
+                        spectrogram_renderer::draw_labelled_boxes(
+                            &ctx,
+                            boxes,
                             min_freq,
                             max_freq,
                             scroll,

@@ -17,6 +17,7 @@ use crate::classifier::{
     self, boxes, combined, summary, DownloadStatus, Method, MethodFacts, RunStatus,
 };
 use crate::dsp::call_detect::CallKind;
+use oversample_core::dsp::noise_events::NoiseKind;
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
@@ -172,6 +173,38 @@ fn rows(state: AppState, file: u64) -> Vec<Row> {
         });
     }
 
+    // Wind and handling noise.
+    if let Some(rate) = state.library.files().with(|fs| {
+        fs.iter().find(|f| f.id == file).map(|f| f.audio.sample_rate)
+    }) {
+        let events = classifier::noise_scan::events(file, rate).unwrap_or_default();
+        for kind in [NoiseKind::Wind, NoiseKind::Handling] {
+            let of_kind: Vec<_> = events.iter().filter(|e| e.kind == kind).collect();
+            let Some(first) = of_kind.first() else {
+                continue;
+            };
+            let n = of_kind.len();
+            let found = match kind {
+                NoiseKind::Wind => count(n, "stretch", "stretches"),
+                NoiseKind::Handling => count(n, "detection", "detections"),
+            };
+            out.push(Row {
+                group: Group::Noise,
+                title: match kind {
+                    NoiseKind::Wind => "Go to the first stretch".to_string(),
+                    NoiseKind::Handling => "Go to the first detection".to_string(),
+                },
+                name: classifier::noise_scan::kind_name(kind).to_string(),
+                species: false,
+                found,
+                n,
+                best: None,
+                swatch: Swatch::Noise,
+                show: Some(Show::Time(first.start_s, first.end_s)),
+            });
+        }
+    }
+
     // BattyBirdNET's bats, and BirdNET+ V3.0's other animals and sounds
     // (its birds have the boxes, while they apply).
     for method in combined::methods(state, file) {
@@ -272,6 +305,7 @@ fn show(state: AppState, s: Show) {
 pub(super) fn CombinedSection() -> impl IntoView {
     let state = expect_context::<AppState>();
     search_when_open(state);
+    classifier::noise_scan::scan_when_shown(state);
     classifier::refresh_downloads(state);
     let settings_open = RwSignal::new(false);
     let current_file = Memo::new(move |_| state.current_file_id_tracked());
