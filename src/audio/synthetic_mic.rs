@@ -1,5 +1,6 @@
 //! Synthetic "mic" test mode — drives the *real* live-listen pipeline with
-//! generated audio (noise / tones / chirps / pulses) so the live waterfall,
+//! generated audio (noise / tones / chirps / pulses), or the open recording
+//! played back (Replay), so the live waterfall,
 //! waveform, overview and auto-scroll can be exercised visually and profiled
 //! without any hardware. Started/stopped from the Debug panel.
 //!
@@ -9,8 +10,9 @@
 //! feeder loop that appends generated samples to the live sample buffer at the
 //! true sample rate, exactly as a real backend's audio callback would.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::f64::consts::TAU;
+use std::sync::Arc;
 
 use crate::audio::live_recording::{
     cleanup_listen_file, spawn_live_processing_loop, spawn_smooth_scroll_animation,
@@ -34,6 +36,9 @@ pub enum SynthSignal {
     MultiTone,
     /// Bat-like downward FM pulses (~3 ms, 90→35 kHz) every 80 ms over noise.
     Pulses,
+    /// The open recording, looped, at its own sample rate: real calls in the
+    /// live view, for demo clips of live listening.
+    Replay,
 }
 
 impl SynthSignal {
@@ -44,6 +49,7 @@ impl SynthSignal {
             SynthSignal::Chirp => "Chirp",
             SynthSignal::MultiTone => "Multi-tone",
             SynthSignal::Pulses => "Pulses",
+            SynthSignal::Replay => "Replay",
         }
     }
 }
@@ -55,6 +61,8 @@ thread_local! {
     static SYNTH_ACTIVE: Cell<bool> = const { Cell::new(false) };
     /// The signal of the currently-running synthetic session (for status UI).
     static SYNTH_SIGNAL: Cell<Option<SynthSignal>> = const { Cell::new(None) };
+    /// The samples [`SynthSignal::Replay`] plays, taken when it starts.
+    static REPLAY: RefCell<Option<Arc<Vec<f32>>>> = const { RefCell::new(None) };
 }
 
 /// Whether a synthetic test session is currently running.
@@ -69,6 +77,7 @@ pub fn active_label() -> Option<&'static str> {
 }
 
 /// Start a synthetic live session with `signal` at `sample_rate` Hz.
+/// [`SynthSignal::Replay`] uses the open recording's rate instead.
 /// Tears down any prior synthetic session first.
 pub fn start(state: AppState, signal: SynthSignal, sample_rate: u32) {
     // Never clobber a real capture session — synth clears the live buffer.
@@ -78,7 +87,26 @@ pub fn start(state: AppState, signal: SynthSignal, sample_rate: u32) {
         state.show_error_toast("Stop the live mic session before running a test signal");
         return;
     }
+    // Take the recording before listening starts: that opens a new live file.
+    let replay = (signal == SynthSignal::Replay).then(|| {
+        let idx = state.display_file_index()?;
+        state.library.files().with_untracked(|files| {
+            files
+                .get(idx)
+                .filter(|f| !f.audio.samples.is_empty())
+                .map(|f| (f.audio.samples.clone(), f.audio.sample_rate))
+        })
+    });
+    let sample_rate = match replay {
+        Some(Some((_, rate))) => rate,
+        Some(None) => {
+            state.show_error_toast("Open a recording to replay it as a test signal");
+            return;
+        }
+        None => sample_rate,
+    };
     stop(&state);
+    REPLAY.with(|r| *r.borrow_mut() = replay.flatten().map(|(samples, _)| samples));
 
     // The live waterfall only renders under a spectrogram-family view.
     if !state.viewmode.main_view().get_untracked().is_spectrogram() {
@@ -116,6 +144,7 @@ pub fn stop(state: &AppState) {
     SYNTH_ACTIVE.with(|a| a.set(false));
     SYNTH_SIGNAL.with(|s| s.set(None));
     SYNTH_GEN.with(|g| g.set(g.get().wrapping_add(1)));
+    REPLAY.with(|r| *r.borrow_mut() = None);
 
     state.mic.listening().set(false);
     crate::canvas::live_waterfall::clear();
@@ -130,6 +159,7 @@ pub fn signal_from_str(s: &str) -> SynthSignal {
         "tone" => SynthSignal::Tone,
         "multi" | "multitone" => SynthSignal::MultiTone,
         "pulses" | "pulse" => SynthSignal::Pulses,
+        "replay" => SynthSignal::Replay,
         _ => SynthSignal::Chirp,
     }
 }
@@ -177,6 +207,8 @@ struct GenState {
     phases: [f64; 3],
     chirp_t: f64,
     pulse_t: f64,
+    /// Next sample of the replayed recording.
+    replay_pos: usize,
     rng: u32,
 }
 
@@ -187,6 +219,7 @@ impl GenState {
             phases: [0.0; 3],
             chirp_t: 0.0,
             pulse_t: 0.0,
+            replay_pos: 0,
             rng: 0x9E3779B9,
         }
     }
@@ -296,6 +329,17 @@ fn generate(
                 out.push(s as f32);
             }
         }
+        SynthSignal::Replay => REPLAY.with(|r| {
+            let r = r.borrow();
+            let Some(samples) = r.as_ref().filter(|s| !s.is_empty()) else {
+                out.resize(out.len() + n, 0.0);
+                return;
+            };
+            for _ in 0..n {
+                out.push(samples[gs.replay_pos]);
+                gs.replay_pos = (gs.replay_pos + 1) % samples.len();
+            }
+        }),
     }
 }
 

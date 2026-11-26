@@ -173,7 +173,7 @@ pub fn DebugPanel() -> impl IntoView {
                     </div>
                     <div style="display:flex;gap:4px;flex-wrap:wrap;">
                         {[SynthSignal::Noise, SynthSignal::Tone, SynthSignal::Chirp,
-                          SynthSignal::MultiTone, SynthSignal::Pulses].into_iter().map(|sig| {
+                          SynthSignal::MultiTone, SynthSignal::Pulses, SynthSignal::Replay].into_iter().map(|sig| {
                             view! {
                                 <button class="setting-btn" style="flex:1;min-width:60px;"
                                     on:click=move |_| start_synth(sig)
