@@ -147,14 +147,23 @@ pub fn install(state: AppState) {
                         f.spectrogram.max_freq,
                         f.audio.channels,
                         f.overview_image.is_some(),
+                        f.spectrogram.time_resolution,
                     )
                 })
             })
         });
-        if let Some((id, rate, duration, max_freq, channels, overview_ready)) = current {
+        if let Some((id, rate, duration, max_freq, channels, overview_ready, time_res)) = current {
             set(&o, "channels", JsValue::from_f64(f64::from(channels)));
             set(&o, "sampleRate", JsValue::from_f64(f64::from(rate)));
             set(&o, "duration", JsValue::from_f64(duration));
+            // Seconds across the main view, which starts at `scrollOffset`.
+            let canvas_w = state.viewmode.spectrogram_canvas_width().get_untracked();
+            let zoom = state.view.zoom_level().get_untracked();
+            set(
+                &o,
+                "visibleTime",
+                JsValue::from_f64(crate::viewport::visible_time(canvas_w, zoom, time_res)),
+            );
             set(&o, "fileMaxFreq", JsValue::from_f64(max_freq));
             set(&o, "overviewReady", JsValue::from_bool(overview_ready));
             let lo = state.view.min_display_freq().get_untracked().unwrap_or(0.0);
