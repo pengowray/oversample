@@ -617,6 +617,7 @@ pub(super) fn CombinedSection() -> impl IntoView {
                 {section_head("In this recording", head_fact, || "Named species".to_string())}
                 {list}
             </div>
+            {super::combined_annotate::annotate_fold(state, current_file)}
             {models}
         </div>
     }

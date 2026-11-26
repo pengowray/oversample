@@ -345,6 +345,12 @@ test("Birds and bats is the default and lists bird boxes by species, whatever Fi
   await expect(list.locator("tr", { hasText: "Bird sp." })).toContainText("1 box");
   await expect(page.locator(".cd-recording .cd-head-fact")).toHaveText("1 species");
   await expect.poll(() => limePixels(page)).toBeGreaterThan(50);
+  // The boxes become annotations.
+  const fold = page.locator('.cd-fold[data-fold="combined-annotate"] .cd-fold-head');
+  await expect(fold).toHaveText(/Add 2 annotations/);
+  await fold.click();
+  await page.locator(".cd-add-btn").click();
+  await expect(page.getByText("2 annotations added")).toBeVisible();
   // The same results in full under BirdNET+ V3.0.
   await pickMethod(page, "BirdNET+ V3.0");
   await expect(page.locator(".cd-list tr", { hasText: "European Robin" })).toBeVisible();

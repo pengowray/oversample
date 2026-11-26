@@ -1480,6 +1480,87 @@ pub fn draw_bird_boxes(
     ctx.set_text_baseline("bottom");
 }
 
+/// A box with a label, drawn in its class's style (`box_class`): the
+/// insects, frogs and named sounds BirdNET+ V3.0 found, and wind and
+/// handling noise.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LabelledBox {
+    pub t0: f64,
+    pub t1: f64,
+    pub f0: f64,
+    pub f1: f64,
+    pub label: String,
+    pub class: crate::canvas::box_class::BoxClass,
+}
+
+/// Draw `boxes`: an outline in the class's style, with a dark edge under an
+/// animal box's line, and the label above the box when it fits the box's
+/// width. `top` is the height of the label strip along the top, which
+/// labels stay under.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_labelled_boxes(
+    ctx: &CanvasRenderingContext2d,
+    boxes: &[LabelledBox],
+    min_freq: f64,
+    max_freq: f64,
+    scroll_offset: f64,
+    time_resolution: f64,
+    zoom: f64,
+    canvas_width: f64,
+    canvas_height: f64,
+    top: f64,
+) {
+    use crate::canvas::box_class::{self as bc, BoxClass};
+    if boxes.is_empty() || max_freq <= min_freq {
+        return;
+    }
+    let visible_time = (canvas_width / zoom) * time_resolution;
+    let start_time = scroll_offset;
+    let end_time = start_time + visible_time;
+    let px_per_sec = canvas_width / visible_time;
+    let x_of = |t: f64| (t - start_time) * px_per_sec;
+    let y_of = |f: f64| freq_to_y(f, min_freq, max_freq, canvas_height).clamp(0.0, canvas_height);
+    ctx.set_font("11px sans-serif");
+    ctx.set_text_baseline("bottom");
+    for b in boxes {
+        if b.t1 < start_time || b.t0 > end_time || b.f1 < min_freq || b.f0 > max_freq {
+            continue;
+        }
+        let x0 = x_of(b.t0);
+        let x1 = x_of(b.t1).max(x0 + 2.0);
+        let (y0, y1) = (y_of(b.f1), y_of(b.f0));
+        if y1 <= y0 {
+            continue;
+        }
+        if b.class == BoxClass::Animal {
+            bc::set_dash(ctx, BoxClass::Animal);
+            ctx.set_stroke_style_str("rgba(0, 0, 0, 0.6)");
+            ctx.set_line_width(3.0);
+            ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
+        }
+        bc::set_dash(ctx, b.class);
+        ctx.set_stroke_style_str(match b.class {
+            BoxClass::Animal => bc::ANIMAL_STROKE,
+            BoxClass::Noise => bc::NOISE_STROKE,
+        });
+        ctx.set_line_width(1.25);
+        ctx.stroke_rect(x0, y0, x1 - x0, y1 - y0);
+        bc::set_dash(ctx, BoxClass::Animal);
+        let w = ctx.measure_text(&b.label).map_or(0.0, |m| m.width());
+        if w + 6.0 <= (x1 - x0).max(0.0) {
+            let ly = (y0 - 1.0).max(top + 14.0);
+            let lx = x0.min(canvas_width - w - 6.0).max(0.0);
+            ctx.set_fill_style_str(BIRD_BOX_LABEL_BG);
+            ctx.fill_rect(lx, ly - 13.0, w + 6.0, 13.0);
+            ctx.set_fill_style_str(match b.class {
+                BoxClass::Animal => bc::ANIMAL_STROKE,
+                BoxClass::Noise => bc::NOISE_LABEL,
+            });
+            let _ = ctx.fill_text(&b.label, lx + 3.0, ly - 1.0);
+        }
+    }
+}
+
 /// One stretch of the BirdNET / BattyBirdNET label strip: neighbouring windows
 /// with the same top class at or above the minimum confidence.
 pub struct StripSpan {

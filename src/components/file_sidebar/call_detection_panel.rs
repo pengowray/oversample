@@ -15,6 +15,7 @@ mod annotate;
 mod bird_boxes;
 mod classifier_section;
 mod combined;
+mod combined_annotate;
 mod every_window;
 mod in_recording;
 mod live_view;

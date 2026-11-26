@@ -180,3 +180,111 @@ pub fn busy(state: AppState, file_id: u64) -> bool {
         .with(|s| s.is_some_and(|(f, _, _)| f == file_id))
         && state.classifier.run().with(|r| r.is_busy())
 }
+
+/// One box the combined scan found, as it is added as an annotation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FoundBox {
+    pub t0: f64,
+    pub t1: f64,
+    pub f0: f64,
+    pub f1: f64,
+    /// "European Robin 0.60", "Bat calls", "Tone".
+    pub label: String,
+    /// The scientific name, when the box is named after a species.
+    pub scientific: Option<String>,
+    pub class: crate::canvas::box_class::BoxClass,
+}
+
+/// The boxes the combined scan found on file `file`, in time order: the
+/// bird boxes (as drawn), the call detector's bat call trains (named after
+/// the BattyBirdNET species whose windows cover the train's middle) and bat
+/// calls in no train, and the detector's other detections (noise). Reactive.
+pub fn found_boxes(state: AppState, file: u64) -> Vec<FoundBox> {
+    use crate::canvas::box_class::{call_class, BoxClass};
+    let mut out = Vec::new();
+    for b in super::boxes::drawn(state).iter() {
+        let score = b
+            .name
+            .as_ref()
+            .and_then(|n| b.species.iter().find(|(s, _)| s == n))
+            .map(|(_, s)| *s);
+        out.push(FoundBox {
+            t0: b.t0,
+            t1: b.t1,
+            f0: b.f0,
+            f1: b.f1,
+            label: match (&b.name, score) {
+                (Some(n), Some(s)) => format!("{n} {s:.2}"),
+                (Some(n), None) => n.clone(),
+                (None, _) => super::boxes::UNNAMED.to_string(),
+            },
+            scientific: None,
+            class: BoxClass::Animal,
+        });
+    }
+    let scanned = state
+        .call_detection
+        .scanned()
+        .with(|s| s.as_ref().map(|(id, _)| *id));
+    if scanned == Some(file) {
+        // BattyBirdNET's species stretches, to name the trains.
+        let min = super::min_confidence(state, Method::Bats);
+        let named: Vec<(f64, f64, String, Option<String>)> = state.classifier.results().with(|m| {
+            m.get(&(file, Method::Bats))
+                .map(|run| {
+                    super::summary::spans(run, min, true)
+                        .iter()
+                        .filter_map(|s| {
+                            let l = run.labels.get(s.class as usize)?;
+                            Some((
+                                s.start_s,
+                                s.end_s,
+                                format!("{} {:.2}", super::strips::display_name(l), s.best),
+                                (l.scientific != l.common).then(|| l.scientific.clone()),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        state.call_detection.detected().with(|calls| {
+            state.call_detection.trains().with(|trains| {
+                let mut in_train = vec![false; calls.len()];
+                for t in trains {
+                    for &i in &t.calls {
+                        if let Some(x) = in_train.get_mut(i) {
+                            *x = true;
+                        }
+                    }
+                    let mid = 0.5 * (t.start_s + t.end_s);
+                    let species = named.iter().find(|n| n.0 <= mid && mid < n.1);
+                    out.push(FoundBox {
+                        t0: t.start_s,
+                        t1: t.end_s,
+                        f0: t.min_freq_hz as f64,
+                        f1: t.max_freq_hz as f64,
+                        label: species.map_or_else(|| "Bat calls".to_string(), |s| s.2.clone()),
+                        scientific: species.and_then(|s| s.3.clone()),
+                        class: BoxClass::Animal,
+                    });
+                }
+                for (i, c) in calls.iter().enumerate() {
+                    if in_train[i] {
+                        continue;
+                    }
+                    out.push(FoundBox {
+                        t0: c.start_s,
+                        t1: c.end_s,
+                        f0: c.event.min_freq_hz as f64,
+                        f1: c.event.max_freq_hz as f64,
+                        label: crate::call_annotations::kind_label(c.kind).to_string(),
+                        scientific: None,
+                        class: call_class(c.kind),
+                    });
+                }
+            })
+        });
+    }
+    out.sort_by(|a, b| a.t0.total_cmp(&b.t0));
+    out
+}
