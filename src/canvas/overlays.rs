@@ -1156,13 +1156,17 @@ pub struct SpeciesWindow {
 
 /// Draw the call detector's results on the spectrogram: a box around each
 /// detection (time by frequency range) and a line along the top for each
-/// train. Bat calls get a solid green box; other detections a dashed grey one,
-/// so they stay visible without competing with the bat calls.
+/// train. Bat calls are animal boxes (`box_class`), lime and solid; other
+/// detections are noise boxes, dashed grey, so they stay visible without
+/// competing with the bat calls.
 ///
-/// With `species_windows` (BattyBirdNET picked), colour means species: a bat
-/// call whose middle falls in one of those windows is drawn in that species'
-/// colour, and other bat calls are drawn grey rather than green, since the
-/// green is too close to the sky blue species colour to tell apart.
+/// With `species_windows` (BattyBirdNET's results shown), colour means
+/// species: a bat call whose middle falls in one of those windows is drawn in
+/// that species' colour, and other bat calls are drawn solid grey.
+///
+/// Each box is labelled above with its number in the Call detection tab's
+/// list, or with `kind_labels` (no list shown) a noise box with its kind
+/// ("Tone"), when the label fits the box's width.
 ///
 /// `hovered_index` is the call under the pointer in the Call detection tab's
 /// list, outlined in white. With `only_hovered` (the boxes are switched off)
@@ -1175,6 +1179,7 @@ pub fn draw_calls(
     selected_index: Option<usize>,
     hovered_index: Option<usize>,
     only_hovered: bool,
+    kind_labels: bool,
     min_freq: f64,
     max_freq: f64,
     scroll_offset: f64,
@@ -1183,6 +1188,7 @@ pub fn draw_calls(
     canvas_width: f64,
     canvas_height: f64,
 ) {
+    use crate::canvas::box_class::{self as bc, call_class, BoxClass};
     use crate::dsp::call_detect::CallKind;
     if calls.is_empty() || max_freq <= min_freq {
         return;
@@ -1197,7 +1203,7 @@ pub fn draw_calls(
     const MIN_BOX_PX: f64 = 2.0;
 
     // Trains: a line along the top edge.
-    ctx.set_stroke_style_str("rgba(80, 220, 150, 0.6)");
+    ctx.set_stroke_style_str(bc::TRAIN_STROKE);
     ctx.set_line_width(2.0);
     for train in trains {
         if only_hovered || train.end_s < start_time || train.start_s > end_time {
@@ -1211,7 +1217,6 @@ pub fn draw_calls(
         ctx.stroke();
     }
 
-    let dashes = js_sys::Array::of2(&3.0.into(), &3.0.into());
     let no_dashes = js_sys::Array::new();
     ctx.set_font("9px sans-serif");
     ctx.set_text_baseline("bottom");
@@ -1243,9 +1248,10 @@ pub fn draw_calls(
             continue;
         }
         let is_selected = selected_index == Some(i);
+        let class = call_class(call.kind);
         let is_bat = call.kind == CallKind::Bat;
         let mid = 0.5 * (call.start_s + call.end_s);
-        // Other detections stay dashed grey: likely noise, not the species.
+        // Other detections stay as they are: likely noise, not the species.
         let species = species_windows.filter(|_| is_bat).map(|ws| {
             ws.iter()
                 .find(|w| w.start_s <= mid && mid < w.end_s)
@@ -1263,20 +1269,19 @@ pub fn draw_calls(
             ctx.set_stroke_style_str(stroke);
             ctx.set_line_width(1.0);
         } else if is_bat {
-            ctx.set_fill_style_str("rgba(50, 200, 120, 0.08)");
+            ctx.set_fill_style_str(bc::ANIMAL_FILL);
             ctx.fill_rect(x0, y0, x1 - x0, y1 - y0);
-            ctx.set_stroke_style_str("rgba(80, 220, 150, 0.7)");
+            ctx.set_stroke_style_str(bc::ANIMAL_STROKE);
+            ctx.set_line_width(1.0);
+        } else if class == BoxClass::Animal {
+            ctx.set_stroke_style_str(bc::ANIMAL_UNSURE_STROKE);
             ctx.set_line_width(1.0);
         } else {
-            ctx.set_stroke_style_str("rgba(180, 180, 180, 0.5)");
+            ctx.set_stroke_style_str(bc::NOISE_STROKE);
             ctx.set_line_width(1.0);
         }
-        let _ = ctx.set_line_dash(if is_bat || is_selected || species.is_some() {
-            &no_dashes
-        } else {
-            &dashes
-        });
-        if species.is_some() && !is_selected {
+        bc::set_dash(ctx, if is_selected { BoxClass::Animal } else { class });
+        if class == BoxClass::Animal && !is_selected {
             // A dark edge under the coloured line, so the species colour stays
             // visible on every colour map: Turbo's cyan is close to the sky
             // blue, and Greyscale's light greys hide the grey boxes.
@@ -1301,30 +1306,40 @@ pub fn draw_calls(
             ctx.stroke_rect(hx, hy, hw, hh);
         }
 
-        // The detection's number in the list, above the box when there is room.
-        if x1 - x0 > 14.0 && y0 > 12.0 {
-            ctx.set_fill_style_str(if is_selected {
-                "rgba(255, 200, 80, 0.9)"
-            } else if let Some((stroke, _)) = species {
-                stroke
-            } else if is_bat {
-                "rgba(80, 220, 150, 0.8)"
-            } else {
-                "rgba(180, 180, 180, 0.7)"
-            });
-            let _ = ctx.fill_text(&format!("{}", i + 1), x0, y0 - 1.0);
+        // The detection's number in the list, or a noise box's kind,
+        // above the box when there is room.
+        let label = if kind_labels {
+            (class == BoxClass::Noise)
+                .then(|| crate::call_annotations::kind_label(call.kind).to_string())
+        } else {
+            Some(format!("{}", i + 1))
+        };
+        if let Some(label) = label {
+            let fits = ctx
+                .measure_text(&label)
+                .map_or(false, |m| m.width() + 2.0 <= x1 - x0);
+            if fits && y0 > 12.0 {
+                ctx.set_fill_style_str(if is_selected {
+                    "rgba(255, 200, 80, 0.9)"
+                } else if let Some((stroke, _)) = species {
+                    stroke
+                } else if class == BoxClass::Animal {
+                    bc::ANIMAL_STROKE
+                } else {
+                    bc::NOISE_LABEL
+                });
+                let _ = ctx.fill_text(&label, x0, y0 - 1.0);
+            }
         }
     }
     let _ = ctx.set_line_dash(&no_dashes);
 }
 
 /// Bird sound boxes (BirdBox's Just-Bird, `crate::classifier::boxes`) are
-/// lime, a hue no other overlay uses: species are pink, sky blue and violet,
-/// sound clusters dark grey, green, orange and yellow, bat calls and
-/// annotations green and amber, the selection amber, PC rows blue and orange.
-/// A dark edge under the line keeps it visible on every colour map.
-const BIRD_BOX_STROKE: &str = "rgba(180, 240, 60, 0.95)";
-const BIRD_BOX_FILL: &str = "rgba(180, 240, 60, 0.14)";
+/// animal boxes (`box_class`), lime like bat calls. A dark edge under the
+/// line keeps it visible on every colour map.
+const BIRD_BOX_STROKE: &str = crate::canvas::box_class::ANIMAL_STROKE;
+const BIRD_BOX_FILL: &str = crate::canvas::box_class::ANIMAL_FILL;
 const BIRD_BOX_LABEL_BG: &str = "rgba(0, 0, 0, 0.65)";
 const BIRD_BOX_CARD_BG: &str = "rgba(16, 18, 14, 0.92)";
 const BIRD_BOX_CARD_MUTED: &str = "rgba(220, 225, 210, 0.85)";
@@ -1472,9 +1487,13 @@ pub struct StripSpan {
     pub end_s: f64,
     /// "Song thrush 0.91"
     pub label: String,
-    /// The species' colour slot (`species_colour`); None for BattyBirdNET's
-    /// classes that are not a species ("Noise"), drawn grey.
+    /// The species' colour slot (`species_colour`); None for a span drawn
+    /// in its class's colour (`box_class`): lime for an animal, grey for
+    /// noise.
     pub colour: Option<usize>,
+    /// Noise, not an animal: BattyBirdNET's classes that are not a species
+    /// ("Noise"), and named sounds such as Engine. Drawn dashed and grey.
+    pub noise: bool,
     /// Window boundaries inside the span, in seconds, drawn as ticks.
     pub inner_bounds: Vec<f64>,
     /// A bird the location list says is unlikely at the recording's place
@@ -1728,11 +1747,13 @@ fn draw_group_row(
 /// Draw BirdNET or BattyBirdNET results as a strip along the top of the
 /// spectrogram: one box per stretch of windows with the same species, with
 /// ticks at the window boundaries, and the selected window shaded down the
-/// whole height so it can be found in the sound.
+/// whole height so it can be found in the sound. `top` is the strip's top
+/// edge: the combined scan draws a second strip under the first.
 pub fn draw_species_strip(
     ctx: &CanvasRenderingContext2d,
     spans: &[StripSpan],
     selected: Option<(f64, f64)>,
+    top: f64,
     scroll_offset: f64,
     time_resolution: f64,
     zoom: f64,
@@ -1763,25 +1784,34 @@ pub fn draw_species_strip(
         let x0 = x_of(span.start_s).max(0.0);
         let x1 = x_of(span.end_s).min(canvas_width);
         let w = (x1 - x0).max(1.0);
-        ctx.set_fill_style_str(if span.colour.is_some() {
-            "rgba(25, 25, 35, 0.88)"
+        use crate::canvas::box_class::{self as bc, BoxClass};
+        let class = if span.noise {
+            BoxClass::Noise
         } else {
+            BoxClass::Animal
+        };
+        ctx.set_fill_style_str(if span.noise {
             "rgba(50, 50, 50, 0.80)"
+        } else {
+            "rgba(25, 25, 35, 0.88)"
         });
-        ctx.fill_rect(x0, 0.0, w, SPECIES_STRIP_H);
-        ctx.set_stroke_style_str(match span.colour {
-            Some(slot) => species_colour(slot).0,
-            None => NOT_SPECIES_COLOUR,
+        ctx.fill_rect(x0, top, w, SPECIES_STRIP_H);
+        ctx.set_stroke_style_str(match (span.colour, class) {
+            (Some(slot), _) => species_colour(slot).0,
+            (None, BoxClass::Animal) => bc::ANIMAL_STROKE,
+            (None, BoxClass::Noise) => NOT_SPECIES_COLOUR,
         });
         ctx.set_line_width(1.0);
-        ctx.stroke_rect(x0 + 0.5, 0.5, w - 1.0, SPECIES_STRIP_H - 1.0);
+        bc::set_dash(ctx, class);
+        ctx.stroke_rect(x0 + 0.5, top + 0.5, w - 1.0, SPECIES_STRIP_H - 1.0);
+        bc::set_dash(ctx, BoxClass::Animal);
         // Window boundaries inside a merged stretch.
         for &b in &span.inner_bounds {
             let x = x_of(b);
             if x > x0 && x < x1 {
                 ctx.begin_path();
-                ctx.move_to(x.round() + 0.5, SPECIES_STRIP_H - 4.0);
-                ctx.line_to(x.round() + 0.5, SPECIES_STRIP_H);
+                ctx.move_to(x.round() + 0.5, top + SPECIES_STRIP_H - 4.0);
+                ctx.line_to(x.round() + 0.5, top + SPECIES_STRIP_H);
                 ctx.stroke();
             }
         }
@@ -1789,21 +1819,21 @@ pub fn draw_species_strip(
         if w > 24.0 {
             ctx.save();
             ctx.begin_path();
-            ctx.rect(x0 + 1.0, 0.0, w - 2.0, SPECIES_STRIP_H);
+            ctx.rect(x0 + 1.0, top, w - 2.0, SPECIES_STRIP_H);
             ctx.clip();
             let mut text_x = x0 + 4.0;
             if span.unlikely {
                 // Before the label, not after it: a label is cut to its box,
                 // so a mark at the end would be the first thing lost.
-                draw_unlikely_flag(ctx, text_x, 3.0);
+                draw_unlikely_flag(ctx, text_x, top + 3.0);
                 text_x += 10.0;
             }
-            ctx.set_fill_style_str(if span.colour.is_some() {
-                "rgba(240, 240, 245, 0.95)"
-            } else {
+            ctx.set_fill_style_str(if span.noise {
                 "rgba(200, 200, 200, 0.9)"
+            } else {
+                "rgba(240, 240, 245, 0.95)"
             });
-            let _ = ctx.fill_text(&span.label, text_x, SPECIES_STRIP_H / 2.0 + 0.5);
+            let _ = ctx.fill_text(&span.label, text_x, top + SPECIES_STRIP_H / 2.0 + 0.5);
             ctx.restore();
         }
     }
@@ -1816,7 +1846,7 @@ pub fn draw_species_strip(
             ctx.set_line_width(1.5);
             ctx.stroke_rect(
                 x0 + 0.75,
-                0.75,
+                top + 0.75,
                 (x1 - x0 - 1.5).max(1.0),
                 SPECIES_STRIP_H - 1.5,
             );

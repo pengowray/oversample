@@ -47,22 +47,39 @@ pub fn take_spec_diag() -> (u32, f64) {
 
 /// What the BirdNET / BattyBirdNET overlay draws for the current file.
 struct SpeciesStrip {
-    /// Stretches of neighbouring windows with the same top class.
-    spans: Vec<spectrogram_renderer::StripSpan>,
+    /// Rows of stretches of neighbouring windows with the same top class,
+    /// from the top. One row, or two for the combined scan.
+    rows: Vec<Vec<spectrogram_renderer::StripSpan>>,
     /// The selected window's start and end.
     selected: Option<(f64, f64)>,
     /// Windows whose top class is a species, for colouring call boxes.
     windows: Vec<spectrogram_renderer::SpeciesWindow>,
 }
 
-/// The BirdNET / BattyBirdNET / Perch label strip for the current file, when
-/// that method is picked in the Call detection tab: stretches of neighbouring
-/// windows with the same top class at or above the minimum confidence, each
-/// species in its own colour. Reactive: call inside the draw effect.
-fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Option<SpeciesStrip> {
+impl SpeciesStrip {
+    /// Height of the rows, in canvas pixels.
+    fn height(&self) -> f64 {
+        self.rows.len() as f64 * spectrogram_renderer::SPECIES_STRIP_H
+    }
+}
+
+/// One row of the label strip for `method`'s results on `file`, the
+/// species' colour windows (for colouring call boxes) and the selected
+/// window. With `colours` off, every span takes its class's colour (lime or
+/// grey) rather than a species colour. `keep` picks the top classes shown.
+/// Reactive.
+fn strip_row(
+    state: AppState,
+    file: u64,
+    method: crate::classifier::Method,
+    colours: bool,
+    keep: &dyn Fn(&crate::classifier::ClassifierRun, u16) -> bool,
+) -> Option<(
+    Vec<spectrogram_renderer::StripSpan>,
+    Vec<spectrogram_renderer::SpeciesWindow>,
+    Option<(f64, f64)>,
+)> {
     use crate::classifier::summary::{window_kind, WindowKind};
-    let method = method.classifier()?;
-    let file = state.current_file_id_tracked()?;
     let min = crate::classifier::min_confidence(state, method);
     let selected = state.call_detection.selected_window().get();
     state.classifier.results().with(|m| {
@@ -79,12 +96,12 @@ fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Opti
         let mut last: Option<(usize, u16)> = None;
         for (i, w) in run.windows.iter().enumerate() {
             let kind = window_kind(run, i, min);
-            if kind == WindowKind::Below {
+            if kind == WindowKind::Below || !keep(run, w.top[0].class) {
                 continue;
             }
             let (start_s, end_s) = cells[i];
             let top = w.top[0];
-            let colour = (kind == WindowKind::Species)
+            let colour = (colours && kind == WindowKind::Species)
                 .then(|| order.iter().position(|&c| c == top.class))
                 .flatten();
             if let Some(slot) = colour {
@@ -110,6 +127,7 @@ fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Opti
                         end_s,
                         label: format!("{name} {:.2}", top.confidence),
                         colour,
+                        noise: kind == WindowKind::NotSpecies || label.is_some_and(|l| l.is_sound),
                         inner_bounds: Vec::new(),
                         unlikely: label.is_some_and(|l| {
                             crate::classifier::location::unlikely_here(state, file, method, l)
@@ -125,11 +143,52 @@ fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Opti
             .and_then(|t| run.window_at_start(t))
             .and_then(|i| run.windows.get(i))
             .map(|w| (w.start_s, w.end_s));
-        Some(SpeciesStrip {
-            spans,
-            selected,
+        Some((spans, windows, selected))
+    })
+}
+
+/// The label strip for the current file, for the method picked in the Call
+/// detection tab: stretches of neighbouring windows with the same top class
+/// at or above the minimum confidence, each species in its own colour.
+///
+/// The combined scan has up to two rows: BattyBirdNET's bats, in species
+/// colours that the bat call boxes share, then BirdNET+ V3.0's insects,
+/// frogs, mammals and named sounds, in their class's colour. Birds have
+/// boxes of their own, so they are left out of the row while the boxes
+/// apply. Reactive: call inside the draw effect.
+fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Option<SpeciesStrip> {
+    use crate::classifier::Method;
+    let file = state.current_file_id_tracked()?;
+    if method == crate::state::DetectionMethod::Combined {
+        let mut rows = Vec::new();
+        let mut windows = Vec::new();
+        if let Some((spans, w, _)) = strip_row(state, file, Method::Bats, true, &|_, _| true) {
+            if !spans.is_empty() {
+                rows.push(spans);
+                windows = w;
+            }
+        }
+        let boxes = crate::classifier::finds_boxes_for(state, file);
+        let not_birds = |run: &crate::classifier::ClassifierRun, class: u16| {
+            !boxes || !crate::classifier::boxes::bird_test(&run.labels)(class)
+        };
+        if let Some((spans, _, _)) = strip_row(state, file, Method::BirdNetV3, false, &not_birds) {
+            if !spans.is_empty() {
+                rows.push(spans);
+            }
+        }
+        return (!rows.is_empty()).then_some(SpeciesStrip {
+            rows,
+            selected: None,
             windows,
-        })
+        });
+    }
+    let method = method.classifier()?;
+    let (spans, windows, selected) = strip_row(state, file, method, true, &|_, _| true)?;
+    Some(SpeciesStrip {
+        rows: vec![spans],
+        selected,
+        windows,
     })
 }
 
@@ -1212,6 +1271,7 @@ pub fn Spectrogram() -> impl IntoView {
                                 selected_detection,
                                 hovered_detection,
                                 !detection_overlay,
+                                detection_method == crate::state::DetectionMethod::Combined,
                                 min_freq,
                                 max_freq,
                                 scroll,
@@ -1240,24 +1300,23 @@ pub fn Spectrogram() -> impl IntoView {
                             zoom,
                             display_w as f64,
                             display_h as f64,
-                            if species_strip.is_some() {
-                                spectrogram_renderer::SPECIES_STRIP_H
-                            } else {
-                                0.0
-                            },
+                            species_strip.as_ref().map_or(0.0, SpeciesStrip::height),
                         );
                     });
                     if let Some(strip) = &species_strip {
-                        spectrogram_renderer::draw_species_strip(
-                            &ctx,
-                            &strip.spans,
-                            strip.selected,
-                            scroll,
-                            time_res,
-                            zoom,
-                            display_w as f64,
-                            display_h as f64,
-                        );
+                        for (row, spans) in strip.rows.iter().enumerate() {
+                            spectrogram_renderer::draw_species_strip(
+                                &ctx,
+                                spans,
+                                strip.selected,
+                                row as f64 * spectrogram_renderer::SPECIES_STRIP_H,
+                                scroll,
+                                time_res,
+                                zoom,
+                                display_w as f64,
+                                display_h as f64,
+                            );
+                        }
                     }
                 }
 

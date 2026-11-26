@@ -57,17 +57,17 @@ const BAT_CALL: u8 = 0;
 const TRAIN: u8 = 1;
 const OTHER: u8 = 2;
 const INBUILT_STYLES: [MarkStyle; 3] = [
-    // The colours of `overlays::draw_calls`.
+    // The colours of `overlays::draw_calls` (`box_class`).
     MarkStyle {
-        colour: "rgba(80, 220, 150, 0.95)",
+        colour: crate::canvas::box_class::ANIMAL_STROKE,
         height: BAND_H,
     },
     MarkStyle {
-        colour: "rgba(80, 220, 150, 0.55)",
+        colour: crate::canvas::box_class::TRAIN_STROKE,
         height: 2.0,
     },
     MarkStyle {
-        colour: "rgba(180, 180, 180, 0.7)",
+        colour: crate::canvas::box_class::NOISE_STROKE,
         height: 2.0,
     },
 ];
@@ -96,6 +96,24 @@ pub fn inbuilt_marks(calls: &[DetectedCall], trains: &[CallTrain]) -> OverviewMa
         marks,
         styles: INBUILT_STYLES.to_vec(),
     }
+}
+
+/// Marks for the combined scan: the in-built detector's, with each bird box
+/// (start and end, in seconds) marked as a bat call is: both are animal
+/// calls.
+pub fn combined_marks(
+    calls: &[DetectedCall],
+    trains: &[CallTrain],
+    bird_boxes: impl IntoIterator<Item = (f64, f64)>,
+) -> OverviewMarks {
+    let mut out = inbuilt_marks(calls, trains);
+    out.marks
+        .extend(bird_boxes.into_iter().map(|(start_s, end_s)| TimeMark {
+            start_s,
+            end_s,
+            style: BAT_CALL,
+        }));
+    out
 }
 
 /// Marks for a classifier run's species stretches (`summary::spans`), each in

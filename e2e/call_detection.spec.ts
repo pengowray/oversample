@@ -65,7 +65,8 @@ async function openFile(page: Page) {
 async function pickMethod(page: Page, name: string) {
   await page.locator(".cd-method-btn").click();
   await expect(page.locator(".cd-method-menu")).toBeVisible();
-  await page.locator(".cd-method-opt", { hasText: name }).click();
+  // By the option's name only: a description can name another method.
+  await page.locator(".cd-method-opt .preset-main").getByText(name, { exact: true }).click();
   await expect(page.locator(".cd-method-menu")).toBeHidden();
   await expect(page.locator(".cd-method-name")).toHaveText(name);
 }
@@ -315,4 +316,36 @@ test("a file analysed without bird boxes asks for another Analyse", async ({ pag
   const row = page.locator(".cd-list tr", { hasText: "Bird sounds" });
   await expect(row).toContainText("Bird sounds: 0 boxes");
   await expect(row.locator(".detection-col-num")).toHaveText("–");
+});
+
+test("Birds and bats is the default and lists bird boxes by species, whatever Find bird boxes is set to", async ({
+  page,
+}) => {
+  await page.addInitScript(() => localStorage.removeItem("oversample_bird_boxes"));
+  await openFile(page);
+  await expect(page.locator(".cd-method-name")).toHaveText("Birds and bats");
+  // A 48 kHz file: BirdNET+ V3.0 and BirdBox only, no BattyBirdNET.
+  await expect(page.locator(".cd-in-force")).toContainText("BirdNET+ V3.0 with BirdBox");
+  await expect(page.locator(".cd-in-force")).not.toContainText("BattyBirdNET");
+  await expect(page.locator(".detection-region")).toHaveCount(0);
+  await expect(page.locator(".detection-primary-btn")).toHaveText("Download models (93 MB)");
+  const errs = await page.evaluate(
+    ([a, b]) => {
+      const h = (window as unknown as { __oversample_classifier: Hook }).__oversample_classifier;
+      return [h.seed(a), h.seedBoxes(b)];
+    },
+    [V3_SEED, BOX_SEED],
+  );
+  expect(errs).toEqual(["", ""]);
+  const list = page.locator(".cd-recording .cd-list");
+  await expect(list.locator("tr.cd-group-row").first()).toHaveText("Birds");
+  const robin = list.locator("tr", { hasText: "European Robin" });
+  await expect(robin).toContainText("1 box");
+  await expect(robin).toContainText("0.60");
+  await expect(list.locator("tr", { hasText: "Bird sp." })).toContainText("1 box");
+  await expect(page.locator(".cd-recording .cd-head-fact")).toHaveText("1 species");
+  await expect.poll(() => limePixels(page)).toBeGreaterThan(50);
+  // The same results in full under BirdNET+ V3.0.
+  await pickMethod(page, "BirdNET+ V3.0");
+  await expect(page.locator(".cd-list tr", { hasText: "European Robin" })).toBeVisible();
 });

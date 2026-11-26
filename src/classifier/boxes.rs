@@ -20,8 +20,8 @@
 //! [`LIST_FROM`] ([`box_species`]). The run makes sure the 1.5 s grid is
 //! scored (`super::run_task`).
 
-use oversample_core::erased_sort::SortErased;
 use super::{ClassifierRun, Score, SpeciesLabel};
+use oversample_core::erased_sort::SortErased;
 use oversample_ipc::classifier::boxes::{
     fuse, limit_to_content, padded_end_s, MergedBox, RawBox, CLIP_HOP_S, CLIP_S,
 };
@@ -291,7 +291,14 @@ fn drawn_now(state: crate::state::AppState) -> Vec<DrawnBox> {
     use crate::state::ClassifierStateStoreFields;
     use leptos::prelude::*;
     let cd = state.call_detection;
-    if cd.method().get() != crate::state::DetectionMethod::BirdNetV3 || !cd.bird_boxes().get() {
+    // The combined scan always finds the boxes; BirdNET+ V3.0 on its own
+    // when "Find bird boxes" is on.
+    let shown = match cd.method().get() {
+        crate::state::DetectionMethod::Combined => true,
+        crate::state::DetectionMethod::BirdNetV3 => cd.bird_boxes().get(),
+        _ => false,
+    };
+    if !shown {
         return Vec::new();
     }
     let Some(file) = state.current_file_id_tracked() else {

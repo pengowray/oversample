@@ -104,7 +104,7 @@ pub(super) struct RunInfo {
 }
 
 /// The longest recording Analyse starts on by itself, in seconds.
-const AUTO_ANALYSE_MAX_SECS: f64 = 600.0;
+pub(super) const AUTO_ANALYSE_MAX_SECS: f64 = 600.0;
 
 thread_local! {
     /// The files and methods Analyse has started on by itself this session:
@@ -146,7 +146,7 @@ fn analyse(state: AppState, file_id: u64, choice: ModelChoice, step_secs: f64) {
 /// BirdNET's backbone (shared by BirdNET and BattyBirdNET; labels and regional
 /// classifiers are small and download on Analyse), all of Perch's files, or
 /// BirdNET+ V3.0's one file.
-fn model_files(method: Method) -> Vec<&'static catalog::ModelFile> {
+pub(super) fn model_files(method: Method) -> Vec<&'static catalog::ModelFile> {
     match method {
         Method::BirdNet | Method::Bats => vec![&catalog::BACKBONE],
         Method::Perch => catalog::PERCH_FILES.to_vec(),
@@ -156,7 +156,7 @@ fn model_files(method: Method) -> Vec<&'static catalog::ModelFile> {
 
 /// One status for several files: failed or unknown if any is, downloading
 /// (with the share of all their bytes) while any is, downloaded when all are.
-fn combined_status(
+pub(super) fn combined_status(
     downloads: &std::collections::HashMap<&'static str, DownloadStatus>,
     files: &[&'static catalog::ModelFile],
 ) -> DownloadStatus {

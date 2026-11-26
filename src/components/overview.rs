@@ -853,12 +853,29 @@ pub fn OverviewToolbar() -> impl IntoView {
 /// file, as marks for the overview, while that method's "Boxes on the spectrogram" is on.
 /// Reactive: call in a `Memo`.
 fn detection_marks(state: AppState) -> Option<crate::canvas::overview_marks::OverviewMarks> {
-    use crate::canvas::overview_marks::{classifier_marks, inbuilt_marks};
+    use crate::canvas::overview_marks::{classifier_marks, combined_marks, inbuilt_marks};
     if !state.boxes_on() {
         return None;
     }
     let file = state.current_file_id_tracked()?;
     let method = state.call_detection.method().get();
+    if method == crate::state::DetectionMethod::Combined {
+        let scanned = state
+            .call_detection
+            .scanned()
+            .with(|s| s.as_ref().map(|(id, _)| *id));
+        let boxes = crate::classifier::boxes::drawn(state);
+        let birds = boxes.iter().map(|b| (b.t0, b.t1));
+        if scanned != Some(file) {
+            return Some(combined_marks(&[], &[], birds));
+        }
+        return Some(state.call_detection.detected().with(|calls| {
+            state
+                .call_detection
+                .trains()
+                .with(|trains| combined_marks(calls, trains, birds))
+        }));
+    }
     match method.classifier() {
         None => {
             // Only results from this file; another file's may still be held.

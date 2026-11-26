@@ -14,6 +14,7 @@
 mod annotate;
 mod bird_boxes;
 mod classifier_section;
+mod combined;
 mod every_window;
 mod in_recording;
 mod live_view;
@@ -312,17 +313,11 @@ fn add_annotations(state: AppState, what: AnnotateWhat, bat_calls_only: bool) {
     state.show_info_toast(toast);
 }
 
-#[component]
-fn InbuiltDetection() -> impl IntoView {
-    let state = expect_context::<AppState>();
-
-    // Settings as shown while a slider is dragged; copied to the detector's
-    // settings when it is released.
-    let draft = RwSignal::new(state.call_detection.params().get_untracked());
-    let annotate_what = RwSignal::new(AnnotateWhat::Calls);
-    let bat_calls_only = RwSignal::new(true);
-    let list_filter = RwSignal::new(ListFilter::All);
-
+/// Run the call detector on the current file while the Call detection tab
+/// is open, again when the file or the search settings change, and regroup
+/// the trains when only the train settings change. For the in-built
+/// detector's panel and the combined scan's.
+fn search_when_open(state: AppState) {
     // Search when the tab is open and the file or the search settings change.
     Effect::new(move || {
         if state.panels.right_tab().get() != RightSidebarTab::CallDetection {
@@ -354,6 +349,20 @@ fn InbuiltDetection() -> impl IntoView {
         }
         tp
     });
+}
+
+#[component]
+fn InbuiltDetection() -> impl IntoView {
+    let state = expect_context::<AppState>();
+
+    // Settings as shown while a slider is dragged; copied to the detector's
+    // settings when it is released.
+    let draft = RwSignal::new(state.call_detection.params().get_untracked());
+    let annotate_what = RwSignal::new(AnnotateWhat::Calls);
+    let bat_calls_only = RwSignal::new(true);
+    let list_filter = RwSignal::new(ListFilter::All);
+
+    search_when_open(state);
 
     let commit = move || {
         let d = draft.get_untracked();
@@ -978,7 +987,8 @@ fn InbuiltDetection() -> impl IntoView {
 }
 
 /// The methods, in the order the drop-down lists them.
-const METHODS: [DetectionMethod; 5] = [
+const METHODS: [DetectionMethod; 6] = [
+    DetectionMethod::Combined,
     DetectionMethod::Inbuilt,
     DetectionMethod::BirdNet,
     DetectionMethod::BirdNetV3,
@@ -990,6 +1000,7 @@ const METHODS: [DetectionMethod; 5] = [
 /// `classifier::MethodInfo`.
 fn method_name(method: DetectionMethod) -> &'static str {
     match method.classifier() {
+        None if method == DetectionMethod::Combined => "Birds and bats",
         None => "In-built bat call detection",
         Some(m) => m.info().name,
     }
@@ -998,6 +1009,10 @@ fn method_name(method: DetectionMethod) -> &'static str {
 /// The line under the method's name in the drop-down.
 fn method_description(method: DetectionMethod) -> &'static str {
     match method.classifier() {
+        None if method == DetectionMethod::Combined => {
+            // The models it uses are listed under its action button.
+            "Draws a box round each bird and bat call and names the species."
+        }
         None => "Finds bat calls. Runs automatically.",
         Some(m) => m.info().description,
     }
@@ -1092,7 +1107,19 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
     // What "Auto" gives the current recording, and where that came from.
     let auto = Memo::new(move |_| bat_pick::current_auto_scope(state));
     let region_select = move || {
-        (method() == DetectionMethod::Bats).then(|| {
+        // BattyBirdNET's region: for it on its own, and for the combined
+        // scan of a recording it runs on (96 kHz or more).
+        let ultrasonic = move || {
+            let idx = state.library.current_index().get();
+            state.library.files().with(|files| {
+                idx.and_then(|i| files.get(i)).is_some_and(|f| {
+                    f.audio.sample_rate >= oversample_ipc::classifier::BATS_MIN_SOURCE_RATE
+                })
+            })
+        };
+        let shown = method() == DetectionMethod::Bats
+            || (method() == DetectionMethod::Combined && ultrasonic());
+        shown.then(|| {
             let busy = move || state.classifier.run().with(|r| r.is_busy());
             let pick = move || state.call_detection.bat_pick().get();
             // Option values: "auto", "all", or a region's place in `BatRegion::ALL`.
@@ -1152,6 +1179,9 @@ pub(crate) fn CallDetectionPanel() -> impl IntoView {
                 {region_select}
             </div>
             {move || match method().classifier() {
+                None if method() == DetectionMethod::Combined => {
+                    view! { <combined::CombinedSection /> }.into_any()
+                }
                 None => view! { <InbuiltDetection /> }.into_any(),
                 Some(m) => view! { <ClassifierSection method=m /> }.into_any(),
             }}

@@ -1910,8 +1910,12 @@ pub struct CallDetectionState {
 /// The methods in the Call detection tab.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DetectionMethod {
-    /// The call detector (`oversample_core::dsp::call_detect`).
+    /// Every method that suits the recording, one after another
+    /// (`crate::classifier::combined`): the call detector, BirdNET+ V3.0 with
+    /// bird boxes, and BattyBirdNET at 96 kHz or more.
     #[default]
+    Combined,
+    /// The call detector (`oversample_core::dsp::call_detect`).
     Inbuilt,
     /// BirdNET V2.4, birds and some other sounds.
     BirdNet,
@@ -1927,7 +1931,7 @@ impl DetectionMethod {
     /// The classifier method, `None` for the in-built detector.
     pub fn classifier(self) -> Option<Method> {
         match self {
-            DetectionMethod::Inbuilt => None,
+            DetectionMethod::Combined | DetectionMethod::Inbuilt => None,
             DetectionMethod::BirdNet => Some(Method::BirdNet),
             DetectionMethod::Bats => Some(Method::Bats),
             DetectionMethod::Perch => Some(Method::Perch),
@@ -1964,6 +1968,9 @@ pub struct ClassifierState {
     /// Bird boxes per file id (`crate::classifier::boxes`), from the last
     /// BirdNET+ V3.0 Analyse that found them.
     pub boxes: std::collections::HashMap<u64, crate::classifier::boxes::BoxRun>,
+    /// While a combined scan runs (`crate::classifier::combined`): its file,
+    /// and which of its models is running, counted from 0, of how many.
+    pub combined_stage: Option<(u64, usize, usize)>,
     /// What the live view is doing, for its status line.
     pub live: crate::live_embedding::LiveStatus,
     /// The file and method whose results the live view is adding readings to
@@ -3163,7 +3170,7 @@ impl AppState {
                 scanning: None,
                 scan_generation: 0,
                 progress: 0.0,
-                method: DetectionMethod::Inbuilt,
+                method: DetectionMethod::Combined,
                 bat_pick: crate::classifier::BatPick::Auto,
                 min_confidence: Method::BirdNet.info().default_min_confidence,
                 perch_min_confidence: Method::Perch.info().default_min_confidence,
@@ -3794,7 +3801,8 @@ impl AppState {
     /// the Call detection tab. The in-built detector and the classifiers
     /// each have their own switch. Reactive.
     pub fn boxes_on(&self) -> bool {
-        if self.call_detection.method().get().classifier().is_some() {
+        let method = self.call_detection.method().get();
+        if method.classifier().is_some() || method == DetectionMethod::Combined {
             self.call_detection.classifier_boxes().get()
         } else {
             self.call_detection.overlay_enabled().get()

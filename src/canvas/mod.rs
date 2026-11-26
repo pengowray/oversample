@@ -1,6 +1,7 @@
 // Re-export modules from oversample-core.
 pub use oversample_core::canvas::{colormap_2d, colors, spectral_store};
 
+pub mod box_class;
 pub mod coord;
 pub mod display_dc;
 pub mod flow;

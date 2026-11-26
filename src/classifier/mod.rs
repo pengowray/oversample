@@ -62,6 +62,7 @@
 
 pub mod bat_pick;
 pub mod boxes;
+pub mod combined;
 pub mod kept_order;
 pub mod location;
 pub mod method_info;
@@ -87,12 +88,12 @@ pub use oversample_ipc::classifier::{
 };
 pub use types::{ClassifierRun, DownloadStatus, RunStatus, SpeciesLabel, WindowScores};
 
-use oversample_core::erased_sort::SortErased;
 use crate::state::store_fields::*;
 use crate::state::{AppState, ClassifierStateStoreFields};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use oversample_core::audio::source::ChannelView;
+use oversample_core::erased_sort::SortErased;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -525,6 +526,13 @@ fn current_file_id(state: AppState) -> Option<u64> {
 pub fn cancel(state: AppState) {
     next_generation(state);
     worker::cancel_active();
+    if state
+        .classifier
+        .combined_stage()
+        .with_untracked(|s| s.is_some())
+    {
+        state.classifier.combined_stage().set(None);
+    }
     if state.classifier.run().with_untracked(|r| r.is_busy()) {
         state.classifier.run().set(RunStatus::Idle);
     }
@@ -563,12 +571,18 @@ pub fn step_for(method: Method, step_secs: f64) -> f64 {
 pub fn finds_boxes(state: AppState, file_id: u64, choice: ModelChoice) -> bool {
     choice == ModelChoice::BirdNetV3
         && state.call_detection.bird_boxes().get_untracked()
-        && state.library.files().with_untracked(|files| {
-            files
-                .iter()
-                .find(|f| f.id == file_id)
-                .is_some_and(boxes::applies_to)
-        })
+        && untrack(|| finds_boxes_for(state, file_id))
+}
+
+/// True when bird boxes apply to file `file_id` ([`boxes::applies_to`]).
+/// Reactive.
+pub fn finds_boxes_for(state: AppState, file_id: u64) -> bool {
+    state.library.files().with(|files| {
+        files
+            .iter()
+            .find(|f| f.id == file_id)
+            .is_some_and(boxes::applies_to)
+    })
 }
 
 /// Every file an Analyse of `file_id` with `choice` needs: the choice's,
@@ -620,8 +634,9 @@ pub fn run(state: AppState, file_id: u64, choice: ModelChoice, step_secs: f64) {
         .classifier
         .run()
         .set(RunStatus::LoadingModel { file_id, method });
+    let boxes = finds_boxes(state, file_id, choice);
     spawn_local(async move {
-        let res = run_task(state, generation, file_id, choice, step_secs).await;
+        let res = run_task(state, generation, file_id, choice, step_secs, boxes).await;
         if !is_latest(state, generation) {
             return;
         }
@@ -640,12 +655,16 @@ pub fn run(state: AppState, file_id: u64, choice: ModelChoice, step_secs: f64) {
     });
 }
 
+/// One Analyse of `file_id` with `choice`. With `boxes` (BirdNET+ V3.0
+/// only), Just-Bird also finds bird boxes; the caller decides, so the
+/// combined scan can find them whatever "Find bird boxes" is set to.
 async fn run_task(
     state: AppState,
     generation: u32,
     file_id: u64,
     choice: ModelChoice,
     step_secs: f64,
+    boxes: bool,
 ) -> Result<(), Stopped> {
     let method = choice.method();
     let file = state.library.files().with_untracked(|files| {
@@ -660,8 +679,11 @@ async fn run_task(
             return Err(ClassifierError::SampleRateTooLow { rate, min }.into());
         }
     }
-    let boxes = finds_boxes(state, file_id, choice);
-    for f in run_files(state, file_id, choice) {
+    let mut needed = choice.files();
+    if boxes {
+        needed.push(&catalog::JUST_BIRD);
+    }
+    for f in needed {
         if !store::is_downloaded(f).await {
             let downloading = state.classifier.downloads().with_untracked(|m| {
                 matches!(m.get(f.id), Some(DownloadStatus::Downloading { .. }))

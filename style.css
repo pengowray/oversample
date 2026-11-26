@@ -11209,11 +11209,28 @@ body.hfr-nudge-on .hfr-switch {
 .map-key.cd-swatch-pc {
     border: 1px solid #888;
 }
-/* The bird sound boxes' row: an outline in the boxes' lime
-   (BIRD_BOX_STROKE in overlays.rs), as each box is drawn. */
+/* Rows of animal calls: an outline in the animal boxes' lime
+   (ANIMAL_STROKE in canvas/box_class.rs), as each box is drawn. */
 .map-key.cd-swatch-box {
     background: transparent;
     border: 1.5px solid rgb(180, 240, 60);
+}
+/* Rows of noise: dashed grey, as noise boxes are drawn (NOISE_STROKE). */
+.map-key.cd-swatch-noise {
+    background: transparent;
+    border: 1.5px dashed rgb(190, 190, 190);
+}
+/* The combined scan's group headings in its list (Birds, Bats, Noise):
+   the section heading's small capitals, inside the table so the columns
+   stay lined up. */
+.detection-table.cd-list tr.cd-group-row th {
+    padding-top: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    text-align: left;
 }
 /* The two bird box options, nested under their checkbox. */
 .cd-settings .setting-row.cd-box-sub {
