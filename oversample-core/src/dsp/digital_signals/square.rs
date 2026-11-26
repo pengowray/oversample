@@ -14,10 +14,6 @@ pub(super) struct Series {
     pub lo_hz: f32,
     pub hi_hz: f32,
     pub run: Run,
-    /// Harmonics matched above the fundamental.
-    pub harmonics: usize,
-    /// Median falloff exponent of the harmonics (1 for a square wave).
-    pub slope: f32,
 }
 
 /// Debug detail on each fundamental tried, for tuning.
@@ -125,8 +121,6 @@ pub(super) fn find_series(
             lo_hz: (f0 - 2.0 * bin).max(0.0),
             hi_hz: (hi + 2.0 * bin).min(nyquist),
             run: fund.run,
-            harmonics: matched.len() - 1,
-            slope: trial.slope,
         });
     }
     out
@@ -155,7 +149,7 @@ fn judge(
         .collect();
     betas.sort_by(f32::total_cmp);
     let mid = betas.len() / 2;
-    let slope = if betas.len() % 2 == 0 {
+    let slope = if betas.len().is_multiple_of(2) {
         0.5 * (betas[mid - 1] + betas[mid])
     } else {
         betas[mid]

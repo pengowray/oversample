@@ -16,7 +16,6 @@ const FLOOR_PERCENTILE: f32 = 25.0;
 
 /// A Hann-windowed frame FFT, its buffers, and the power scale.
 pub(super) struct FrameFft {
-    pub n: usize,
     window: Vec<f32>,
     fft: Arc<dyn RealToComplex<f32>>,
     input: Vec<f32>,
@@ -32,7 +31,6 @@ impl FrameFft {
         let window = hann_window(n);
         let wsum: f32 = window.iter().sum();
         Self {
-            n,
             input: fft.make_input_vec(),
             output: fft.make_output_vec(),
             scratch: fft.make_scratch_vec(),
@@ -196,9 +194,7 @@ impl<'a> BlockSpectra<'a> {
     /// [`FRAME_UNDER_MEAN_DB`] under the line's mean level (so stray noise
     /// next to a strong line's run is not counted as the line).
     pub fn line_threshold(&self, bin: usize) -> f32 {
-        from_db(
-            (self.floor_db[bin] + LINE_FRAME_DB).max(self.mean_db[bin] - FRAME_UNDER_MEAN_DB),
-        )
+        from_db((self.floor_db[bin] + LINE_FRAME_DB).max(self.mean_db[bin] - FRAME_UNDER_MEAN_DB))
     }
 
     /// Narrow peaks in the mean spectrum at least [`LINE_DB`] over the line
@@ -212,11 +208,8 @@ impl<'a> BlockSpectra<'a> {
         while k <= hi {
             let v = s[k];
             let snr = v - self.floor_db[k];
-            let is_peak = snr >= LINE_DB
-                && v > s[k - 1]
-                && v >= s[k + 1]
-                && v >= s[k - 2]
-                && v >= s[k + 2];
+            let is_peak =
+                snr >= LINE_DB && v > s[k - 1] && v >= s[k + 1] && v >= s[k - 2] && v >= s[k + 2];
             if !is_peak {
                 k += 1;
                 continue;
@@ -362,7 +355,11 @@ pub(super) fn running_extreme(x: &[f32], half: usize, max: bool) -> Vec<f32> {
     }
     let w = 2 * half + 1;
     let pick = |a: f32, b: f32| if max { a.max(b) } else { a.min(b) };
-    let pad = if max { f32::NEG_INFINITY } else { f32::INFINITY };
+    let pad = if max {
+        f32::NEG_INFINITY
+    } else {
+        f32::INFINITY
+    };
     // Padded input: `half` pad values each side.
     let len = n + 2 * half;
     let at = |i: usize| {
@@ -375,7 +372,11 @@ pub(super) fn running_extreme(x: &[f32], half: usize, max: bool) -> Vec<f32> {
     let mut fwd = vec![pad; len];
     let mut bwd = vec![pad; len];
     for i in 0..len {
-        fwd[i] = if i % w == 0 { at(i) } else { pick(fwd[i - 1], at(i)) };
+        fwd[i] = if i % w == 0 {
+            at(i)
+        } else {
+            pick(fwd[i - 1], at(i))
+        };
     }
     for i in (0..len).rev() {
         bwd[i] = if i % w == w - 1 || i == len - 1 {
@@ -438,8 +439,7 @@ mod tests {
     #[test]
     fn longest_run_bridges_short_dropouts() {
         let on = [
-            true, false, true, true, false, false, true, true, false, false, false, false,
-            true,
+            true, false, true, true, false, false, true, true, false, false, false, false, true,
         ];
         let r = longest_run(on.iter().copied()).unwrap();
         assert_eq!((r.first, r.last, r.present), (0, 7, 5));

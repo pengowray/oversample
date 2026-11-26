@@ -11,9 +11,11 @@ use super::spectra::{
     from_db, longest_run, opening, parabolic, percentile, to_db, BlockSpectra, Line, Run,
 };
 use super::{
-    CARRIER_ERROR, FSK_FIT, FSK_MAX_ENV_CV, FSK_MAX_GAP_HZ, FSK_MAX_SPAN_HZ, FSK_MAX_TONES,
-    FSK_SMOOTH_S, KAPPA_PSK, KAPPA_QAM, KAPPA_QAM_LABEL, PLATEAU_FLAT_DB, PLATEAU_SKIRT_DB, MOD_MAX_ENV_CV, CONSTANT_ENV_CV, POWER_ALONE_DB, MIN_BAND_HZ, MIN_STEADY_BAND_HZ, STEADY_TONE_DB, PLATEAU_FRAME_DB, PLATEAU_ON_DB,
-    PLATEAU_TOP_DB, POWER_LINE_DB, PULSE_FAMILY_DB, SYMBOL_MAX_WIDTHS, SYMBOL_LINE_DB, TONE_DB,
+    CARRIER_ERROR, CONSTANT_ENV_CV, FSK_FIT, FSK_MAX_ENV_CV, FSK_MAX_GAP_HZ, FSK_MAX_SPAN_HZ,
+    FSK_MAX_TONES, FSK_SMOOTH_S, KAPPA_PSK, KAPPA_QAM, KAPPA_QAM_LABEL, MIN_BAND_HZ,
+    MIN_STEADY_BAND_HZ, MOD_MAX_ENV_CV, PLATEAU_FLAT_DB, PLATEAU_FRAME_DB, PLATEAU_ON_DB,
+    PLATEAU_SKIRT_DB, PLATEAU_TOP_DB, POWER_ALONE_DB, POWER_LINE_DB, PULSE_FAMILY_DB,
+    STEADY_TONE_DB, SYMBOL_LINE_DB, SYMBOL_MAX_WIDTHS, TONE_DB,
 };
 use crate::dsp::fft::{plan_fft_forward, plan_fft_inverse};
 
@@ -53,19 +55,24 @@ pub(super) fn find_plateaus(
     let bh = sp.bin_hz;
     let mut reject = |a: usize, b: usize, why: String| {
         if let Some(r) = rejects.as_deref_mut() {
-            r.push(format!("plateau {:.0}-{:.0} set aside: {why}", a as f32 * bh, (b + 1) as f32 * bh));
+            r.push(format!(
+                "plateau {:.0}-{:.0} set aside: {why}",
+                a as f32 * bh,
+                (b + 1) as f32 * bh
+            ));
         }
     };
     if n < 32 {
         return Vec::new();
     }
     let s = &sp.mean_db;
-    let mut s3 = vec![0.0f32; n];
-    for k in 0..n {
-        let a = k.saturating_sub(1);
-        let b = (k + 1).min(n - 1);
-        s3[k] = s[a..=b].iter().sum::<f32>() / (b + 1 - a) as f32;
-    }
+    let s3: Vec<f32> = (0..n)
+        .map(|k| {
+            let a = k.saturating_sub(1);
+            let b = (k + 1).min(n - 1);
+            s[a..=b].iter().sum::<f32>() / (b + 1 - a) as f32
+        })
+        .collect();
     let base = opening(&s3, max_bins / 2 + 1);
     let d: Vec<f32> = s3.iter().zip(&base).map(|(a, b)| a - b).collect();
     let edge_hi = n - 1 - (n / 50).max(3);
@@ -106,7 +113,11 @@ pub(super) fn find_plateaus(
         let hi = percentile(&mut mid, 90.0);
         let lo = percentile(&mut mid, 10.0);
         if top < PLATEAU_TOP_DB || hi - top > PLATEAU_FLAT_DB || top - lo > PLATEAU_FLAT_DB {
-            reject(a, b, format!("top {top:.1}, {:.1} over, {:.1} under", hi - top, top - lo));
+            reject(
+                a,
+                b,
+                format!("top {top:.1}, {:.1} over, {:.1} under", hi - top, top - lo),
+            );
             continue;
         }
         // Skirts both sides: within half the plateau's width either side the
@@ -129,7 +140,15 @@ pub(super) fn find_plateaus(
         let left = lowest(a.saturating_sub(side)..a);
         let right = lowest((b + 1).min(n)..(b + 1 + side).min(n));
         if left > top_level - skirt_db || right > top_level - skirt_db {
-            reject(a, b, format!("skirts {:.1} {:.1} under", top_level - left, top_level - right));
+            reject(
+                a,
+                b,
+                format!(
+                    "skirts {:.1} {:.1} under",
+                    top_level - left,
+                    top_level - right
+                ),
+            );
             continue;
         }
         let edge = |level: f32| {
@@ -164,7 +183,11 @@ pub(super) fn find_plateaus(
         }));
         let Some(run) = run else { continue };
         if !run_ok(&run) || run.present * 100 < 85 * run.len() {
-            reject(a, b, format!("run {}-{} ({})", run.first, run.last, run.present));
+            reject(
+                a,
+                b,
+                format!("run {}-{} ({})", run.first, run.last, run.present),
+            );
             continue;
         }
         out.push(Plateau {
@@ -224,13 +247,13 @@ pub(super) fn find_clusters(
         if group.len() < 2 || group.len() > FSK_MAX_TONES {
             continue;
         }
-        let ons: Vec<f32> = group
-            .iter()
-            .map(|l| sp.line_threshold(l.bin))
-            .collect();
-        let run = longest_run(
-            (0..sp.frames).map(|f| group.iter().zip(&ons).any(|(l, &on)| sp.line_on(f, l.bin, on))),
-        );
+        let ons: Vec<f32> = group.iter().map(|l| sp.line_threshold(l.bin)).collect();
+        let run = longest_run((0..sp.frames).map(|f| {
+            group
+                .iter()
+                .zip(&ons)
+                .any(|(l, &on)| sp.line_on(f, l.bin, on))
+        }));
         let Some(run) = run else { continue };
         if !run_ok(&run) || run.present * 100 < 90 * run.len() {
             continue;
@@ -480,7 +503,10 @@ fn local_line_db(spec: &[f32], k: usize, half: usize) -> f32 {
     let peak = spec[k - 1].max(spec[k]).max(spec[k + 1]);
     let a = k.saturating_sub(half);
     let b = (k + half).min(n - 1);
-    let mut v: Vec<f32> = (a..=b).filter(|&i| i + 2 < k || i > k + 2).map(|i| spec[i]).collect();
+    let mut v: Vec<f32> = (a..=b)
+        .filter(|&i| i + 2 < k || i > k + 2)
+        .map(|i| spec[i])
+        .collect();
     if v.is_empty() {
         return 0.0;
     }
@@ -632,10 +658,14 @@ pub(super) fn analyze_plateau(
     let k_hi = ((SYMBOL_MAX_WIDTHS * b3 / hz) as usize).min(kmax);
     let mut symbol: Option<f64> = None;
     if k_hi > k_lo + 4 {
-        let kp = (k_lo..=k_hi).max_by(|&a, &b| es[a].total_cmp(&es[b])).unwrap();
+        let kp = (k_lo..=k_hi)
+            .max_by(|&a, &b| es[a].total_cmp(&es[b]))
+            .unwrap();
         let db = local_line_db(&es, kp, 40);
         feats.symbol_db = db;
-        let near: f32 = es[kp.saturating_sub(10)..=(kp + 10).min(es.len() - 1)].iter().sum();
+        let near: f32 = es[kp.saturating_sub(10)..=(kp + 10).min(es.len() - 1)]
+            .iter()
+            .sum();
         let core: f32 = es[kp - 1..=kp + 1].iter().sum();
         if db >= SYMBOL_LINE_DB && core >= 0.5 * near {
             let d = parabolic(
@@ -739,7 +769,10 @@ pub(super) fn analyze_plateau(
     let steady_envelope = feats.env_cv <= CONSTANT_ENV_CV
         && pl.b3() >= MIN_STEADY_BAND_HZ
         && to_db(in_band_peak as f64) - to_db(band_median as f64) < STEADY_TONE_DB;
-    if symbol.is_none() && !(pow_ok.iter().any(|&o| o) && pow_db >= POWER_ALONE_DB) && !steady_envelope {
+    if symbol.is_none()
+        && !(pow_ok.iter().any(|&o| o) && pow_db >= POWER_ALONE_DB)
+        && !steady_envelope
+    {
         return None;
     }
 
@@ -893,7 +926,9 @@ pub(super) fn analyze_cluster(
     if d.len() <= k {
         return None;
     }
-    let tol = (0.75 * bin_hz as f64).max(0.3 * spacing).min(0.45 * spacing);
+    let tol = (0.75 * bin_hz as f64)
+        .max(0.3 * spacing)
+        .min(0.45 * spacing);
     let mut acc: Complex<f32> = d[..k].iter().sum();
     let mut total = 0.0f64;
     let mut fit = 0.0f64;

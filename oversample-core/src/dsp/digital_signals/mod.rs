@@ -26,73 +26,100 @@
 //!
 //! - **Lines**: narrow peaks in the block's mean spectrum at least
 //!   [`LINE_DB`] over a floor (the 25th percentile of each 32 bins). A line
-//!   is *steady* when, through a run of at least [`MIN_RUN_S`], the most
-//!   power within one bin of it is [`LINE_FRAME_DB`] over the floor in every
-//!   frame (dropouts of up to [`MAX_DROPOUT_FRAMES`] are bridged; 85% of
-//!   frames must have it).
-//! - **Square waves**: from the lowest steady line up, harmonics are matched
-//!   among the steady lines at n times the fundamental (within 0.6 bins,
-//!   refining the fundamental by least squares as they are found). Each
-//!   harmonic's level gives a falloff exponent beta (level = -20 beta
-//!   log10 n): 1 for a square wave or sawtooth, 2 or more for the natural
-//!   harmonics of a voice or call. A series is accepted when the median beta
-//!   is at most [`MAX_SLOPE`] with at least three harmonics within
-//!   [`HARMONIC_MARGIN_DB`] of the 1/n law, or when only odd harmonics are
-//!   there (even ones at least [`ODD_ONLY_DB`] under the law) with two or
-//!   more of them and beta at most [`MAX_SLOPE_ODD`]. A fundamental so high
-//!   that only its third harmonic is below Nyquist needs that harmonic
-//!   within the margin and no even one. The series is set aside when more
+//!   is *steady* when, through a run of at least [`MIN_RUN_S`] (half that at
+//!   a block's start or end), the most power within one bin of it is
+//!   [`LINE_FRAME_DB`] over the floor and within [`FRAME_UNDER_MEAN_DB`] of
+//!   its mean level in 85% of the frames (dropouts of up to
+//!   [`MAX_DROPOUT_FRAMES`] frames are bridged).
+//! - **Square waves**: from the lowest steady line up (at least
+//!   [`MIN_FUNDAMENTAL_HZ`], with its third harmonic below Nyquist),
+//!   harmonics are matched among the steady lines at n times the
+//!   fundamental (within 0.6 bins, refining the fundamental by least squares
+//!   as they are found). Each harmonic's level gives a falloff exponent beta
+//!   (level = -20 beta log10 n): 1 for a square wave or sawtooth, 2 or more
+//!   for the natural harmonics of a voice or call. A series is accepted when
+//!   the median beta is at most [`MAX_SLOPE`] and either three harmonics are
+//!   within [`HARMONIC_MARGIN_DB`] of the 1/n law, or two harmonics are found
+//!   with an odd one at or over the law; or when only odd harmonics are there
+//!   (even ones at least [`ODD_ONLY_DB`] under the law), two or more of them,
+//!   with beta at most [`MAX_SLOPE_ODD`]; or when the fundamental is so high
+//!   that only its third harmonic is below Nyquist and that harmonic is
+//!   within the margin with no even one. The series is set aside when more
 //!   unrelated lines lie among its harmonics than it has harmonics (a forest
 //!   of lines, or the wrong fundamental), or when its two highest strong
 //!   harmonics wander in frequency from frame to frame by more than
 //!   [`MAX_JITTER_BINS`] bins plus [`MAX_JITTER_FRACTION`] of their
-//!   frequency (insect wing tones and motors wander; oscillators do not).
+//!   frequency (insect wing tones and motors wander; oscillators do not). A
+//!   square wave found in the block before carries on while its fundamental
+//!   is still a steady line, even when other sound hides the harmonics.
 //! - **Modulated, candidate bands**: a *plateau* is where the mean spectrum,
 //!   smoothed over 3 bins, stands [`PLATEAU_ON_DB`] over its morphological
 //!   opening (the floor under every feature narrower than [`MAX_BAND_HZ`]),
-//!   at least 400 Hz wide, with a top [`PLATEAU_TOP_DB`] over the floor and
-//!   flat to within [`PLATEAU_FLAT_DB`] across its middle 60%, and whose
-//!   power in each frame stays [`PLATEAU_FRAME_DB`] over the floor's through
-//!   a run. A *cluster* is two to [`FSK_MAX_TONES`] lines, none steady alone,
-//!   at most [`FSK_MAX_GAP_HZ`] apart, that together are present in 90% of a
+//!   at least 400 Hz wide, with a top [`PLATEAU_TOP_DB`] over the floor, its
+//!   middle 60% within [`PLATEAU_FLAT_DB`] of the top (10th to 90th
+//!   percentile), the spectrum falling [`PLATEAU_SKIRT_DB`] under the top
+//!   within half its width on both sides, and its power in each frame
+//!   staying [`PLATEAU_FRAME_DB`] over the floor's through a run. A
+//!   *cluster* is two to [`FSK_MAX_TONES`] lines not in a square wave, at
+//!   most [`FSK_MAX_GAP_HZ`] apart, that together are present in 90% of a
 //!   run's frames.
 //! - **Modulated, tests**: the candidate band (with 30% more either side, so
 //!   the roll-off skirts that carry the symbol-rate feature are kept) is cut
-//!   out of the block's own FFT and moved to 0 Hz as a complex signal z.
+//!   out of an FFT of the whole block and moved to 0 Hz as a complex signal
+//!   z. A plateau needs a -3 dB width of [`MIN_BAND_HZ`] (narrower ones are
+//!   mostly lossy-codec artifacts) and |z| that spreads by at most
+//!   [`MOD_MAX_ENV_CV`] of its mean (noise spreads by 0.52, pulsed sound by
+//!   more). Then it needs one of:
 //!   - Symbol rate: a narrow line in the spectrum of |z|^2 between 0.4 and
-//!     1.5 times the -3 dB width (a root-raised-cosine signal's -3 dB width
-//!     is its symbol rate), [`SYMBOL_LINE_DB`] over the local median, with
-//!     no line [`PULSE_FAMILY_DB`] high at half, a third or twice its
-//!     frequency and none nearly as strong below the range (pulsed insect
-//!     song has a family of lines; a symbol stream has one).
+//!     [`SYMBOL_MAX_WIDTHS`] times the -3 dB width (a root-raised-cosine
+//!     signal's -3 dB width is its symbol rate), [`SYMBOL_LINE_DB`] over the
+//!     local median, with no line [`PULSE_FAMILY_DB`] high at half, a third
+//!     or twice its frequency and none nearly as strong below the range
+//!     (pulsed insect song has a family of lines; a symbol stream has one).
+//!     z is then passed through a root-raised-cosine matched filter and
+//!     sampled once per symbol at the phase where |z|^2 peaks.
+//!     kappa = E|s|^4 / (E|s|^2)^2 is 1 for PSK, 1.32 for 16-QAM and 2 for
+//!     noise: the samples must have kappa under [`KAPPA_QAM`]; under
+//!     [`KAPPA_PSK`] is labelled PSK, under [`KAPPA_QAM_LABEL`] QAM.
 //!   - Carrier: a line near 0 Hz in the spectrum of z^2 (BPSK) or z^4 (QPSK
-//!     and square QAM), [`POWER_LINE_DB`] over the median, with no tone at
-//!     the carrier in z itself ([`TONE_DB`]): a pure tone makes power lines
-//!     too, a modulated carrier is suppressed.
-//!   - Kind: with a symbol rate, z is passed through a root-raised-cosine
-//!     matched filter and sampled once per symbol at the phase where |z|^2
-//!     peaks. kappa = E|s|^4 / (E|s|^2)^2 is 1 for PSK, 1.32 for 16-QAM and 2
-//!     for noise: under [`KAPPA_PSK`] is PSK, under [`KAPPA_QAM`] is QAM, and
-//!     a symbol line on noise-like samples is set aside.
-//!   - FSK (clusters): |z| steady (spread under [`FSK_MAX_ENV_CV`] of the
-//!     mean), the instantaneous frequency (averaged over [`FSK_SMOOTH_S`])
-//!     on one of the tones [`FSK_FIT`] of the time, at least two tones used
-//!     and at least three switches. The symbol rate comes from the dwell
-//!     times when most are whole multiples of the shortest.
-//!   A band that continues an event from the block before is taken as more
-//!   of it without the tests, which are run again every [`RECHECK_BLOCKS`]
-//!   blocks to gather symbol rates and kinds.
-//! - **Events**: findings in consecutive blocks that agree (fundamental
-//!   within 0.3%, or bands overlapping by half with carriers close) are one
-//!   event. Its start and end come from the runs of frames, so they are
-//!   good to about 10 ms. Events shorter than [`MIN_EVENT_S`] are dropped.
-//!   A gap ends every event.
+//!     and square QAM), [`POWER_ALONE_DB`] over the local median (with a
+//!     symbol rate, [`POWER_LINE_DB`] is enough to refine the carrier), and
+//!     no tone at the carrier in z itself ([`TONE_DB`]): a pure tone makes
+//!     power lines too, a modulated carrier is suppressed. A z^2 line means
+//!     BPSK.
+//!   - Steady envelope: |z| spreads by at most [`CONSTANT_ENV_CV`] of its
+//!     mean over a band at least [`MIN_STEADY_BAND_HZ`] wide with no bin of
+//!     its fine spectrum [`STEADY_TONE_DB`] over the band's median (a
+//!     frequency-swept clock or pest repeller; a tone in noise has a steady
+//!     envelope too, but shows as a line). Its kind is left open.
+//!
+//!   A cluster is FSK when |z| spreads by at most [`FSK_MAX_ENV_CV`] of its
+//!   mean, the instantaneous frequency (averaged over [`FSK_SMOOTH_S`]) is
+//!   on one of the tones [`FSK_FIT`] of the time, at least two tones are
+//!   used and it switches at least three times. The symbol rate comes from
+//!   the dwell times when most are whole multiples of the shortest.
+//!
+//!   A band that continues an event is taken as more of it without the
+//!   tests once the event has a symbol rate (or four tested blocks); the
+//!   tests are run again every [`RECHECK_BLOCKS`] blocks to gather symbol
+//!   rates and kinds.
+//! - **Events**: findings that agree (fundamental within 0.3%, or bands
+//!   overlapping by half with middles close) are one event, which carries on
+//!   through up to [`MISSED_BLOCKS`] blocks in a row without a finding. Its
+//!   start and end come from the runs of frames, so they are good to about
+//!   20 ms. Events shorter than [`MIN_EVENT_S`] are dropped, events of one
+//!   kind that overlap in time and band are joined, and a gap ends every
+//!   event. An event's symbol rate is the median of its blocks' and its kind
+//!   the most common.
 //!
 //! ## Cost
 //!
-//! At 384 kHz the frame FFTs take about 3 ms per second of audio; a block
-//! with a candidate band adds one FFT of the whole block and a few of the
-//! band.
+//! Single-threaded release build, on the corpus run (2026-11): about 250x
+//! real time at 384 kHz, 175x at 500 kHz, 520x at 192 kHz and 1900x at 48
+//! kHz. The frame FFTs are most of it; a block with a candidate band adds one
+//! FFT of the whole block and a few of the band. At 500 kHz the scanner
+//! holds about 2 MB of samples, 2 MB of frame spectra and 6 MB for the
+//! block FFT, plus up to a few MB while a wide band is tested.
 
 mod modulated;
 mod spectra;
@@ -527,12 +554,8 @@ impl DigitalScanner {
             .iter()
             .map(|l| self.run_ok(&l.run, frames) && l.run.present * 100 >= 85 * l.run.len())
             .collect();
-        let frame_time = |me: &Self, r: &Run| {
-            (
-                me.time(r.first * me.hop),
-                me.time(r.last * me.hop + me.n),
-            )
-        };
+        let frame_time =
+            |me: &Self, r: &Run| (me.time(r.first * me.hop), me.time(r.last * me.hop + me.n));
         let mut hits = Vec::new();
         if std::env::var_os("DIGITAL_TRACE_LINES").is_some() {
             let t0 = self.time(0);
@@ -655,10 +678,9 @@ impl DigitalScanner {
                 tested: false,
             };
             // A band that carries on an event from the block before.
-            let cont = self
-                .open
-                .iter()
-                .find(|e| e.last_block + 1 + MISSED_BLOCKS >= self.block && e.matches(&hit, self.bin_hz));
+            let cont = self.open.iter().find(|e| {
+                e.last_block + 1 + MISSED_BLOCKS >= self.block && e.matches(&hit, self.bin_hz)
+            });
             if let Some(e) = cont {
                 // Until a symbol rate is known, a few more blocks are tested.
                 let settled = !e.symbol_rates.is_empty() || e.freq_n >= 4;
@@ -680,16 +702,9 @@ impl DigitalScanner {
             let mut feats = ModFeatures::default();
             let found: Option<ModHit> = match &cand {
                 Cand::Plateau(p) => analyze_plateau(big, fs, p, self.hop, self.n, used, &mut feats),
-                Cand::Cluster(c) => analyze_cluster(
-                    big,
-                    fs,
-                    c,
-                    self.bin_hz,
-                    self.hop,
-                    self.n,
-                    used,
-                    &mut feats,
-                ),
+                Cand::Cluster(c) => {
+                    analyze_cluster(big, fs, c, self.bin_hz, self.hop, self.n, used, &mut feats)
+                }
             };
             let t0 = self.time(0);
             let what = match &cand {
@@ -702,7 +717,9 @@ impl DigitalScanner {
                     p.run.first,
                     p.run.last
                 ),
-                Cand::Cluster(c) => format!("cluster {:?} run {}-{}", c.freqs, c.run.first, c.run.last),
+                Cand::Cluster(c) => {
+                    format!("cluster {:?} run {}-{}", c.freqs, c.run.first, c.run.last)
+                }
             };
             self.trace(|| format!("{t0:.2}s {what} -> {:?} {feats:?}", found.is_some()));
             match found {
@@ -745,7 +762,11 @@ impl DigitalScanner {
                     // this one.
                     if let Some(p) = self.pending.iter().find(|p| {
                         p.kind == h.kind
-                            && bands_match((p.lo_hz, p.hi_hz, p.freq), (h.lo_hz, h.hi_hz, h.freq), self.bin_hz)
+                            && bands_match(
+                                (p.lo_hz, p.hi_hz, p.freq),
+                                (h.lo_hz, h.hi_hz, h.freq),
+                                self.bin_hz,
+                            )
                     }) {
                         start_s = start_s.min(p.start_s);
                     }
@@ -794,7 +815,10 @@ fn join_overlapping(events: Vec<DigitalEvent>, bin_hz: f32) -> Vec<DigitalEvent>
                 && e.start_s <= o.end_s
                 && match e.kind {
                     DigitalKind::SquareWave => {
-                        let (a, b) = (o.fundamental_hz.unwrap_or(0.0), e.fundamental_hz.unwrap_or(0.0));
+                        let (a, b) = (
+                            o.fundamental_hz.unwrap_or(0.0),
+                            e.fundamental_hz.unwrap_or(0.0),
+                        );
                         (a - b).abs() <= (0.6 * bin_hz).max(0.003 * a)
                     }
                     DigitalKind::Modulated => {

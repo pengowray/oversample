@@ -82,8 +82,9 @@ fn rrc_pulse(t: f64, alpha: f64) -> f64 {
         / (PI * t * (1.0 - (4.0 * alpha * t).powi(2)))
 }
 
-/// QPSK (`order` 4), 8-PSK (8) or square 16-QAM (16) on a carrier with
-/// root-raised-cosine pulses, at RMS `amp`, `len_s` long.
+/// BPSK (`order` 2), QPSK (4), 8-PSK (8) or square 16-QAM (16) on a
+/// carrier with root-raised-cosine pulses, at RMS `amp`, `len_s` long.
+#[allow(clippy::too_many_arguments)]
 fn qam(
     rate: u32,
     fc: f64,
@@ -112,7 +113,10 @@ fn qam(
             }
             _ => {
                 let lv = [-3.0, -1.0, 1.0, 3.0];
-                (lv[rng.below(4)] / 5f64.sqrt(), lv[rng.below(4)] / 5f64.sqrt())
+                (
+                    lv[rng.below(4)] / 5f64.sqrt(),
+                    lv[rng.below(4)] / 5f64.sqrt(),
+                )
             }
         })
         .collect();
@@ -216,7 +220,10 @@ fn square_waves_and_pwm_are_found() {
         assert!((e.start_s - 1.0).abs() < 0.1, "{rate}: {e:?}");
         assert!((e.end_s - 3.0).abs() < 0.1, "{rate}: {e:?}");
         assert!(e.hi_hz >= 3.0 * f0 as f32, "{rate}: {e:?}");
-        assert!(only(&ev, DigitalKind::Modulated).is_empty(), "{rate}: {ev:?}");
+        assert!(
+            only(&ev, DigitalKind::Modulated).is_empty(),
+            "{rate}: {ev:?}"
+        );
     }
 }
 
@@ -237,36 +244,65 @@ fn qam_and_psk_carriers_are_found() {
         let x = scene(rate, 4.5, &[(1.0, fade(sig, rate, 5.0))]);
         let ev = scan_digital(&x, rate);
         let m = only(&ev, DigitalKind::Modulated);
-        assert_eq!(m.len(), 1, "{rate} Hz, {order} at {rs} Bd: {ev:?}\n{}", explain(&x, rate));
+        assert_eq!(
+            m.len(),
+            1,
+            "{rate} Hz, {order} at {rs} Bd: {ev:?}\n{}",
+            explain(&x, rate)
+        );
         let e = m[0];
-        assert!(close(e.carrier_hz.unwrap(), fc as f32, 0.02), "{rate}: {e:?}");
+        assert!(
+            close(e.carrier_hz.unwrap(), fc as f32, 0.02),
+            "{rate}: {e:?}"
+        );
         let found = e.symbol_rate_hz.expect("symbol rate");
         assert!(close(found, rs as f32, 0.03), "{rate}: {e:?}");
-        assert_eq!(e.modulation, Some(want), "{rate}: {e:?}\n{}", explain(&x, rate));
+        assert_eq!(
+            e.modulation,
+            Some(want),
+            "{rate}: {e:?}\n{}",
+            explain(&x, rate)
+        );
         assert!((e.start_s - 1.0).abs() < 0.1, "{rate}: {e:?}");
         assert!((e.end_s - 3.5).abs() < 0.1, "{rate}: {e:?}");
         assert!(e.lo_hz < (fc - 0.4 * rs) as f32 && e.hi_hz > (fc + 0.4 * rs) as f32);
-        assert!(only(&ev, DigitalKind::SquareWave).is_empty(), "{rate}: {ev:?}");
+        assert!(
+            only(&ev, DigitalKind::SquareWave).is_empty(),
+            "{rate}: {ev:?}"
+        );
     }
 }
 
 #[test]
 fn qam_in_noise_is_found() {
     // About 12 dB over the noise in its band.
-    for (rate, fc, rs, order) in [(48_000, 12_000.0, 2_000.0, 16), (384_000, 40_000.0, 4_000.0, 4)] {
+    for (rate, fc, rs, order) in [
+        (48_000, 12_000.0, 2_000.0, 16),
+        (384_000, 40_000.0, 4_000.0, 4),
+    ] {
         let band_share = 1.35 * rs / (rate as f64 / 2.0);
         let noise_amp = 0.05f32;
         let noise_power = (noise_amp * noise_amp / 3.0) as f64 * band_share;
         let amp = (noise_power * 10f64.powf(1.2)).sqrt() as f32;
         let mut x = noise(noise_amp, secs(rate, 4.5), 17);
-        add(&mut x, secs(rate, 1.0), &fade(qam(rate, fc, rs, 0.35, order, amp, 2.5, 6), rate, 5.0));
+        add(
+            &mut x,
+            secs(rate, 1.0),
+            &fade(qam(rate, fc, rs, 0.35, order, amp, 2.5, 6), rate, 5.0),
+        );
         let ev = scan_digital(&x, rate);
         let m = only(&ev, DigitalKind::Modulated);
         assert_eq!(m.len(), 1, "{rate} Hz: {ev:?}\n{}", explain(&x, rate));
         let e = m[0];
         assert!(close(e.carrier_hz.unwrap(), fc as f32, 0.02), "{e:?}");
-        assert!(close(e.symbol_rate_hz.expect("symbol rate"), rs as f32, 0.03), "{e:?}");
-        assert!((e.start_s - 1.0).abs() < 0.15 && (e.end_s - 3.5).abs() < 0.15, "{e:?}");
+        assert!(
+            close(e.symbol_rate_hz.expect("symbol rate"), rs as f32, 0.03),
+            "{e:?}"
+        );
+        assert!(
+            (e.start_s - 1.0).abs() < 0.15 && (e.end_s - 3.5).abs() < 0.15,
+            "{e:?}"
+        );
     }
 }
 
@@ -318,7 +354,13 @@ fn bat_calls(rate: u32, len_s: f64, cf: bool) -> Vec<f32> {
 fn cricket(rate: u32, len_s: f64, trill: bool) -> Vec<f32> {
     let mut x = vec![0.0f32; secs(rate, len_s)];
     let pulse = fade(
-        harmonic_tone(rate, 4_500.0, &[0.05, 0.03], 0.2, if trill { 0.012 } else { 0.015 }),
+        harmonic_tone(
+            rate,
+            4_500.0,
+            &[0.05, 0.03],
+            0.2,
+            if trill { 0.012 } else { 0.015 },
+        ),
         rate,
         2.0,
     );
@@ -369,7 +411,11 @@ fn explain(x: &[f32], rate: u32) -> String {
 
 fn assert_quiet(name: &str, rate: u32, x: &[f32]) {
     let ev = scan_digital(x, rate);
-    assert!(ev.is_empty(), "{name} at {rate} Hz: {ev:?}\n{}", explain(x, rate));
+    assert!(
+        ev.is_empty(),
+        "{name} at {rate} Hz: {ev:?}\n{}",
+        explain(x, rate)
+    );
 }
 
 #[test]
@@ -423,7 +469,15 @@ fn animal_like_sounds_and_noise_are_quiet() {
         for trill in [false, true] {
             let mut x = cricket(rate, 3.0, trill);
             add(&mut x, 0, &hiss(rate, 3.0));
-            assert_quiet(if trill { "cricket trill" } else { "cricket chirps" }, rate, &x);
+            assert_quiet(
+                if trill {
+                    "cricket trill"
+                } else {
+                    "cricket chirps"
+                },
+                rate,
+                &x,
+            );
         }
         assert_quiet("white noise", rate, &noise(0.3, secs(rate, 3.0), 5));
         assert_quiet("brown noise", rate, &brown(rate, 3.0));
@@ -459,8 +513,18 @@ fn mixed_scene() {
         rate,
         len,
         &[
-            (0.5, fade(pulse_wave(rate, 5_000.0, 0.5, 0.03, 4.0), rate, 5.0)),
-            (1.5, fade(qam(rate, 120_000.0, 8_000.0, 0.35, 16, 0.03, 3.0, 5), rate, 5.0)),
+            (
+                0.5,
+                fade(pulse_wave(rate, 5_000.0, 0.5, 0.03, 4.0), rate, 5.0),
+            ),
+            (
+                1.5,
+                fade(
+                    qam(rate, 120_000.0, 8_000.0, 0.35, 16, 0.03, 3.0, 5),
+                    rate,
+                    5.0,
+                ),
+            ),
         ],
     );
     add(&mut x, 0, &bat_calls(rate, len, false));
@@ -468,10 +532,19 @@ fn mixed_scene() {
     let sq = only(&ev, DigitalKind::SquareWave);
     let m = only(&ev, DigitalKind::Modulated);
     assert_eq!((sq.len(), m.len()), (1, 1), "{ev:?}");
-    assert!(close(sq[0].fundamental_hz.unwrap(), 5_000.0, 0.01), "{ev:?}");
+    assert!(
+        close(sq[0].fundamental_hz.unwrap(), 5_000.0, 0.01),
+        "{ev:?}"
+    );
     assert!(close(m[0].carrier_hz.unwrap(), 120_000.0, 0.02), "{ev:?}");
-    assert!((sq[0].start_s - 0.5).abs() < 0.1 && (sq[0].end_s - 4.5).abs() < 0.1, "{ev:?}");
-    assert!((m[0].start_s - 1.5).abs() < 0.1 && (m[0].end_s - 4.5).abs() < 0.1, "{ev:?}");
+    assert!(
+        (sq[0].start_s - 0.5).abs() < 0.1 && (sq[0].end_s - 4.5).abs() < 0.1,
+        "{ev:?}"
+    );
+    assert!(
+        (m[0].start_s - 1.5).abs() < 0.1 && (m[0].end_s - 4.5).abs() < 0.1,
+        "{ev:?}"
+    );
 }
 
 #[test]
@@ -481,8 +554,18 @@ fn pieces_give_the_same_events() {
         rate,
         5.0,
         &[
-            (0.7, fade(pulse_wave(rate, 2_000.0, 0.3, 0.03, 3.0), rate, 5.0)),
-            (1.3, fade(qam(rate, 30_000.0, 3_000.0, 0.35, 4, 0.03, 2.5, 2), rate, 5.0)),
+            (
+                0.7,
+                fade(pulse_wave(rate, 2_000.0, 0.3, 0.03, 3.0), rate, 5.0),
+            ),
+            (
+                1.3,
+                fade(
+                    qam(rate, 30_000.0, 3_000.0, 0.35, 4, 0.03, 2.5, 2),
+                    rate,
+                    5.0,
+                ),
+            ),
         ],
     );
     let whole = scan_digital(&x, rate);
@@ -497,7 +580,11 @@ fn pieces_give_the_same_events() {
 #[test]
 fn gap_keeps_times() {
     let rate = 48_000;
-    let x = scene(rate, 3.0, &[(0.5, pulse_wave(rate, 1_500.0, 0.5, 0.05, 2.0))]);
+    let x = scene(
+        rate,
+        3.0,
+        &[(0.5, pulse_wave(rate, 1_500.0, 0.5, 0.05, 2.0))],
+    );
     let mut s = DigitalScanner::new(rate);
     s.push(&x[..secs(rate, 0.8)]);
     s.gap(secs(rate, 10.0) as u64);
@@ -516,8 +603,18 @@ fn burst_across_a_block_edge_is_found() {
     let rate = 256_000;
     let block_s = 32.0 * 8192.0 / rate as f64;
     for (start, sig) in [
-        (block_s - 0.25, fade(pulse_wave(rate, 20_000.0, 0.5, 0.05, 0.6), rate, 3.0)),
-        (block_s - 0.3, fade(qam(rate, 50_000.0, 5_000.0, 0.35, 4, 0.05, 0.6, 4), rate, 3.0)),
+        (
+            block_s - 0.25,
+            fade(pulse_wave(rate, 20_000.0, 0.5, 0.05, 0.6), rate, 3.0),
+        ),
+        (
+            block_s - 0.3,
+            fade(
+                qam(rate, 50_000.0, 5_000.0, 0.35, 4, 0.05, 0.6, 4),
+                rate,
+                3.0,
+            ),
+        ),
     ] {
         let x = scene(rate, 3.0, &[(start, sig)]);
         let ev = scan_digital(&x, rate);
