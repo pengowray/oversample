@@ -154,7 +154,12 @@ fn judge(
         .map(|&(n, h)| -h / (20.0 * (n as f32).log10()))
         .collect();
     betas.sort_by(f32::total_cmp);
-    let slope = betas[betas.len() / 2];
+    let mid = betas.len() / 2;
+    let slope = if betas.len() % 2 == 0 {
+        0.5 * (betas[mid - 1] + betas[mid])
+    } else {
+        betas[mid]
+    };
     trial.slope = slope;
     // Odd only: every even harmonic is missing or far under the 1/n law.
     let odd_only = above
@@ -171,6 +176,13 @@ fn judge(
     let accepted_shape = (rich >= 3 && slope <= MAX_SLOPE)
         || (odd_only && odd.len() >= 2 && slope <= MAX_SLOPE_ODD)
         // A high fundamental with only its third harmonic below Nyquist.
+        // Two harmonics, with an odd one at or over the 1/n law (natural
+        // harmonics fall off faster).
+        || (above.len() >= 2
+            && slope <= MAX_SLOPE
+            && above
+                .iter()
+                .any(|&(n, h)| n % 2 == 1 && h >= -20.0 * (n as f32).log10()))
         || (nmax <= 4
             && odd_only
             && odd.len() == 1

@@ -100,6 +100,7 @@ fn qam(
     let mut rng = Rng(seed.max(1));
     let syms: Vec<(f64, f64)> = (0..n_sym)
         .map(|_| match order {
+            2 => (if rng.below(2) == 0 { 1.0 } else { -1.0 }, 0.0),
             4 => {
                 let k = rng.below(4) as f64;
                 let a = PI / 4.0 + k * PI / 2.0;
@@ -523,4 +524,23 @@ fn loud_negatives_are_quiet() {
         w
     };
     assert_quiet("loud low noise", rate, &lp);
+}
+
+#[test]
+#[ignore = "prints feature traces for tuning"]
+fn print_positive_traces() {
+    for (rate, fc, rs, order, amp) in [
+        (48_000, 12_000.0, 1_000.0, 16, 0.05),
+        (48_000, 12_000.0, 4_000.0, 4, 0.05),
+        (384_000, 40_000.0, 10_000.0, 16, 0.05),
+        (384_000, 40_000.0, 2_000.0, 4, 0.05),
+        (256_000, 60_000.0, 5_000.0, 8, 0.05),
+        (384_000, 40_000.0, 2_000.0, 4, 0.01),
+        (384_000, 40_000.0, 2_000.0, 16, 0.01),
+        (48_000, 12_000.0, 2_000.0, 2, 0.02),
+    ] {
+        let sig = qam(rate, fc, rs, 0.35, order, amp, 2.5, 3);
+        let x = scene(rate, 4.5, &[(1.0, fade(sig, rate, 5.0))]);
+        println!("== {rate} {fc} {rs} {order} {amp}\n{}", explain(&x, rate));
+    }
 }

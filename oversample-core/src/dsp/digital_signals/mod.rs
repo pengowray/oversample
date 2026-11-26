@@ -164,6 +164,18 @@ pub const SYMBOL_LINE_DB: f32 = 18.0;
 pub const PULSE_FAMILY_DB: f32 = 12.0;
 /// z^2 or z^4 line height over the median, dB.
 pub const POWER_LINE_DB: f32 = 20.0;
+/// Without a symbol-rate line, a z^2 or z^4 line must be this high, dB.
+pub const POWER_ALONE_DB: f32 = 28.0;
+/// A modulated band's |z| spreads by at most this share of its mean (noise
+/// spreads by 0.52, pulsed sound by more; root-raised-cosine QPSK by about
+/// 0.2 and 16-QAM by 0.33).
+pub const MOD_MAX_ENV_CV: f32 = 0.45;
+/// A band whose |z| spreads by at most this share of its mean is a steady
+/// carrier (PSK, or a frequency-modulated clock) even with no lines.
+pub const CONSTANT_ENV_CV: f32 = 0.2;
+/// A steady-envelope band has no bin of its fine spectrum this far over the
+/// band's median, dB (noise alone reaches about 12 dB).
+pub const STEADY_TONE_DB: f32 = 20.0;
 /// A tone this far over the band's median at the carrier is not a
 /// suppressed carrier, dB.
 pub const TONE_DB: f32 = 15.0;
@@ -188,6 +200,15 @@ pub const FSK_SMOOTH_S: f64 = 0.0005;
 pub const FSK_FIT: f32 = 0.7;
 /// Bands that continue an event are tested again every this many blocks.
 pub const RECHECK_BLOCKS: u64 = 8;
+/// An event carries on through this many blocks in a row without a
+/// finding.
+pub const MISSED_BLOCKS: u64 = 1;
+/// A modulated band is at least this wide at -3 dB, Hz (narrower bands are
+/// mostly lossy-codec artifacts and smeared tones).
+pub const MIN_BAND_HZ: f32 = 500.0;
+/// A band with a steady envelope and no lines is at least this wide at
+/// -3 dB, Hz.
+pub const MIN_STEADY_BAND_HZ: f32 = 1000.0;
 /// Frames per block are `2 * BLOCK_FRAMES - 1`.
 const BLOCK_FRAMES: usize = 32;
 
@@ -535,7 +556,7 @@ impl DigitalScanner {
                 }
             }
         }
-        for s in series {
+        for s in &series {
             let (start_s, end_s) = frame_time(self, &s.run);
             hits.push(Hit {
                 kind: DigitalKind::SquareWave,
@@ -548,6 +569,37 @@ impl DigitalScanner {
                 modulation: None,
                 tested: true,
             });
+        }
+        // A square wave from the block before whose fundamental is still a
+        // steady line carries on, even if other sound hides its harmonics
+        // here.
+        for e in &self.open {
+            if e.kind != DigitalKind::SquareWave
+                || e.last_block + 1 != self.block
+                || hits.iter().any(|h| e.matches(h, self.bin_hz))
+            {
+                continue;
+            }
+            let f = e.freq();
+            let tol = (0.6 * self.bin_hz).max(0.003 * f);
+            if let Some((l, _)) = lines
+                .iter()
+                .zip(&steady)
+                .find(|(l, &st)| st && (l.freq - f).abs() <= tol)
+            {
+                let (start_s, end_s) = frame_time(self, &l.run);
+                hits.push(Hit {
+                    kind: DigitalKind::SquareWave,
+                    start_s,
+                    end_s,
+                    lo_hz: e.lo_hz,
+                    hi_hz: e.hi_hz,
+                    freq: l.freq,
+                    symbol_rate_hz: None,
+                    modulation: None,
+                    tested: false,
+                });
+            }
         }
 
         let max_bins = ((MAX_BAND_HZ / self.bin_hz) as usize).min(self.bins * 3 / 5);
@@ -666,7 +718,7 @@ impl DigitalScanner {
         let _ = frames;
         for h in hits {
             let idx = self.open.iter().position(|e| {
-                (e.last_block + 1 == block || e.last_block == block) && e.matches(&h, self.bin_hz)
+                e.last_block + 1 + MISSED_BLOCKS >= block && e.matches(&h, self.bin_hz)
             });
             match idx {
                 Some(i) => self.open[i].add(&h, block),
@@ -702,7 +754,7 @@ impl DigitalScanner {
         self.pending = pending;
         let mut i = 0;
         while i < self.open.len() {
-            if self.open[i].last_block < block {
+            if self.open[i].last_block + MISSED_BLOCKS < block {
                 let e = self.open.swap_remove(i);
                 if let Some(ev) = e.close() {
                     self.done.push(ev);

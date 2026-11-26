@@ -12,7 +12,7 @@ use super::spectra::{
 };
 use super::{
     CARRIER_ERROR, FSK_FIT, FSK_MAX_ENV_CV, FSK_MAX_GAP_HZ, FSK_MAX_SPAN_HZ, FSK_MAX_TONES,
-    FSK_SMOOTH_S, KAPPA_PSK, KAPPA_QAM, PLATEAU_FLAT_DB, PLATEAU_SKIRT_DB, PLATEAU_FRAME_DB, PLATEAU_ON_DB,
+    FSK_SMOOTH_S, KAPPA_PSK, KAPPA_QAM, PLATEAU_FLAT_DB, PLATEAU_SKIRT_DB, MOD_MAX_ENV_CV, CONSTANT_ENV_CV, POWER_ALONE_DB, MIN_BAND_HZ, MIN_STEADY_BAND_HZ, STEADY_TONE_DB, PLATEAU_FRAME_DB, PLATEAU_ON_DB,
     PLATEAU_TOP_DB, POWER_LINE_DB, PULSE_FAMILY_DB, SYMBOL_LINE_DB, TONE_DB,
 };
 use crate::dsp::fft::{plan_fft_forward, plan_fft_inverse};
@@ -575,7 +575,10 @@ pub(super) fn analyze_plateau(
     used: usize,
     feats: &mut ModFeatures,
 ) -> Option<ModHit> {
-    let b3 = pl.b3().max(1.0) as f64;
+    if pl.b3() < MIN_BAND_HZ {
+        return None;
+    }
+    let b3 = pl.b3() as f64;
     let center0 = 0.5 * (pl.lo3_hz + pl.hi3_hz) as f64;
     let lo = pl.lo_hz as f64;
     let hi = pl.hi_hz as f64;
@@ -599,6 +602,10 @@ pub(super) fn analyze_plateau(
         return None;
     }
     feats.env_cv = env_cv(z);
+    // Noise's |z| spreads by 0.52 of its mean; pulsed sound by more.
+    if feats.env_cv > MOD_MAX_ENV_CV {
+        return None;
+    }
     let q = z.len().next_power_of_two();
     let hz = bb.rate / q as f64;
     let inv_p = (1.0 / p) as f32;
@@ -700,7 +707,25 @@ pub(super) fn analyze_plateau(
         }
     }
     feats.carrier_hz = carrier as f32;
-    if symbol.is_none() && !pow_ok[0] && !pow_ok[1] {
+    // Without a symbol rate, only a strong power line or a steady envelope
+    // will do.
+    let pow_db = feats.pow2_db.max(feats.pow4_db);
+    // A steady envelope with no tone in the band (a tone in noise has a
+    // steady envelope too).
+    let in_band_peak = {
+        let half = (0.5 * b3 / hz) as usize;
+        (0..=half)
+            .flat_map(|k| [k, (q - k) % q])
+            .map(|k| s1[k])
+            .fold(0.0f32, f32::max)
+    };
+    feats.tone_db = feats
+        .tone_db
+        .max(to_db(in_band_peak as f64) - to_db(band_median as f64));
+    let steady_envelope = feats.env_cv <= CONSTANT_ENV_CV
+        && pl.b3() >= MIN_STEADY_BAND_HZ
+        && to_db(in_band_peak as f64) - to_db(band_median as f64) < STEADY_TONE_DB;
+    if symbol.is_none() && !(pow_ok.iter().any(|&o| o) && pow_db >= POWER_ALONE_DB) && !steady_envelope {
         return None;
     }
 
@@ -726,7 +751,7 @@ pub(super) fn analyze_plateau(
             _ => None,
         }
     };
-    if symbol.is_some() && !pow_ok[0] && !pow_ok[1] && modulation.is_none() {
+    if symbol.is_some() && !pow_ok[0] && !pow_ok[1] && modulation.is_none() && !steady_envelope {
         // A symbol-rate line on something noise-like at the instants.
         return None;
     }
