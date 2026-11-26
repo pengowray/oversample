@@ -54,7 +54,9 @@ fn version() -> ArcRwSignal<u32> {
 fn stretches(state: AppState, file: u64) -> Vec<Stretch> {
     let min = super::min_confidence(state, Method::BirdNetV3);
     state.classifier.results().with(|m| {
-        let Some(run) = m.get(&(file, Method::BirdNetV3)) else {
+        // Only a finished run: while windows arrive, a stretch grows and
+        // would be measured again each time.
+        let Some(run) = m.get(&(file, Method::BirdNetV3)).filter(|r| r.complete) else {
             return Vec::new();
         };
         let is_bird = boxes::bird_test(&run.labels);
@@ -130,6 +132,9 @@ pub fn measure_when_shown(state: AppState) {
         let Some(file) = state.current_file_id_tracked() else {
             return;
         };
+        if state.classifier.run().with(|r| r.is_busy()) {
+            return;
+        }
         let todo: Vec<Stretch> = stretches(state, file)
             .into_iter()
             .filter(|s| FOUND.with(|f| !f.borrow().contains_key(&s.key)))

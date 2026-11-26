@@ -13,7 +13,14 @@ use oversample_core::dsp::sound_box::estimate;
 mod common;
 
 const BAND: (f32, f32) = (250.0, 15_000.0);
-const SECONDS: f64 = 3.0;
+/// Seconds from the start of each file; `SOUND_BOX_SECONDS` overrides it
+/// (the app measures stretches of up to 30 s).
+fn seconds() -> f64 {
+    std::env::var("SOUND_BOX_SECONDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3.0)
+}
 
 #[test]
 #[ignore]
@@ -52,7 +59,7 @@ fn sound_box_corpus() {
             }
         };
         let sr = audio.sample_rate;
-        let n = ((SECONDS * sr as f64) as usize).min(audio.samples.len());
+        let n = ((seconds() * sr as f64) as usize).min(audio.samples.len());
         let t = std::time::Instant::now();
         let b = estimate(&audio.samples[..n], sr, BAND);
         let ms = t.elapsed().as_secs_f64() * 1000.0;
