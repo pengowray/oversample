@@ -12,8 +12,8 @@ use super::spectra::{
 };
 use super::{
     CARRIER_ERROR, FSK_FIT, FSK_MAX_ENV_CV, FSK_MAX_GAP_HZ, FSK_MAX_SPAN_HZ, FSK_MAX_TONES,
-    FSK_SMOOTH_S, KAPPA_PSK, KAPPA_QAM, PLATEAU_FLAT_DB, PLATEAU_SKIRT_DB, MOD_MAX_ENV_CV, CONSTANT_ENV_CV, POWER_ALONE_DB, MIN_BAND_HZ, MIN_STEADY_BAND_HZ, STEADY_TONE_DB, PLATEAU_FRAME_DB, PLATEAU_ON_DB,
-    PLATEAU_TOP_DB, POWER_LINE_DB, PULSE_FAMILY_DB, SYMBOL_LINE_DB, TONE_DB,
+    FSK_SMOOTH_S, KAPPA_PSK, KAPPA_QAM, KAPPA_QAM_LABEL, PLATEAU_FLAT_DB, PLATEAU_SKIRT_DB, MOD_MAX_ENV_CV, CONSTANT_ENV_CV, POWER_ALONE_DB, MIN_BAND_HZ, MIN_STEADY_BAND_HZ, STEADY_TONE_DB, PLATEAU_FRAME_DB, PLATEAU_ON_DB,
+    PLATEAU_TOP_DB, POWER_LINE_DB, PULSE_FAMILY_DB, SYMBOL_MAX_WIDTHS, SYMBOL_LINE_DB, TONE_DB,
 };
 use crate::dsp::fft::{plan_fft_forward, plan_fft_inverse};
 
@@ -47,8 +47,15 @@ pub(super) fn find_plateaus(
     max_bins: usize,
     min_bin: usize,
     run_ok: &dyn Fn(&Run) -> bool,
+    mut rejects: Option<&mut Vec<String>>,
 ) -> Vec<Plateau> {
     let n = sp.bins;
+    let bh = sp.bin_hz;
+    let mut reject = |a: usize, b: usize, why: String| {
+        if let Some(r) = rejects.as_deref_mut() {
+            r.push(format!("plateau {:.0}-{:.0} set aside: {why}", a as f32 * bh, (b + 1) as f32 * bh));
+        }
+    };
     if n < 32 {
         return Vec::new();
     }
@@ -85,37 +92,44 @@ pub(super) fn find_plateaus(
         }
         k = b + 1;
         let w = b + 1 - a;
-        if w < min_width || w > max_bins || b >= edge_hi {
+        if w < min_width || b >= edge_hi {
+            continue;
+        }
+        if w > max_bins {
+            reject(a, b, "too wide".into());
             continue;
         }
         let c0 = a + w / 5;
         let c1 = b - w / 5;
         let mut mid: Vec<f32> = d[c0..=c1].to_vec();
         let top = percentile(&mut mid, 50.0);
-        let hi = mid.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        let lo = mid.iter().copied().fold(f32::INFINITY, f32::min);
+        let hi = percentile(&mut mid, 90.0);
+        let lo = percentile(&mut mid, 10.0);
         if top < PLATEAU_TOP_DB || hi - top > PLATEAU_FLAT_DB || top - lo > PLATEAU_FLAT_DB {
+            reject(a, b, format!("top {top:.1}, {:.1} over, {:.1} under", hi - top, top - lo));
             continue;
         }
-        // Skirts both sides: the spectrum beside the plateau is well under
-        // its top (this does not lean on the opening, which is unreliable
-        // near the ends of the spectrum).
-        let side = (w / 2).max(2);
+        // Skirts both sides: within half the plateau's width either side the
+        // spectrum falls well under its top (this does not lean on the
+        // opening, which is unreliable near the ends of the spectrum, and
+        // lets a neighbouring band sit close by).
+        let side = (w / 2).max(3);
+        let skirt_db = PLATEAU_SKIRT_DB.min(top - 3.0);
         let top_level = {
             let mut v: Vec<f32> = s3[c0..=c1].to_vec();
             percentile(&mut v, 50.0)
         };
-        let beside = |r: std::ops::Range<usize>| {
-            let mut v: Vec<f32> = s3[r].to_vec();
-            if v.len() < 2 {
+        let lowest = |r: std::ops::Range<usize>| {
+            if r.len() < 2 {
                 f32::INFINITY
             } else {
-                percentile(&mut v, 50.0)
+                s3[r].iter().copied().fold(f32::INFINITY, f32::min)
             }
         };
-        let left = beside(a.saturating_sub(side)..a.saturating_sub(1));
-        let right = beside((b + 2).min(n)..(b + 2 + side).min(n));
-        if left > top_level - PLATEAU_SKIRT_DB || right > top_level - PLATEAU_SKIRT_DB {
+        let left = lowest(a.saturating_sub(side)..a);
+        let right = lowest((b + 1).min(n)..(b + 1 + side).min(n));
+        if left > top_level - skirt_db || right > top_level - skirt_db {
+            reject(a, b, format!("skirts {:.1} {:.1} under", top_level - left, top_level - right));
             continue;
         }
         let edge = |level: f32| {
@@ -150,9 +164,9 @@ pub(super) fn find_plateaus(
         }));
         let Some(run) = run else { continue };
         if !run_ok(&run) || run.present * 100 < 85 * run.len() {
+            reject(a, b, format!("run {}-{} ({})", run.first, run.last, run.present));
             continue;
         }
-        let bh = sp.bin_hz;
         out.push(Plateau {
             lo_hz: a as f32 * bh,
             hi_hz: (b + 1) as f32 * bh,
@@ -615,7 +629,7 @@ pub(super) fn analyze_plateau(
     let es = real_power(&e, q);
     let kmax = ((0.45 * bb.rate / hz) as usize).min(es.len() - 2);
     let k_lo = ((0.4 * b3 / hz) as usize).max(3);
-    let k_hi = ((1.5 * b3 / hz) as usize).min(kmax);
+    let k_hi = ((SYMBOL_MAX_WIDTHS * b3 / hz) as usize).min(kmax);
     let mut symbol: Option<f64> = None;
     if k_hi > k_lo + 4 {
         let kp = (k_lo..=k_hi).max_by(|&a, &b| es[a].total_cmp(&es[b])).unwrap();
@@ -747,11 +761,12 @@ pub(super) fn analyze_plateau(
     } else {
         match feats.kappa {
             Some(k) if k < KAPPA_PSK => Some("PSK"),
-            Some(k) if k < KAPPA_QAM => Some("QAM"),
+            Some(k) if k < KAPPA_QAM_LABEL => Some("QAM"),
             _ => None,
         }
     };
-    if symbol.is_some() && !pow_ok[0] && !pow_ok[1] && modulation.is_none() && !steady_envelope {
+    let symbols_shaped = feats.kappa.is_some_and(|k| k < KAPPA_QAM);
+    if symbol.is_some() && !pow_ok[0] && !pow_ok[1] && !symbols_shaped && !steady_envelope {
         // A symbol-rate line on something noise-like at the instants.
         return None;
     }
@@ -912,32 +927,36 @@ pub(super) fn analyze_cluster(
     }
     feats.fsk_fit = (fit / total) as f32;
     feats.fsk_tones = share.iter().filter(|&&s| s >= 0.1 * total).count();
-    // Dwell times on each tone, ignoring short excursions.
-    let mut dwells: Vec<usize> = Vec::new();
-    let mut cur = u8::MAX;
-    let mut len = 0usize;
-    let mut switches = 0usize;
+    // Runs on each tone (samples off every tone count towards the run
+    // they fall in); runs shorter than the averaging are folded into the
+    // run before, then neighbours on the same tone joined.
+    let mut runs: Vec<(u8, usize)> = Vec::new();
     for &lab in &labels {
-        if lab == u8::MAX || lab == cur {
-            len += 1;
-            continue;
-        }
-        if len >= k {
-            if cur != u8::MAX {
-                dwells.push(len);
-                switches += 1;
-            }
-            cur = lab;
-            len = 1;
-        } else {
-            len += 1;
+        match runs.last_mut() {
+            Some(r) if lab == u8::MAX || lab == r.0 => r.1 += 1,
+            _ if lab == u8::MAX => {}
+            _ => runs.push((lab, 1)),
         }
     }
+    let mut joined: Vec<(u8, usize)> = Vec::with_capacity(runs.len());
+    for (lab, len) in runs {
+        match joined.last_mut() {
+            Some(r) if len < k || r.0 == lab => r.1 += len,
+            _ => joined.push((lab, len)),
+        }
+    }
+    let switches = joined.len().saturating_sub(1);
+    // The first and last runs are cut by the ends of the region.
+    let dwells: Vec<usize> = if joined.len() > 2 {
+        joined[1..joined.len() - 1].iter().map(|r| r.1).collect()
+    } else {
+        Vec::new()
+    };
     feats.fsk_switches = switches;
     if feats.fsk_fit < FSK_FIT || feats.fsk_tones < 2 || switches < 3 {
         return None;
     }
-    let symbol_rate_hz = symbol_from_dwells(&dwells[1.min(dwells.len())..]).map(|t| (bb.rate / t) as f32);
+    let symbol_rate_hz = symbol_from_dwells(&dwells).map(|t| (bb.rate / t) as f32);
     Some(ModHit {
         carrier_hz: center as f32,
         lo_hz: (fmin - 2.0 * bin_hz as f64) as f32,

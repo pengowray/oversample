@@ -148,15 +148,20 @@ pub const MAX_JITTER_FRACTION: f32 = 0.001;
 pub const PLATEAU_ON_DB: f32 = 8.0;
 /// A plateau's top (median of its middle 60%) is this far over the floor, dB.
 pub const PLATEAU_TOP_DB: f32 = 10.0;
-/// A plateau's middle 60% is within this of its top, dB.
+/// A plateau's middle 60% is within this of its top (from the 10th to the
+/// 90th percentile), dB.
 pub const PLATEAU_FLAT_DB: f32 = 6.0;
-/// Beside a plateau, the spectrum is this far under its top on both sides,
-/// dB.
+/// Within half a plateau's width either side, the spectrum falls this far
+/// under its top (or 3 dB less than the top's height over the floor), dB.
 pub const PLATEAU_SKIRT_DB: f32 = 8.0;
 /// In a frame, a plateau's band power is this far over the floor's, dB.
 pub const PLATEAU_FRAME_DB: f32 = 6.0;
 /// Widest plateau looked for, Hz (and at most 60% of the spectrum).
 pub const MAX_BAND_HZ: f32 = 30_000.0;
+/// The symbol rate is looked for from 0.4 to this many times the -3 dB
+/// width (a root-raised-cosine signal's -3 dB width is its symbol rate;
+/// other pulse shapes are narrower).
+pub const SYMBOL_MAX_WIDTHS: f64 = 2.0;
 /// Symbol-rate line height over the local median, dB.
 pub const SYMBOL_LINE_DB: f32 = 18.0;
 /// A line this high at half, a third or twice the symbol rate makes it a
@@ -186,6 +191,9 @@ const CARRIER_ERROR: f64 = 0.12;
 pub const KAPPA_PSK: f32 = 1.2;
 /// kappa under this (and over [`KAPPA_PSK`]) is QAM.
 pub const KAPPA_QAM: f32 = 1.8;
+/// Only kappa under this is labelled QAM (16-QAM is 1.32, and noise raises
+/// it); from here to [`KAPPA_QAM`] the kind is left open.
+pub const KAPPA_QAM_LABEL: f32 = 1.55;
 /// Most tones in an FSK cluster, and the widest gap between neighbours and
 /// span, Hz.
 pub const FSK_MAX_TONES: usize = 16;
@@ -202,7 +210,7 @@ pub const FSK_FIT: f32 = 0.7;
 pub const RECHECK_BLOCKS: u64 = 8;
 /// An event carries on through this many blocks in a row without a
 /// finding.
-pub const MISSED_BLOCKS: u64 = 1;
+pub const MISSED_BLOCKS: u64 = 2;
 /// A modulated band is at least this wide at -3 dB, Hz (narrower bands are
 /// mostly lossy-codec artifacts and smeared tones).
 pub const MIN_BAND_HZ: f32 = 500.0;
@@ -458,7 +466,7 @@ impl DigitalScanner {
         self.close_all();
         let mut out = std::mem::take(&mut self.done);
         out.sort_erased_by(|a, b| a.start_s.total_cmp(&b.start_s));
-        out
+        join_overlapping(out, self.bin_hz)
     }
 
     fn close_all(&mut self) {
@@ -604,8 +612,15 @@ impl DigitalScanner {
 
         let max_bins = ((MAX_BAND_HZ / self.bin_hz) as usize).min(self.bins * 3 / 5);
         let run_ok = |r: &Run| self.run_ok(r, frames);
-        let plateaus = find_plateaus(&sp, max_bins, min_bin, &run_ok);
+        let mut rejects = self.trace.is_some().then(Vec::new);
+        let plateaus = find_plateaus(&sp, max_bins, min_bin, &run_ok, rejects.as_mut());
         let clusters = find_clusters(&sp, &lines, &skip, &run_ok);
+        if let Some(r) = rejects {
+            let t0 = self.time(0);
+            for line in r {
+                self.trace(|| format!("{t0:.2}s {line}"));
+            }
+        }
         enum Cand {
             Plateau(Plateau),
             Cluster(Cluster),
@@ -643,9 +658,11 @@ impl DigitalScanner {
             let cont = self
                 .open
                 .iter()
-                .find(|e| e.last_block + 1 == self.block && e.matches(&hit, self.bin_hz));
+                .find(|e| e.last_block + 1 + MISSED_BLOCKS >= self.block && e.matches(&hit, self.bin_hz));
             if let Some(e) = cont {
-                if self.block < e.tested_block + RECHECK_BLOCKS {
+                // Until a symbol rate is known, a few more blocks are tested.
+                let settled = !e.symbol_rates.is_empty() || e.freq_n >= 4;
+                if settled && self.block < e.tested_block + RECHECK_BLOCKS {
                     hit.freq = e.freq();
                     hits.push(hit);
                     continue;
@@ -764,6 +781,46 @@ impl DigitalScanner {
             }
         }
     }
+}
+
+/// Joins events of one kind that overlap in time and share most of a band
+/// (two findings of one signal whose middles drifted apart). `events` is in
+/// time order, and so is the result.
+fn join_overlapping(events: Vec<DigitalEvent>, bin_hz: f32) -> Vec<DigitalEvent> {
+    let mut out: Vec<DigitalEvent> = Vec::with_capacity(events.len());
+    for e in events {
+        let same = out.iter_mut().find(|o| {
+            o.kind == e.kind
+                && e.start_s <= o.end_s
+                && match e.kind {
+                    DigitalKind::SquareWave => {
+                        let (a, b) = (o.fundamental_hz.unwrap_or(0.0), e.fundamental_hz.unwrap_or(0.0));
+                        (a - b).abs() <= (0.6 * bin_hz).max(0.003 * a)
+                    }
+                    DigitalKind::Modulated => {
+                        let overlap = o.hi_hz.min(e.hi_hz) - o.lo_hz.max(e.lo_hz);
+                        let narrow = (o.hi_hz - o.lo_hz).min(e.hi_hz - e.lo_hz).max(bin_hz);
+                        overlap >= 0.5 * narrow
+                    }
+                }
+        });
+        match same {
+            Some(o) => {
+                // The longer one's details stand.
+                if e.end_s - e.start_s > o.end_s - o.start_s {
+                    o.fundamental_hz = e.fundamental_hz;
+                    o.carrier_hz = e.carrier_hz;
+                    o.symbol_rate_hz = e.symbol_rate_hz.or(o.symbol_rate_hz);
+                    o.modulation = e.modulation.or(o.modulation);
+                }
+                o.end_s = o.end_s.max(e.end_s);
+                o.lo_hz = o.lo_hz.min(e.lo_hz);
+                o.hi_hz = o.hi_hz.max(e.hi_hz);
+            }
+            None => out.push(e),
+        }
+    }
+    out
 }
 
 /// Scan mono samples already in memory.

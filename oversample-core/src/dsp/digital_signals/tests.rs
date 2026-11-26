@@ -225,8 +225,12 @@ fn qam_and_psk_carriers_are_found() {
     for (rate, fc, rs, order, want) in [
         (48_000, 12_000.0, 1_000.0, 16, "QAM"),
         (48_000, 12_000.0, 4_000.0, 4, "PSK"),
+        (48_000, 12_000.0, 8_000.0, 16, "QAM"),
+        (48_000, 12_000.0, 2_000.0, 2, "PSK"),
         (384_000, 40_000.0, 10_000.0, 16, "QAM"),
         (384_000, 40_000.0, 2_000.0, 4, "PSK"),
+        (384_000, 40_000.0, 1_000.0, 4, "PSK"),
+        (384_000, 40_000.0, 5_000.0, 16, "QAM"),
         (256_000, 60_000.0, 5_000.0, 8, "PSK"),
     ] {
         let sig = qam(rate, fc, rs, 0.35, order, 0.05, 2.5, 3);
@@ -247,6 +251,26 @@ fn qam_and_psk_carriers_are_found() {
 }
 
 #[test]
+fn qam_in_noise_is_found() {
+    // About 12 dB over the noise in its band.
+    for (rate, fc, rs, order) in [(48_000, 12_000.0, 2_000.0, 16), (384_000, 40_000.0, 4_000.0, 4)] {
+        let band_share = 1.35 * rs / (rate as f64 / 2.0);
+        let noise_amp = 0.05f32;
+        let noise_power = (noise_amp * noise_amp / 3.0) as f64 * band_share;
+        let amp = (noise_power * 10f64.powf(1.2)).sqrt() as f32;
+        let mut x = noise(noise_amp, secs(rate, 4.5), 17);
+        add(&mut x, secs(rate, 1.0), &fade(qam(rate, fc, rs, 0.35, order, amp, 2.5, 6), rate, 5.0));
+        let ev = scan_digital(&x, rate);
+        let m = only(&ev, DigitalKind::Modulated);
+        assert_eq!(m.len(), 1, "{rate} Hz: {ev:?}\n{}", explain(&x, rate));
+        let e = m[0];
+        assert!(close(e.carrier_hz.unwrap(), fc as f32, 0.02), "{e:?}");
+        assert!(close(e.symbol_rate_hz.expect("symbol rate"), rs as f32, 0.03), "{e:?}");
+        assert!((e.start_s - 1.0).abs() < 0.15 && (e.end_s - 3.5).abs() < 0.15, "{e:?}");
+    }
+}
+
+#[test]
 fn fsk_burst_is_found() {
     for (rate, tones, baud) in [
         (48_000, vec![11_000.0, 11_800.0], 50.0),
@@ -263,9 +287,8 @@ fn fsk_burst_is_found() {
         assert!(close(e.carrier_hz.unwrap(), mid, 0.02), "{e:?}");
         assert!((e.start_s - 1.2).abs() < 0.1, "{e:?}");
         assert!((e.end_s - 2.7).abs() < 0.1, "{e:?}");
-        if let Some(r) = e.symbol_rate_hz {
-            assert!(close(r, baud as f32, 0.1), "{e:?}");
-        }
+        let r = e.symbol_rate_hz.expect("symbol rate");
+        assert!(close(r, baud as f32, 0.05), "{e:?}");
     }
 }
 
