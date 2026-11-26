@@ -1168,6 +1168,10 @@ pub struct SpeciesWindow {
 /// list, or with `kind_labels` (no list shown) a noise box with its kind
 /// ("Tone"), when the label fits the box's width.
 ///
+/// `as_noise[i]` true draws detection `i` as noise whatever its kind: a
+/// "bat call" inside a modulated carrier (Birds and bats). Unlabelled, as
+/// the carrier's own box names it.
+///
 /// `hovered_index` is the call under the pointer in the Call detection tab's
 /// list, outlined in white. With `only_hovered` (the boxes are switched off)
 /// it is the only thing drawn.
@@ -1180,6 +1184,7 @@ pub fn draw_calls(
     hovered_index: Option<usize>,
     only_hovered: bool,
     kind_labels: bool,
+    as_noise: &[bool],
     min_freq: f64,
     max_freq: f64,
     scroll_offset: f64,
@@ -1248,8 +1253,13 @@ pub fn draw_calls(
             continue;
         }
         let is_selected = selected_index == Some(i);
-        let class = call_class(call.kind);
-        let is_bat = call.kind == CallKind::Bat;
+        let forced_noise = as_noise.get(i).copied().unwrap_or(false);
+        let class = if forced_noise {
+            BoxClass::Noise
+        } else {
+            call_class(call.kind)
+        };
+        let is_bat = call.kind == CallKind::Bat && !forced_noise;
         let mid = 0.5 * (call.start_s + call.end_s);
         // Other detections stay as they are: likely noise, not the species.
         let species = species_windows.filter(|_| is_bat).map(|ws| {
@@ -1309,7 +1319,7 @@ pub fn draw_calls(
         // The detection's number in the list, or a noise box's kind,
         // above the box when there is room.
         let label = if kind_labels {
-            (class == BoxClass::Noise)
+            (class == BoxClass::Noise && !forced_noise)
                 .then(|| crate::call_annotations::kind_label(call.kind).to_string())
         } else {
             Some(format!("{}", i + 1))

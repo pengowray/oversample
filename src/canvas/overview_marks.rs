@@ -104,9 +104,17 @@ pub fn inbuilt_marks(calls: &[DetectedCall], trains: &[CallTrain]) -> OverviewMa
 pub fn combined_marks(
     calls: &[DetectedCall],
     trains: &[CallTrain],
+    as_noise: &[bool],
     bird_boxes: impl IntoIterator<Item = (f64, f64)>,
 ) -> OverviewMarks {
     let mut out = inbuilt_marks(calls, trains);
+    // The first marks are the calls, in order: those inside a modulated
+    // carrier are marked as other detections.
+    for (m, &noise) in out.marks.iter_mut().zip(as_noise) {
+        if noise {
+            m.style = OTHER;
+        }
+    }
     out.marks
         .extend(bird_boxes.into_iter().map(|(start_s, end_s)| TimeMark {
             start_s,

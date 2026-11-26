@@ -139,13 +139,36 @@ fn rows(state: AppState, file: u64) -> Vec<Row> {
         .scanned()
         .with(|s| s.as_ref().map(|(id, _)| *id));
     if scanned == Some(file) {
+        let digital = combined::calls_in_modulated(state, file);
         state.call_detection.detected().with(|calls| {
             let mut kinds: Vec<(CallKind, usize, f64, f64)> = Vec::new();
-            for c in calls {
+            // Bat calls inside a modulated carrier: one row under Noise.
+            let mut in_modulated: Option<(usize, f64, f64)> = None;
+            for (i, c) in calls.iter().enumerate() {
+                if digital.get(i).copied().unwrap_or(false) {
+                    match &mut in_modulated {
+                        Some(m) => m.0 += 1,
+                        None => in_modulated = Some((1, c.start_s, c.end_s)),
+                    }
+                    continue;
+                }
                 match kinds.iter_mut().find(|k| k.0 == c.kind) {
                     Some(k) => k.1 += 1,
                     None => kinds.push((c.kind, 1, c.start_s, c.end_s)),
                 }
+            }
+            if let Some((n, t0, t1)) = in_modulated {
+                out.push(Row {
+                    group: Group::Noise,
+                    title: "Go to the first call".to_string(),
+                    name: combined::IN_MODULATED.to_string(),
+                    species: false,
+                    found: count(n, "call", "calls"),
+                    n,
+                    best: None,
+                    swatch: Swatch::Noise,
+                    show: Some(Show::Time(t0, t1)),
+                });
             }
             for (kind, n, t0, t1) in kinds {
                 let animal = call_class(kind) == BoxClass::Animal;

@@ -181,6 +181,46 @@ pub fn busy(state: AppState, file_id: u64) -> bool {
         && state.classifier.run().with(|r| r.is_busy())
 }
 
+/// The list row and box label of the detector's bat calls that are inside
+/// a modulated carrier (see [`calls_in_modulated`]).
+pub const IN_MODULATED: &str = "Bat calls in modulated signals";
+
+/// For each of the call detector's detections on file `file`, true when it
+/// is a bat call (single or not) whose peak frequency is inside a modulated
+/// carrier's band
+/// (`noise_scan::modulated_bands`) while that carrier is on: electronic
+/// noise, not a bat. Empty when the detector's results are for another
+/// file. Reactive.
+pub fn calls_in_modulated(state: AppState, file: u64) -> Vec<bool> {
+    let scanned = state
+        .call_detection
+        .scanned()
+        .with(|s| s.as_ref().map(|(id, _)| *id));
+    if scanned != Some(file) {
+        return Vec::new();
+    }
+    let rate = state.library.files().with(|fs| {
+        fs.iter().find(|f| f.id == file).map(|f| f.audio.sample_rate)
+    });
+    let bands = rate.map_or_else(Vec::new, |r| super::noise_scan::modulated_bands(file, r));
+    state.call_detection.detected().with(|calls| {
+        calls
+            .iter()
+            .map(|c| {
+                if crate::canvas::box_class::call_class(c.kind)
+                    != crate::canvas::box_class::BoxClass::Animal
+                {
+                    return false;
+                }
+                let peak = c.event.peak_freq_hz as f64;
+                bands.iter().any(|&(t0, t1, lo, hi)| {
+                    c.end_s >= t0 && c.start_s <= t1 && peak >= lo && peak <= hi
+                })
+            })
+            .collect()
+    })
+}
+
 /// One box the combined scan found, as it is added as an annotation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FoundBox {
@@ -247,10 +287,18 @@ pub fn found_boxes(state: AppState, file: u64) -> Vec<FoundBox> {
                 })
                 .unwrap_or_default()
         });
+        let digital = calls_in_modulated(state, file);
+        let is_digital = |i: usize| digital.get(i).copied().unwrap_or(false);
         state.call_detection.detected().with(|calls| {
             state.call_detection.trains().with(|trains| {
                 let mut in_train = vec![false; calls.len()];
                 for t in trains {
+                    // A train mostly inside a modulated carrier is left to
+                    // its calls, added one by one as noise below.
+                    let digital_calls = t.calls.iter().filter(|&&i| is_digital(i)).count();
+                    if digital_calls * 2 > t.calls.len() {
+                        continue;
+                    }
                     for &i in &t.calls {
                         if let Some(x) = in_train.get_mut(i) {
                             *x = true;
@@ -272,14 +320,22 @@ pub fn found_boxes(state: AppState, file: u64) -> Vec<FoundBox> {
                     if in_train[i] {
                         continue;
                     }
+                    let (label, class) = if is_digital(i) {
+                        (IN_MODULATED.to_string(), BoxClass::Noise)
+                    } else {
+                        (
+                            crate::call_annotations::kind_label(c.kind).to_string(),
+                            call_class(c.kind),
+                        )
+                    };
                     out.push(FoundBox {
                         t0: c.start_s,
                         t1: c.end_s,
                         f0: c.event.min_freq_hz as f64,
                         f1: c.event.max_freq_hz as f64,
-                        label: crate::call_annotations::kind_label(c.kind).to_string(),
+                        label,
                         scientific: None,
-                        class: call_class(c.kind),
+                        class,
                     });
                 }
             })

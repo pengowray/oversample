@@ -67,6 +67,18 @@ pub fn digital(file: u64, rate: u32) -> Option<Vec<DigitalEvent>> {
     })
 }
 
+/// The modulated carriers found in file `file` at sample rate `rate`, as
+/// start and end in seconds and lowest and highest frequency in Hz.
+/// Reactive.
+pub fn modulated_bands(file: u64, rate: u32) -> Vec<(f64, f64, f64, f64)> {
+    digital(file, rate)
+        .unwrap_or_default()
+        .iter()
+        .filter(|e| e.kind == DigitalKind::Modulated)
+        .map(|e| (e.start_s, e.end_s, e.lo_hz as f64, e.hi_hz as f64))
+        .collect()
+}
+
 /// The name a digital kind has on screen, as a list row.
 pub fn digital_kind_name(kind: DigitalKind) -> &'static str {
     match kind {

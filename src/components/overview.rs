@@ -865,15 +865,16 @@ fn detection_marks(state: AppState) -> Option<crate::canvas::overview_marks::Ove
             .scanned()
             .with(|s| s.as_ref().map(|(id, _)| *id));
         let boxes = crate::classifier::boxes::drawn(state);
+        let as_noise = crate::classifier::combined::calls_in_modulated(state, file);
         let birds = boxes.iter().map(|b| (b.t0, b.t1));
         if scanned != Some(file) {
-            return Some(combined_marks(&[], &[], birds));
+            return Some(combined_marks(&[], &[], &[], birds));
         }
         return Some(state.call_detection.detected().with(|calls| {
             state
                 .call_detection
                 .trains()
-                .with(|trains| combined_marks(calls, trains, birds))
+                .with(|trains| combined_marks(calls, trains, &as_noise, birds))
         }));
     }
     match method.classifier() {
