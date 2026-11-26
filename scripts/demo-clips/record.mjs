@@ -16,8 +16,9 @@
 //   --out DIR       where to write the clips (default media)
 //   --gif           also write a GIF of each clip (960 px wide, 12 fps)
 //   --no-captions   no caption band above the app
-//   --phone         record the clips that work on a phone-sized page (Pixel
-//                   7: 412 x 839, touch) as <name>-phone.mp4, 824 x 1678
+//   --phone         record the clips that work on a phone-sized page (412 x
+//                   840, touch, Pixel 7 user agent) as <name>-phone.mp4,
+//                   824 x 1680
 //
 // Each clip is <name>.mp4 (H.264, no sound, 1280 x 720) and
 // <name>-poster.jpg. MP4, not GIF: on the 17.5 s HFR clip, MP4 was 810 KB,

@@ -11,8 +11,16 @@ export const W = 1280;
 export const H = 720;
 /** Height of the caption band above the app, in CSS pixels. */
 const BAND = 56;
-/** Phone clips: a Pixel 7 (412 x 839 page, touch), recorded at twice its CSS pixels. */
-const PHONE = devices['Pixel 7'];
+/**
+ * Phone clips: a 412 x 840 page with a Pixel 7's user agent and touch,
+ * recorded at twice its CSS pixels. The 2x comes from the browser's own
+ * --force-device-scale-factor: with a per-page emulated scale (Playwright's
+ * deviceScaleFactor) headless Chromium still captures video at CSS size, and
+ * the recorder pads that into a quarter of the frame.
+ */
+const PHONE_UA = devices['Pixel 7'].userAgent;
+const PHONE_W = 412;
+const PHONE_H = 840;
 const PHONE_BAND = 64;
 
 const MIME = {
@@ -138,7 +146,8 @@ async function centreOf(page, target, fx = 0.5, fy = 0.5) {
     const loc = typeof target === 'string' ? page.locator(target).first() : target;
     await loc.waitFor({ state: 'visible', timeout: 30000 });
     let b = await loc.boundingBox();
-    const { width: vw, height: vh } = page.viewportSize();
+    const { width: vw, height: vh } =
+        page.viewportSize() ?? (await page.evaluate(() => ({ width: innerWidth, height: innerHeight })));
     if (b.y < 0 || b.y + b.height > vh || b.x < 0 || b.x + b.width > vw) {
         // Off screen in a scrolling panel: scroll it into view as a person would.
         await loc.evaluate((el) => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
@@ -155,12 +164,15 @@ export class Demo {
         d.url = url;
         d.captions = captions;
         d.phone = phone;
-        d.w = phone ? PHONE.viewport.width : W;
-        d.h = phone ? PHONE.viewport.height : H;
-        d.browser = await chromium.launch();
+        d.w = phone ? PHONE_W : W;
+        d.h = phone ? PHONE_H : H;
+        d.browser = await chromium.launch({
+            args: phone ? ['--force-device-scale-factor=2', `--window-size=${PHONE_W},${PHONE_H}`] : [],
+        });
         d.videoDir = mkdtempSync(join(tmpdir(), 'oversample-demo-'));
+        // viewport: null keeps the window's size and the browser's 2x scale.
         const view = phone
-            ? { ...PHONE, deviceScaleFactor: 2 }
+            ? { viewport: null, userAgent: PHONE_UA, hasTouch: true }
             : { viewport: { width: W, height: H } };
         const scale = phone ? 2 : 1;
         d.ctx = await d.browser.newContext({

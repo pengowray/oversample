@@ -26,20 +26,20 @@ A caption above the app says what each clip shows.
        autoplay muted loop playsinline></video>
 ```
 
-## Phone (824 × 1678, portrait)
+## Phone (824 × 1680, portrait)
 
 The same steps in the phone layout, with a fingertip instead of a pointer.
 
 | Clip | Length | Shows |
 |---|---|---|
-| `tour-phone.mp4` | 27 s | Open a recording, HFR, bat book, with a title and an end card |
+| `tour-phone.mp4` | 28 s | Open a recording, HFR, bat book, with a title and an end card |
 | `open-recording-phone.mp4` | 12 s | Files, Find recordings, search and load |
 | `hfr-demo-phone.mp4` | 13 s | HFR, frequency strip, time strip, Play |
 | `bat-book-phone.mp4` | 7 s | Bat book on, then a second species |
-| `live-phone.mp4` | 9 s | Live listening from a replayed recording, HFR on and a band chosen |
+| `live-phone.mp4` | 10 s | Live listening from a replayed recording, HFR on and a band chosen |
 
 ```html
-<video src="tour-phone.mp4" poster="tour-phone-poster.jpg" width="412" height="839"
+<video src="tour-phone.mp4" poster="tour-phone-poster.jpg" width="412" height="840"
        autoplay muted loop playsinline></video>
 ```
 
