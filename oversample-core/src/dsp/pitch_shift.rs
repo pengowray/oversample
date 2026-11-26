@@ -406,6 +406,37 @@ mod tests {
         }
     }
 
+    /// The shifter adds no gain, but it plays the waveform between the
+    /// samples, so its peak is the input's true peak, not its sample peak.
+    ///
+    /// A tone at a quarter of the sample rate has 4 samples a cycle. Sampled
+    /// at its crests, its sample peak is its true peak. Sampled 45 degrees
+    /// later, every sample is at 0.707 of the crest, so scaled to a sample
+    /// peak of 1 its true peak is 1.414 (+3 dB). Shifted down 10 times, it
+    /// has 40 samples a cycle, which land near its crests, and the output
+    /// peaks at +3 dB. Clipped bat recordings with 0 dBFS samples peak above
+    /// 0 dBFS in pitch shift for this reason.
+    #[test]
+    fn the_output_peaks_at_the_inputs_true_peak() {
+        let len = 20_000;
+        for (phase, true_peak) in [(0.0f32, 1.0f32), (std::f32::consts::FRAC_PI_4, 2f32.sqrt())] {
+            let raw: Vec<f32> = (0..len)
+                .map(|i| (std::f32::consts::FRAC_PI_2 * i as f32 + phase).sin())
+                .collect();
+            let sample_peak = raw.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            let input: Vec<f32> = raw.iter().map(|v| v / sample_peak).collect();
+            let out = pitch_shift_realtime(&input, PitchFactor::down(10.0));
+            let out_peak = out[GRAIN..len - GRAIN]
+                .iter()
+                .fold(0.0f32, |m, v| m.max(v.abs()));
+            let diff_db = 20.0 * (out_peak / true_peak).log10();
+            assert!(
+                diff_db.abs() < 0.5,
+                "phase {phase}: output peak {out_peak}, true peak {true_peak} ({diff_db:+.2} dB)"
+            );
+        }
+    }
+
     /// A short buffer (shorter than one grain) is still shifted.
     #[test]
     fn a_buffer_shorter_than_a_grain_is_shifted() {
