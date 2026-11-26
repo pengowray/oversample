@@ -121,6 +121,8 @@ pub fn estimate(samples: &[f32], sample_rate: u32, band: (f32, f32)) -> Option<S
     let hop_s = spec.hop as f64 / spec.rate as f64;
     let half_fft_s = spec.fft_size as f64 / 2.0 / spec.rate as f64;
     let duration = samples.len() as f64 / sample_rate as f64;
+    let band_lo = band.0.min(band.1);
+    let band_hi = band.0.max(band.1).min(sample_rate as f32 / 2.0);
     // Frame t's window covers [t*hop, t*hop + fft); the 3-frame smoothing adds
     // one hop each side.
     let mut start_s = t_first as f64 * hop_s + half_fft_s - hop_s - PAD_S;
@@ -135,8 +137,8 @@ pub fn estimate(samples: &[f32], sample_rate: u32, band: (f32, f32)) -> Option<S
     Some(SoundBox {
         start_s: start_s.clamp(0.0, duration),
         end_s: end_s.clamp(0.0, duration),
-        lo_hz: ((spec.k0 + k_lo) as f32 - 0.5) * bin_hz,
-        hi_hz: ((spec.k0 + k_hi) as f32 + 0.5) * bin_hz,
+        lo_hz: (((spec.k0 + k_lo) as f32 - 0.5) * bin_hz).max(band_lo),
+        hi_hz: (((spec.k0 + k_hi) as f32 + 0.5) * bin_hz).min(band_hi),
     })
 }
 
@@ -599,7 +601,13 @@ fn pick_sound(
             .filter(|&i| group[i] == Some(g) && !hidden[i])
             .collect()
     };
-    let group_score = |g: usize| members(g).into_iter().map(score).sum::<f32>();
+    // Hidden regions are left out of the box but count towards the score.
+    let group_score = |g: usize| {
+        (0..n)
+            .filter(|&i| group[i] == Some(g))
+            .map(score)
+            .sum::<f32>()
+    };
     let best = (0..n)
         .filter(|&i| group[i] == Some(i))
         .max_by(|&a, &b| group_score(a).total_cmp(&group_score(b)))?;
