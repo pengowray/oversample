@@ -203,6 +203,15 @@ fn seed(state: AppState, json: &str) -> String {
         .collect();
     let window = method.window_secs();
     let n = windows.len();
+    let labels = Arc::new(labels);
+    // `"birds": [true, false, ...]`: which BirdNET+ V3.0 classes are birds
+    // (without it every class counts as a bird).
+    if let Some(b) = v["birds"].as_array() {
+        super::boxes::set_v3_birds(
+            labels.clone(),
+            b.iter().map(|x| x.as_bool().unwrap_or(true)).collect(),
+        );
+    }
     let run = ClassifierRun {
         method,
         region: (method == Method::Bats).then_some(BatScope::All),
@@ -217,7 +226,7 @@ fn seed(state: AppState, json: &str) -> String {
         window_secs: window,
         step_secs: window,
         spacing_secs: window,
-        labels: Arc::new(labels),
+        labels,
         windows,
         whole_file: true,
         complete: true,

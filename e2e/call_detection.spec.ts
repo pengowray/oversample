@@ -369,3 +369,52 @@ test("Birds and bats lists BirdNET+ V3.0's birds by window when no boxes were lo
   // Not analysed for boxes yet, so Analyse is still the main action.
   await expect(page.locator(".detection-primary-btn")).toHaveText("Download models (93 MB)");
 });
+
+/** Noise with a 4.5 kHz tone from 3 s to 9 s, like a field cricket's song. */
+function toneWav(): Buffer {
+  const rate = 48_000;
+  const wav = noiseWav(rate, 12);
+  for (let i = 3 * rate; i < 9 * rate; i++) {
+    const v = wav.readInt16LE(44 + i * 2) + Math.round(0.3 * 32767 * Math.sin((2 * Math.PI * 4500 * i) / rate));
+    wav.writeInt16LE(Math.max(-32768, Math.min(32767, v)), 44 + i * 2);
+  }
+  return wav;
+}
+
+test("Birds and bats draws a box round an insect BirdNET+ V3.0 names", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof (window as { __oversample_classifier?: unknown }).__oversample_classifier === "object");
+  await page
+    .locator('input[type="file"][accept*=".wav"]')
+    .first()
+    .setInputFiles({ name: "cricket.wav", mimeType: "audio/wav", buffer: toneWav() });
+  await expect(page.locator(".file-item", { hasText: "cricket.wav" })).toBeVisible({ timeout: 30_000 });
+  const tabs = page.locator(".sidebar-tab-dropdown").last();
+  if (!(await tabs.isVisible())) await page.locator(".toolbar-sidebar-tab-right").click();
+  if (!((await tabs.textContent()) ?? "").includes("Call detection")) {
+    await tabs.click();
+    await page.locator(".sidebar-tab-option", { hasText: "Call detection" }).dispatchEvent("mousedown");
+  }
+  await expect(page.locator(".cd-method-name")).toHaveText("Birds and bats");
+  const err = await page.evaluate(
+    (a) => (window as unknown as { __oversample_classifier: Hook }).__oversample_classifier.seed(a),
+    JSON.stringify({
+      method: "birdnet-v3",
+      labels: ["Gryllus campestris_Field Cricket", "Turdus merula_Common Blackbird"],
+      birds: [false, true],
+      windows: [
+        [3, 6, [[0, 0.7]]],
+        [6, 9, [[0, 0.6]]],
+      ],
+    }),
+  );
+  expect(err).toBe("");
+  const list = page.locator(".cd-recording .cd-list");
+  await expect(list.locator("tr", { hasText: "Field Cricket" })).toContainText("2 windows");
+  // The box is measured from the audio, then offered as an annotation.
+  const fold = page.locator('.cd-fold[data-fold="combined-annotate"] .cd-fold-head');
+  await expect(fold).toHaveText(/Add 1 annotation/, { timeout: 15_000 });
+  await fold.click();
+  await page.locator(".cd-add-btn").click();
+  await expect(page.getByText("1 annotation added")).toBeVisible();
+});

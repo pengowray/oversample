@@ -285,7 +285,8 @@ pub fn found_boxes(state: AppState, file: u64) -> Vec<FoundBox> {
             })
         });
     }
-    for b in super::noise_scan::boxes(state) {
+    let sounds = super::sound_boxes::boxes(state);
+    for b in super::noise_scan::boxes(state).into_iter().chain(sounds) {
         out.push(FoundBox {
             t0: b.t0,
             t1: b.t1,

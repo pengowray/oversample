@@ -306,6 +306,7 @@ pub(super) fn CombinedSection() -> impl IntoView {
     let state = expect_context::<AppState>();
     search_when_open(state);
     classifier::noise_scan::scan_when_shown(state);
+    classifier::sound_boxes::measure_when_shown(state);
     classifier::refresh_downloads(state);
     let settings_open = RwSignal::new(false);
     let current_file = Memo::new(move |_| state.current_file_id_tracked());

@@ -73,7 +73,7 @@ fn strip_row(
     file: u64,
     method: crate::classifier::Method,
     colours: bool,
-    keep: &dyn Fn(&crate::classifier::ClassifierRun, u16) -> bool,
+    keep: &dyn Fn(&crate::classifier::ClassifierRun, u16, f64) -> bool,
 ) -> Option<(
     Vec<spectrogram_renderer::StripSpan>,
     Vec<spectrogram_renderer::SpeciesWindow>,
@@ -96,7 +96,7 @@ fn strip_row(
         let mut last: Option<(usize, u16)> = None;
         for (i, w) in run.windows.iter().enumerate() {
             let kind = window_kind(run, i, min);
-            if kind == WindowKind::Below || !keep(run, w.top[0].class) {
+            if kind == WindowKind::Below || !keep(run, w.top[0].class, cells[i].0) {
                 continue;
             }
             let (start_s, end_s) = cells[i];
@@ -162,15 +162,19 @@ fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Opti
     if method == crate::state::DetectionMethod::Combined {
         let mut rows = Vec::new();
         let mut windows = Vec::new();
-        if let Some((spans, w, _)) = strip_row(state, file, Method::Bats, true, &|_, _| true) {
+        if let Some((spans, w, _)) = strip_row(state, file, Method::Bats, true, &|_, _, _| true) {
             if !spans.is_empty() {
                 rows.push(spans);
                 windows = w;
             }
         }
         let boxes = crate::classifier::boxes::found_for(state, file);
-        let not_birds = |run: &crate::classifier::ClassifierRun, class: u16| {
-            !boxes || !crate::classifier::boxes::bird_test(&run.labels)(class)
+        // Left out: birds while their boxes name them, and stretches with a
+        // box of their own (`sound_boxes`), whose label names them.
+        let boxed = crate::classifier::sound_boxes::boxed(state, file);
+        let not_birds = |run: &crate::classifier::ClassifierRun, class: u16, t: f64| {
+            (!boxes || !crate::classifier::boxes::bird_test(&run.labels)(class))
+                && !boxed.iter().any(|&(c, s, e)| c == class && s <= t && t < e)
         };
         if let Some((spans, _, _)) = strip_row(state, file, Method::BirdNetV3, false, &not_birds) {
             if !spans.is_empty() {
@@ -184,7 +188,7 @@ fn species_strip(state: AppState, method: crate::state::DetectionMethod) -> Opti
         });
     }
     let method = method.classifier()?;
-    let (spans, windows, selected) = strip_row(state, file, method, true, &|_, _| true)?;
+    let (spans, windows, selected) = strip_row(state, file, method, true, &|_, _, _| true)?;
     Some(SpeciesStrip {
         rows: vec![spans],
         selected,
@@ -395,7 +399,9 @@ pub fn Spectrogram() -> impl IntoView {
         if state.call_detection.method().get() != crate::state::DetectionMethod::Combined {
             return Vec::new();
         }
-        crate::classifier::noise_scan::boxes(state)
+        let mut b = crate::classifier::noise_scan::boxes(state);
+        b.extend(crate::classifier::sound_boxes::boxes(state));
+        b
     });
     Effect::new({
         let disposed = disposed.clone();
