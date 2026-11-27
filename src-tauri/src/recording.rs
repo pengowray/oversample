@@ -678,9 +678,96 @@ fn negotiate_sample_rate_from(
     best.map(|(_, config)| config)
 }
 
+/// The input settings a device reports, as the device list sends them.
+fn input_ranges(device: &cpal::Device) -> Vec<SampleRateRange> {
+    let mut ranges = Vec::new();
+    if let Ok(configs) = device.supported_input_configs() {
+        for cfg in configs {
+            let fmt = match cfg.sample_format() {
+                cpal::SampleFormat::I16 => "I16",
+                cpal::SampleFormat::I24 => "I24",
+                cpal::SampleFormat::I32 => "I32",
+                cpal::SampleFormat::F32 => "F32",
+                _ => "Other",
+            };
+            ranges.push(SampleRateRange {
+                min: cfg.min_sample_rate(),
+                max: cfg.max_sample_rate(),
+                channels: cfg.channels(),
+                format: fmt.to_string(),
+            });
+        }
+    }
+    ranges
+}
+
+fn is_alsa(host: &cpal::Host) -> bool {
+    format!("{:?}", host.id()) == "Alsa"
+}
+
+/// The ALSA input list as [`oversample_core::audio::alsa_pcm::arrange`] orders
+/// it: `default`, one entry per card device, running sound servers, then other
+/// PCMs with input settings. Plugins and a card's other PCM names are left out,
+/// and plugins are not opened. Each row keeps its cpal device, so a row is
+/// opened by the PCM it was listed as.
+fn alsa_input_devices(host: &cpal::Host) -> Vec<(DeviceInfo, cpal::Device)> {
+    use oversample_core::audio::alsa_pcm;
+    let devices: Vec<cpal::Device> = host
+        .input_devices()
+        .map(|d| d.collect())
+        .unwrap_or_default();
+    let ids: Vec<String> = devices
+        .iter()
+        .map(|d| d.id().map(|id| id.id().to_string()).unwrap_or_default())
+        .collect();
+    let names: Vec<String> = devices
+        .iter()
+        .map(|d| {
+            d.description()
+                .map(|x| x.name().to_string())
+                .unwrap_or_default()
+        })
+        .collect();
+    let ranges: Vec<Vec<SampleRateRange>> = devices
+        .iter()
+        .zip(&ids)
+        .map(|(d, id)| {
+            if alsa_pcm::worth_probing(&alsa_pcm::classify(id)) {
+                input_ranges(d)
+            } else {
+                Vec::new()
+            }
+        })
+        .collect();
+    let entries: Vec<alsa_pcm::PcmEntry> = (0..devices.len())
+        .map(|i| alsa_pcm::PcmEntry {
+            pcm_id: &ids[i],
+            name: &names[i],
+            has_input: !ranges[i].is_empty(),
+        })
+        .collect();
+    alsa_pcm::arrange(&entries)
+        .into_iter()
+        .map(|l| {
+            let info = DeviceInfo {
+                name: l.name,
+                is_default: l.is_default,
+                sample_rate_ranges: ranges[l.index].clone(),
+            };
+            (info, devices[l.index].clone())
+        })
+        .collect()
+}
+
 /// List all available input devices and their supported sample rate ranges.
 pub fn list_input_devices() -> Vec<DeviceInfo> {
     let host = cpal::default_host();
+    if is_alsa(&host) {
+        return alsa_input_devices(&host)
+            .into_iter()
+            .map(|(info, _)| info)
+            .collect();
+    }
     let default_name = host
         .default_input_device()
         .and_then(|d| d.description().ok().map(|desc| desc.name().to_string()))
@@ -694,24 +781,7 @@ pub fn list_input_devices() -> Vec<DeviceInfo> {
                 .map(|d| d.name().to_string())
                 .unwrap_or_else(|_| "Unknown".into());
             let is_default = name == default_name;
-            let mut ranges = Vec::new();
-            if let Ok(configs) = device.supported_input_configs() {
-                for cfg in configs {
-                    let fmt = match cfg.sample_format() {
-                        cpal::SampleFormat::I16 => "I16",
-                        cpal::SampleFormat::I24 => "I24",
-                        cpal::SampleFormat::I32 => "I32",
-                        cpal::SampleFormat::F32 => "F32",
-                        _ => "Other",
-                    };
-                    ranges.push(SampleRateRange {
-                        min: cfg.min_sample_rate(),
-                        max: cfg.max_sample_rate(),
-                        channels: cfg.channels(),
-                        format: fmt.to_string(),
-                    });
-                }
-            }
+            let ranges = input_ranges(&device);
             // Deduplicate: merge ranges into existing entry with the same name
             // (Android's Oboe backend often reports the same device multiple times)
             if let Some(existing) = devices.iter_mut().find(|d| d.name == name) {
@@ -782,14 +852,39 @@ pub fn open_mic(
     pick_averaged: bool,
 ) -> Result<MicState, String> {
     let host = cpal::default_host();
+    // On ALSA several PCMs share a description, so a name from the device
+    // list is looked up in that same list, which knows the PCM it stands for.
+    // Building the list opens each PCM (about 0.4 s), so it is only done when
+    // the name is not one PCM's description.
+    let mut listed_name = None;
     let device = if let Some(name) = device_name {
+        let shared_name = || {
+            host.input_devices().map_or(true, |devs| {
+                devs.filter(|d| d.description().map_or(false, |x| x.name() == name))
+                    .count()
+                    != 1
+            })
+        };
+        let alsa_found = if is_alsa(&host) && shared_name() {
+            alsa_input_devices(&host)
+                .into_iter()
+                .find(|(info, _)| info.name == name)
+                .map(|(info, d)| {
+                    listed_name = Some(info.name);
+                    d
+                })
+        } else {
+            None
+        };
         // Try to find the requested device by name
-        let found = host.input_devices().ok().and_then(|mut devs| {
-            devs.find(|d| {
-                d.description()
-                    .ok()
-                    .map(|desc| desc.name() == name)
-                    .unwrap_or(false)
+        let found = alsa_found.or_else(|| {
+            host.input_devices().ok().and_then(|mut devs| {
+                devs.find(|d| {
+                    d.description()
+                        .ok()
+                        .map(|desc| desc.name() == name)
+                        .unwrap_or(false)
+                })
             })
         });
         match found {
@@ -808,10 +903,12 @@ pub fn open_mic(
             .ok_or_else(|| "No microphone found. Check your audio settings.".to_string())?
     };
 
-    let device_name = device
-        .description()
-        .map(|d| d.name().to_string())
-        .unwrap_or_else(|_| "Unknown".into());
+    let device_name = listed_name.unwrap_or_else(|| {
+        device
+            .description()
+            .map(|d| d.name().to_string())
+            .unwrap_or_else(|_| "Unknown".into())
+    });
     let supported_rates = collect_supported_rates(&device);
     let device_channels = device
         .supported_input_configs()
@@ -1289,6 +1386,43 @@ pub fn start_emitter(
 mod tests {
     use super::*;
     use oversample_core::audio::wav::parse_wav_header;
+
+    /// Prints the microphone list this machine gives, in order. Opens real
+    /// audio devices, so it only runs when asked for:
+    /// `cargo test -p oversample-desktop print_input_devices -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn print_input_devices() {
+        let start = std::time::Instant::now();
+        let devices = list_input_devices();
+        let took = start.elapsed();
+        for d in &devices {
+            let rates: Vec<String> = d
+                .sample_rate_ranges
+                .iter()
+                .take(3)
+                .map(|r| format!("{}-{} x{} {}", r.min, r.max, r.channels, r.format))
+                .collect();
+            println!(
+                "{}{} | {} settings | {}",
+                d.name,
+                if d.is_default { " [default]" } else { "" },
+                d.sample_rate_ranges.len(),
+                rates.join(", ")
+            );
+        }
+        println!("{} devices in {:?}", devices.len(), took);
+        let host = cpal::default_host();
+        if is_alsa(&host) {
+            for (info, device) in alsa_input_devices(&host) {
+                println!(
+                    "{} opens {:?}",
+                    info.name,
+                    device.id().map(|id| id.id().to_string())
+                );
+            }
+        }
+    }
 
     /// L = 100, 101, ... and R = 200, 201, ...
     fn stereo_frames(first: i16, count: i16) -> Vec<i16> {
