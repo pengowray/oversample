@@ -3,7 +3,7 @@
 //!
 //! A file is opened one of three ways, each giving an id:
 //! - [`save_open_dialog`] (desktop): a "Save As" dialog.
-//! - [`save_open_recording`]: a new file in the app data folder's `recordings/`.
+//! - [`save_open_recording`]: a new file in the folder recordings are saved in.
 //! - [`save_adopt_fd`] (Android): a file descriptor from the media-store
 //!   plugin's `createExportEntry`.
 //!
@@ -16,7 +16,6 @@ use std::io::{Seek, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
-use tauri::Manager;
 
 struct OpenSave {
     file: File,
@@ -86,7 +85,8 @@ pub async fn save_open_dialog(
     Err("There is no Save As dialog on Android".into())
 }
 
-/// Open a new file `filename` in the app data folder's `recordings/`.
+/// Open a new file `filename` in the folder recordings are saved in
+/// (`crate::save_folder`), numbered if that name is taken.
 #[tauri::command]
 pub fn save_open_recording(
     app: tauri::AppHandle,
@@ -97,13 +97,11 @@ pub fn save_open_recording(
     {
         return Err(format!("bad recording file name '{filename}'"));
     }
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("recordings");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    create(&state, dir.join(filename))
+    let dirs = crate::save_folder::dirs(&app)?;
+    let (file, path) = crate::save_folder::create_in(&dirs, &filename)?;
+    let shown = path.to_string_lossy().to_string();
+    let id = state.add(file, Some(path))?;
+    Ok(OpenedSave { id, path: shown })
 }
 
 /// Take over a file descriptor that the media-store plugin opened for writing

@@ -7,7 +7,9 @@
 //! files are deleted. If the app crashes or is killed, the partial + sidecar
 //! remain on disk; `recover_leftover_recordings` is called on next launch to
 //! patch the WAV header from the file size, reattach GUANO from the sidecar,
-//! and promote the file into the recordings directory.
+//! and move the file to the folder recordings are saved in
+//! (`crate::save_folder`). The partial files stay in the app data folder's
+//! `recordings/.recovery` whatever that folder is.
 //!
 //! The header is `oversample_core::audio::wav::header_bytes`: 80 bytes with a
 //! reserved `JUNK` chunk, so a recording that passes 4 GB is rewritten as
@@ -444,10 +446,13 @@ fn patch_sizes(
 pub use oversample_ipc::mic::RecoveredRecording;
 
 /// Scan the recovery directory and finalize any leftover `.wav.part` files.
-/// Returns a list of recovered recordings (now moved into the recordings dir).
-pub fn recover_leftover_recordings(app_data: &Path) -> Vec<RecoveredRecording> {
+/// Returns a list of recovered recordings, now moved into the first of
+/// `target_dirs` that takes them (`crate::save_folder::dirs`).
+pub fn recover_leftover_recordings(
+    app_data: &Path,
+    target_dirs: &[PathBuf],
+) -> Vec<RecoveredRecording> {
     let rec_dir = recovery_dir(app_data);
-    let target_dir = recordings_dir(app_data);
     let mut out = Vec::new();
 
     if !rec_dir.exists() {
@@ -474,7 +479,7 @@ pub fn recover_leftover_recordings(app_data: &Path) -> Vec<RecoveredRecording> {
     }
 
     for part_path in parts {
-        match recover_one(&part_path, &rec_dir, &target_dir) {
+        match recover_one(&part_path, &rec_dir, target_dirs) {
             Ok(Some(r)) => out.push(r),
             Ok(None) => {}
             Err(e) => {
@@ -486,10 +491,25 @@ pub fn recover_leftover_recordings(app_data: &Path) -> Vec<RecoveredRecording> {
     out
 }
 
+/// The data size in the header of a `.part` file that was already finished
+/// (sizes written and GUANO added) but not moved, as when the app stopped
+/// while moving it to another file system. `None` for one whose sizes are
+/// still the placeholder 0.
+fn finished_data_bytes(header: &[u8], data_offset: u64) -> Option<u64> {
+    if header.len() >= 36 && &header[0..4] == b"RF64" && &header[12..16] == b"ds64" {
+        let n = u64::from_le_bytes(header[28..36].try_into().ok()?);
+        return (n > 0).then_some(n);
+    }
+    let at = usize::try_from(data_offset).ok()?;
+    let field = header.get(at.checked_sub(4)?..at)?;
+    let n = u32::from_le_bytes(field.try_into().ok()?) as u64;
+    (n > 0).then_some(n)
+}
+
 fn recover_one(
     part_path: &Path,
     rec_dir: &Path,
-    target_dir: &Path,
+    target_dirs: &[PathBuf],
 ) -> std::io::Result<Option<RecoveredRecording>> {
     let file_size = part_path.metadata()?.len();
     let part_name = part_path
@@ -523,6 +543,29 @@ fn recover_one(
         }
         return Ok(None);
     };
+
+    // Already finished: only the move is left to do.
+    if let Some(data_bytes) =
+        finished_data_bytes(&header, data_offset).filter(|n| data_offset + n <= file_size)
+    {
+        let block_align = format.block_align().max(1) as u64;
+        let sample_count = data_bytes / block_align;
+        let (final_path, final_name) = place_recovered(part_path, &wav_name, target_dirs)?;
+        let _ = std::fs::remove_file(&meta_path);
+        return Ok(Some(RecoveredRecording {
+            path: final_path.to_string_lossy().to_string(),
+            filename: final_name,
+            had_sidecar: false,
+            sample_count,
+            sample_rate: format.sample_rate,
+            duration_secs: if format.sample_rate > 0 {
+                sample_count as f64 / format.sample_rate as f64
+            } else {
+                0.0
+            },
+            file_size_bytes: file_size,
+        }));
+    }
 
     // Load sidecar if present.
     let meta: Option<RecoveryMeta> = if meta_path.exists() {
@@ -597,14 +640,7 @@ fn recover_one(
     };
     let final_size = data_offset + data_bytes + after_data;
 
-    // Move into the recordings dir with a "recovered_" prefix so the user can tell.
-    std::fs::create_dir_all(target_dir)?;
-    let final_name = format!("recovered_{}", wav_name);
-    let final_path = target_dir.join(&final_name);
-    if std::fs::rename(part_path, &final_path).is_err() {
-        std::fs::copy(part_path, &final_path)?;
-        let _ = std::fs::remove_file(part_path);
-    }
+    let (final_path, final_name) = place_recovered(part_path, &wav_name, target_dirs)?;
     let _ = std::fs::remove_file(&meta_path);
 
     Ok(Some(RecoveredRecording {
@@ -616,6 +652,22 @@ fn recover_one(
         duration_secs,
         file_size_bytes: final_size,
     }))
+}
+
+/// Move a recovered file to the save folder with a "recovered_" prefix so the
+/// user can tell. Returns its path and file name.
+fn place_recovered(
+    part_path: &Path,
+    wav_name: &str,
+    target_dirs: &[PathBuf],
+) -> std::io::Result<(PathBuf, String)> {
+    let name = format!("recovered_{}", wav_name);
+    let path = crate::save_folder::place_in(target_dirs, part_path, &name)
+        .map_err(std::io::Error::other)?;
+    let name = path
+        .file_name()
+        .map_or(name, |n| n.to_string_lossy().to_string());
+    Ok((path, name))
 }
 
 impl Default for RecoveryHandle {
@@ -642,6 +694,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// Recover into the app data folder's `recordings/`, as before there was a
+    /// save folder.
+    fn recover(app_data: &Path) -> Vec<RecoveredRecording> {
+        recover_leftover_recordings(app_data, &[recordings_dir(app_data)])
     }
 
     fn args() -> StartArgs {
@@ -697,7 +755,7 @@ mod tests {
         w.append_bytes(&[1, 0, 2, 0, 3, 0, 4]).unwrap();
         drop(w);
 
-        let out = recover_leftover_recordings(&app_data);
+        let out = recover(&app_data);
         assert_eq!(out.len(), 1);
         let r = &out[0];
         assert!(r.had_sidecar);
@@ -732,7 +790,7 @@ mod tests {
         w.append_bytes(&[40, 0, 50]).unwrap();
         drop(w);
 
-        let out = recover_leftover_recordings(&app_data);
+        let out = recover(&app_data);
         assert_eq!(out.len(), 1);
         let r = &out[0];
         assert!(r.had_sidecar);
@@ -796,7 +854,7 @@ mod tests {
             w.append_bytes(&[0x55]).unwrap();
             drop(w);
 
-            let out = recover_leftover_recordings(&app_data);
+            let out = recover(&app_data);
             assert_eq!(out.len(), 1, "{name}");
             assert_eq!(out[0].sample_count, 4, "{name}");
             let bytes = std::fs::read(&out[0].path).unwrap();
@@ -857,7 +915,7 @@ mod tests {
         f.extend_from_slice(&[1, 0, 2, 0, 3, 0, 4, 0]);
         std::fs::write(dir.join("old.wav.part"), &f).unwrap();
 
-        let out = recover_leftover_recordings(&app_data);
+        let out = recover(&app_data);
         assert_eq!(out.len(), 1);
         let bytes = std::fs::read(&out[0].path).unwrap();
         let h = parse_wav_header(&bytes).unwrap();
@@ -877,9 +935,49 @@ mod tests {
         let damaged = dir.join("damaged.wav.part");
         std::fs::write(&damaged, vec![0xAB; 4096]).unwrap();
 
-        assert!(recover_leftover_recordings(&app_data).is_empty());
+        assert!(recover(&app_data).is_empty());
         assert!(!dir.join("empty.wav.part").exists());
         assert!(damaged.exists(), "a large file with a bad header is kept");
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    /// The app stopped after a recording was finished but before it was moved
+    /// (for example part way through a copy to another file system): the
+    /// `.part` is moved as it is, not given a second GUANO chunk.
+    #[test]
+    fn finished_but_unmoved_recording_is_moved_unchanged() {
+        let app_data = temp_app_data("finished");
+        let mut w = start(&app_data, "done.wav", NativeSampleFormat::I16);
+        w.append_bytes(&encode_samples_i16(&[1, 2, 3])).unwrap();
+        let part = finalize_in_place_and_take(w, &[], "GUANO|Version: 1.0\n").unwrap();
+        let before = std::fs::read(&part).unwrap();
+
+        let target = app_data.join("Music/Oversample");
+        let out = recover_leftover_recordings(&app_data, &[target.clone()]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].sample_count, 3);
+        assert_eq!(
+            out[0].path,
+            target.join("recovered_done.wav").to_string_lossy()
+        );
+        assert_eq!(std::fs::read(&out[0].path).unwrap(), before);
+        assert!(!part.exists());
+        let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
+    fn recovered_recording_goes_to_the_save_folder() {
+        let app_data = temp_app_data("to-save-folder");
+        let mut w = start(&app_data, "crash.wav", NativeSampleFormat::I16);
+        w.append_bytes(&[1, 0, 2, 0]).unwrap();
+        drop(w);
+        let target = app_data.join("Music/Oversample");
+        let out =
+            recover_leftover_recordings(&app_data, &[target.clone(), recordings_dir(&app_data)]);
+        assert_eq!(out.len(), 1);
+        assert!(std::path::Path::new(&out[0].path).starts_with(&target));
+        let h = parse_wav_header(&std::fs::read(&out[0].path).unwrap()).unwrap();
+        assert_eq!(h.total_frames, 2);
         let _ = std::fs::remove_dir_all(&app_data);
     }
 

@@ -271,7 +271,7 @@ pub fn mic_stop_recording(
 
     // Build the GUANO chunk for either path below.
     let now = chrono::Local::now();
-    let filename_ts = now.format("batcap_%Y%m%d_%H%M%S.wav").to_string();
+    let mut filename_ts = now.format("batcap_%Y%m%d_%H%M%S.wav").to_string();
     let location = match (loc_latitude, loc_longitude) {
         (Some(lat), Some(lon)) => Some(recording::RecordingLocation {
             latitude: lat,
@@ -328,16 +328,10 @@ pub fn mic_stop_recording(
             let _ = std::fs::remove_file(&finalized_path);
             "shared://recording".to_string()
         } else {
-            // Move .wav.part → recordings/<name>.wav
-            let dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| e.to_string())?
-                .join("recordings");
-            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let target = dir.join(&filename_ts);
-            std::fs::rename(&finalized_path, &target)
-                .map_err(|e| format!("recovery: rename to final path: {}", e))?;
+            // Move .wav.part → <save folder>/<name>.wav (crate::save_folder).
+            let dirs = crate::save_folder::dirs(&app)?;
+            let target = crate::save_folder::place_in(&dirs, &finalized_path, &filename_ts)?;
+            filename_ts = crate::save_folder::file_name_of(&target, filename_ts);
             target.to_string_lossy().to_string()
         };
         (saved_path, final_size as usize, false)
@@ -362,14 +356,9 @@ pub fn mic_stop_recording(
             recording::write_wav_to_fd(fd, &wav_data)?;
             "shared://recording".to_string()
         } else {
-            let dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| e.to_string())?
-                .join("recordings");
-            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let full_path = dir.join(&filename_ts);
-            std::fs::write(&full_path, &wav_data).map_err(|e| e.to_string())?;
+            let dirs = crate::save_folder::memory_dirs(&app)?;
+            let full_path = crate::save_folder::write_in(&dirs, &filename_ts, &wav_data)?;
+            filename_ts = crate::save_folder::file_name_of(&full_path, filename_ts);
             full_path.to_string_lossy().to_string()
         };
         // Stash the captured samples for the WASM finalizer to pull as raw bytes.
@@ -397,14 +386,16 @@ pub fn mic_stop_recording(
 
 /// Scan the crash-recovery directory and finalize any leftover `.wav.part`
 /// files. Call once on app startup. Returns the list of recovered recordings;
-/// files have already been moved into the recordings directory.
+/// files have already been moved into the save folder (`save_folder`).
 #[tauri::command]
 pub fn mic_recover_recordings(app: tauri::AppHandle) -> Vec<recovery::RecoveredRecording> {
     let app_data = match app.path().app_data_dir() {
         Ok(p) => p,
         Err(_) => return Vec::new(),
     };
-    recovery::recover_leftover_recordings(&app_data)
+    let dirs = crate::save_folder::dirs(&app)
+        .unwrap_or_else(|_| vec![recovery::recordings_dir(&app_data)]);
+    recovery::recover_leftover_recordings(&app_data, &dirs)
 }
 
 #[tauri::command]
