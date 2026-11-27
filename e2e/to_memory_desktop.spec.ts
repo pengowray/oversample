@@ -248,4 +248,11 @@ test("the desktop app is told which recordings are unsaved, for its close warnin
   await expect.poll(lastList).toEqual([expect.stringMatching(/^batcap_\d{8}_\d{6}\.wav$/)]);
   await page.locator(".badge-btn.unsaved").click();
   await expect.poll(lastList).toEqual([]);
+
+  // After a reload the page's lists still count as the newest ones.
+  const lastSeq = async () =>
+    (await calls(page)).filter((c) => c.cmd === "set_unsaved_recordings").at(-1)?.args?.seq as number;
+  const before = await lastSeq();
+  await page.reload();
+  await expect.poll(async () => (await lastSeq()) ?? 0).toBeGreaterThan(before);
 });

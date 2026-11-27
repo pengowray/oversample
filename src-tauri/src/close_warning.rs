@@ -11,7 +11,9 @@
 //! Android has no window to close; the command is kept there so the frontend
 //! needs no platform check, but nothing reads the list.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+#[cfg(desktop)]
+use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 /// The unsaved recordings the frontend last reported, and whether the close
@@ -20,6 +22,7 @@ use std::sync::Mutex;
 pub struct CloseWarning {
     /// The newest list's number, and the list.
     names: Mutex<(u64, Vec<String>)>,
+    #[cfg_attr(not(desktop), allow(dead_code))]
     dialog_open: AtomicBool,
 }
 

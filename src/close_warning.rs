@@ -27,8 +27,9 @@ pub fn watch(state: AppState) {
         })
     });
     // Numbered, so the native side keeps the newest list if two calls arrive
-    // out of order.
-    let mut seq: u64 = 0;
+    // out of order. Starts from the clock (in thousandths of a millisecond),
+    // so after a page reload the new page's lists replace the old page's.
+    let mut seq: u64 = (js_sys::Date::now() as u64).saturating_mul(1000);
     Effect::new(move |_| {
         let names = unsaved.get();
         seq += 1;
