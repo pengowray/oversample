@@ -38,17 +38,17 @@ use web_sys::AudioContext;
 /// GUANO chunk is appended and the header is patched) and moved to the
 /// final destination with no large in-memory copy.
 ///
-/// We disable this only for `record_mode == ToMemory` (user asked to keep it all
-/// in RAM, no disk write). Pre-roll now streams to disk too: the native side
+/// We disable this only for `record_mode == ToMemory` (`to_memory`: the user
+/// asked to keep it all in RAM, and no file is written at stop either; see
+/// `stop_plan` in `src-tauri/src/recording.rs`). Pre-roll now streams to disk too: the native side
 /// seeds the recording with its listening pre-roll ring (`preroll_samples`), so
 /// the `.wav.part` starts with the pre-roll and the whole capture is crash-safe
 /// and bounded — no WASM re-encode.
 fn build_start_recording_args(
     state: &AppState,
     shared_fd: Option<i32>,
+    to_memory: bool,
 ) -> oversample_ipc::mic::StartRecordingArgs {
-    let to_memory =
-        state.playback.record_mode().get_untracked() == crate::state::RecordMode::ToMemory;
     let preroll = state.mic.preroll_samples().get_untracked();
     let stream_to_disk = state.is_tauri && !to_memory;
 
@@ -93,6 +93,7 @@ fn build_start_recording_args(
     oversample_ipc::mic::StartRecordingArgs {
         shared_fd,
         enable_recovery: stream_to_disk,
+        to_memory,
         force_bits,
         filename,
         connection_type: state.mic.connection_type().get_untracked(),
@@ -239,6 +240,7 @@ pub enum StopResult {
 /// Parsed recording result returned by `mic_stop_recording` / `usb_stop_recording`.
 pub struct TauriRecordingResult {
     pub filename: String,
+    /// Where the native side saved the file. Empty for a "To memory" recording.
     pub saved_path: String,
     pub sample_rate: u32,
     pub bits_per_sample: u16,
@@ -248,7 +250,12 @@ pub struct TauriRecordingResult {
     pub samples: Vec<f32>,
     /// To-memory samples as interleaved L/R, for a stereo recording.
     pub interleaved: Option<Vec<f32>>,
+    /// Size of the saved file; `None` when nothing was saved.
     pub file_size_bytes: Option<usize>,
+    /// The mic fields the native side writes in GUANO metadata.
+    pub mic: Option<oversample_ipc::mic::RecordingMic>,
+    /// Frames of pre-roll the native side put at the start of the recording.
+    pub preroll_frames: usize,
 }
 
 impl TauriRecordingResult {
@@ -285,7 +292,9 @@ impl TauriRecordingResult {
             duration_secs: r.duration_secs,
             samples,
             interleaved,
-            file_size_bytes: Some(r.file_size_bytes),
+            file_size_bytes: (r.file_size_bytes > 0).then_some(r.file_size_bytes),
+            mic: r.mic,
+            preroll_frames: r.preroll_frames,
         })
     }
 }
@@ -646,23 +655,26 @@ impl MicBackend {
 
     /// Signal the backend to start recording. For browser mode this is a no-op
     /// because the ScriptProcessorNode callback is already accumulating samples.
-    /// On mobile Tauri, acquires a ContentResolver fd for direct shared storage write.
+    /// On mobile Tauri, acquires a ContentResolver fd for direct shared storage
+    /// write, except for a "To memory" recording.
     pub async fn start_recording(&self, state: &AppState) -> Result<(), String> {
         match self {
             MicBackend::Browser => Ok(()),
             MicBackend::Cpal => {
-                let fd = try_create_shared_fd(state).await;
+                let to_memory = is_to_memory(state);
+                let fd = shared_fd_for_recording(state, to_memory).await;
                 tauri_invoke_args(
                     "mic_start_recording",
-                    &build_start_recording_args(state, fd),
+                    &build_start_recording_args(state, fd, to_memory),
                 )
                 .await
             }
             MicBackend::RawUsb => {
-                let fd = try_create_shared_fd(state).await;
+                let to_memory = is_to_memory(state);
+                let fd = shared_fd_for_recording(state, to_memory).await;
                 tauri_invoke_args(
                     "usb_start_recording",
-                    &build_start_recording_args(state, fd),
+                    &build_start_recording_args(state, fd, to_memory),
                 )
                 .await
             }
@@ -709,9 +721,7 @@ impl MicBackend {
                 {
                     Ok(result) => match TauriRecordingResult::from_result(result).await {
                         Some(r) => {
-                            if r.saved_path.starts_with("shared://") {
-                                finalize_shared_entry().await;
-                            }
+                            finish_shared_entry(state, &r.saved_path).await;
                             StopResult::TauriResult(r)
                         }
                         None => {
@@ -734,9 +744,7 @@ impl MicBackend {
                 {
                     Ok(result) => match TauriRecordingResult::from_result(result).await {
                         Some(r) => {
-                            if r.saved_path.starts_with("shared://") {
-                                finalize_shared_entry().await;
-                            }
+                            finish_shared_entry(state, &r.saved_path).await;
                             StopResult::TauriResult(r)
                         }
                         None => {
@@ -836,6 +844,22 @@ pub fn take_native_buffer() -> Vec<f32> {
 
 // ── ContentResolver fd-passing (mobile) ─────────────────────────────────
 
+/// Whether a recording starting now is "To memory". Read once at record
+/// start: the Record menu can be changed while recording.
+fn is_to_memory(state: &AppState) -> bool {
+    state.playback.record_mode().get_untracked() == crate::state::RecordMode::ToMemory
+}
+
+/// The shared-storage fd to record into: none for a "To memory" recording,
+/// which writes no file, so no MediaStore entry is made for it.
+async fn shared_fd_for_recording(state: &AppState, to_memory: bool) -> Option<i32> {
+    if to_memory {
+        state.mic.pending_shared_uri().set(None);
+        return None;
+    }
+    try_create_shared_fd(state).await
+}
+
 /// On mobile Tauri, ask the MediaStore plugin to create a pending recording entry
 /// and return the raw POSIX fd. Returns `None` on non-mobile, or if the call fails.
 async fn try_create_shared_fd(state: &AppState) -> Option<i32> {
@@ -894,6 +918,18 @@ async fn try_create_shared_fd(state: &AppState) -> Option<i32> {
             state.mic.pending_shared_uri().set(None);
             None
         }
+    }
+}
+
+/// After a stop: make the pending MediaStore entry visible when the recording
+/// was written to it, and delete the entry when it was not (a "To memory"
+/// recording, which writes no file).
+async fn finish_shared_entry(state: &AppState, saved_path: &str) {
+    if saved_path.starts_with("shared://") {
+        finalize_shared_entry().await;
+    } else if state.mic.pending_shared_uri().get_untracked().is_some() {
+        cancel_shared_entry().await;
+        state.mic.pending_shared_uri().set(None);
     }
 }
 
@@ -1945,6 +1981,7 @@ async fn open_usb(state: &AppState) -> bool {
                         is_float: state_err.mic.is_float().get_untracked(),
                         saved_path: String::new(),
                         file_size: None,
+                        native: None,
                     },
                     state_err,
                 );

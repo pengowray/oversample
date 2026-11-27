@@ -1298,26 +1298,41 @@ pub(crate) struct FinalizeParams {
     pub sample_rate: u32,
     pub bits_per_sample: u16,
     pub is_float: bool,
-    /// Path where native backend already saved the file (empty = needs WASM-side save).
+    /// Path where native backend already saved the file. Empty when it saved
+    /// none: a browser recording, or a Tauri "To memory" recording.
     pub saved_path: String,
     /// Actual file size from native backend (overrides WASM-side estimate).
     pub file_size: Option<usize>,
+    /// The native side's mic fields and pre-roll, for the GUANO metadata.
+    /// `None` for a browser recording.
+    pub native: Option<NativeRecordingMeta>,
+}
+
+/// What the native side (cpal or USB) reports about a recording, so that the
+/// GUANO metadata the frontend builds for it has the fields the native side
+/// writes into the files it saves.
+pub(crate) struct NativeRecordingMeta {
+    pub mic: oversample_ipc::mic::RecordingMic,
+    /// Frames of pre-roll at the start of the recording.
+    pub preroll_frames: usize,
 }
 
 /// Collected recording metadata (GUANO, markers, naming) built from AppState.
 struct RecordingMeta {
     guano: crate::audio::guano::GuanoMetadata,
     wav_markers: Vec<crate::types::WavMarker>,
-    preroll_samples: usize,
 }
 
 /// Read mic info, location, device model, and preroll from state to build
 /// GUANO metadata and WAV cue markers. Pure state-read, no mutations.
+/// `native` (cpal and USB recordings) gives the mic fields and pre-roll in
+/// place of the ones in state.
 fn build_recording_meta(
     state: &AppState,
     sample_rate: u32,
     duration_secs: f64,
     filename: &str,
+    native: Option<&NativeRecordingMeta>,
 ) -> RecordingMeta {
     let mic_name = state.mic.device_name().get_untracked();
     let mic_manufacturer = state.mic.manufacturer().get_untracked();
@@ -1350,8 +1365,19 @@ fn build_recording_meta(
     } else {
         (mic_name.clone(), None)
     };
+    let (mic_interface, guano_mic_name, mic_make) = match native {
+        Some(n) => (
+            n.mic.interface.clone(),
+            n.mic.name.clone(),
+            n.mic.make.clone(),
+        ),
+        None => (conn_type, guano_mic_name, mic_manufacturer),
+    };
 
-    let preroll = state.mic.preroll_samples().get_untracked();
+    let preroll = match native {
+        Some(n) => n.preroll_frames,
+        None => state.mic.preroll_samples().get_untracked(),
+    };
     let preroll_secs = if preroll > 0 && sample_rate > 0 {
         Some(preroll as f64 / sample_rate as f64)
     } else {
@@ -1359,10 +1385,10 @@ fn build_recording_meta(
     };
 
     let guano_extra = crate::audio::guano::RecordingGuanoExtra {
-        mic_interface: conn_type,
+        mic_interface,
         mic_name: guano_mic_name,
         mic_audio_device: guano_mic_audio_device,
-        mic_make: mic_manufacturer,
+        mic_make,
         loc_position: loc.as_ref().map(|l| (l.latitude, l.longitude)),
         loc_elevation: loc.as_ref().and_then(|l| l.elevation),
         loc_accuracy: loc.as_ref().and_then(|l| l.accuracy),
@@ -1392,11 +1418,7 @@ fn build_recording_meta(
         Vec::new()
     };
 
-    RecordingMeta {
-        guano,
-        wav_markers,
-        preroll_samples: preroll,
-    }
+    RecordingMeta { guano, wav_markers }
 }
 
 /// Create or update the LoadedFile in state. Returns (file_index, filename).
@@ -1567,6 +1589,73 @@ fn persist_and_identify(
     }
 }
 
+/// Save a finished recording that is shown as unsaved (Tauri, "To memory"):
+/// to the recordings folder on the desktop, to shared storage on Android.
+/// Clears the unsaved mark only once the file is written, and tells the user
+/// how it went.
+pub(crate) async fn save_unsaved_recording(state: AppState, file_id: u64) {
+    let live_idx = state.mic.live_file_idx().get_untracked();
+    let Some((wav, name)) = state.library.files().with_untracked(|files| {
+        let idx = files.iter().position(|f| f.id == file_id)?;
+        // A recording still in progress has no finished audio yet.
+        if live_idx == Some(idx) {
+            return None;
+        }
+        files.get(idx).map(|f| {
+            (
+                crate::audio::wav_encoder::recording_wav_bytes(&f.audio, &f.wav_markers),
+                f.name.clone(),
+            )
+        })
+    }) else {
+        return;
+    };
+    let saved_path = if state.status.is_mobile().get_untracked() {
+        match crate::native_save::save_to_shared_storage(
+            &wav,
+            &name,
+            "Recordings/Oversample",
+            "audio/wav",
+        )
+        .await
+        {
+            Ok(crate::native_save::SharedSave::Saved(_)) => None,
+            Ok(crate::native_save::SharedSave::NeedsRetry) => {
+                state.show_info_toast(
+                    "Recording not saved. Allow storage access, then press Save again",
+                );
+                return;
+            }
+            Err(e) => {
+                state.show_error_toast(format!("Recording not saved: {e}"));
+                return;
+            }
+        }
+    } else {
+        match crate::native_save::save_recording(&wav, &name).await {
+            Ok(path) => Some(path),
+            Err(e) => {
+                state.show_error_toast(format!("Recording not saved: {e}"));
+                return;
+            }
+        }
+    };
+    state.library.files().update(|files| {
+        if let Some(f) = files.iter_mut().find(|f| f.id == file_id) {
+            f.is_recording = false;
+            // Desktop: the Info panel shows where it was saved, and hashes can
+            // be read from it again.
+            if let Some(path) = saved_path {
+                if f.file_handle.is_none() {
+                    f.hash_source =
+                        Some(crate::audio::streaming_source::FileHandle::TauriPath(path));
+                }
+            }
+        }
+    });
+    state.status.message().set(Some("Recording saved".into()));
+}
+
 /// Unified recording finalization. Handles both browser (WASM-side save) and
 /// native/Tauri (already-saved) recordings. Updates the live file in-place when
 /// one exists, otherwise creates a new LoadedFile as fallback.
@@ -1581,6 +1670,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
         is_float,
         saved_path,
         file_size,
+        native,
     } = params;
 
     let live_idx = state.mic.live_file_idx().get_untracked();
@@ -1728,6 +1818,7 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
             is_float,
             saved_path,
             file_size,
+            native,
             live_idx,
             live_id,
             state,
@@ -1747,6 +1838,7 @@ async fn finalize_in_memory_recording(
     is_float: bool,
     saved_path: String,
     file_size: Option<usize>,
+    native: Option<NativeRecordingMeta>,
     live_idx: Option<usize>,
     live_id: Option<u64>,
     state: AppState,
@@ -1775,19 +1867,26 @@ async fn finalize_in_memory_recording(
                 .with_untracked(|f| f.get(idx).map(|f| f.name.clone()))
         })
         .unwrap_or_else(generate_recording_name);
-    let meta = build_recording_meta(&state, sample_rate, duration_secs, &recording_name);
+    let meta = build_recording_meta(
+        &state,
+        sample_rate,
+        duration_secs,
+        &recording_name,
+        native.as_ref(),
+    );
 
-    // Whether the native side already wrote the file to disk (to-memory writes
-    // the WAV at stop; shared storage streamed it into the content:// fd). When
-    // it did, we hash that file from disk in Phase 4 instead of re-encoding the
-    // whole WAV again here.
+    // Whether the native side already wrote the file to disk (a "To file"
+    // recording that could not stream writes the WAV at stop; shared storage
+    // got it through the content:// fd). When it did, we hash that file from
+    // disk in Phase 4 instead of re-encoding the whole WAV again here. A
+    // "To memory" recording has no file, as in the browser.
     let shared_saved = saved_path.starts_with("shared://");
     let native_saved = !saved_path.is_empty();
     let has_disk_file = native_saved || shared_saved;
 
     // ── Phase 2: Encode WAV bytes — only when there is no on-disk file to hash
-    // (the browser path). For to-memory the native side already saved the WAV,
-    // so skip this second O(N) encode and hash from disk instead. ─
+    // (browser and "To memory" recordings). When the native side saved the
+    // WAV, skip this second O(N) encode and hash from disk instead. ─
     let samples: Arc<Vec<f32>> = samples.into();
     let raw_samples = interleaved.map(Arc::new);
     let channels: u32 = if raw_samples.is_some() { 2 } else { 1 };
@@ -1893,8 +1992,14 @@ async fn finalize_in_memory_recording(
     // Mark saved if native backend already persisted the file
     let is_tauri = state.is_tauri;
     let is_mobile = state.status.is_mobile().get_untracked();
-    let to_memory =
-        state.playback.record_mode().get_untracked() == crate::state::RecordMode::ToMemory;
+    // A cpal or USB recording is "To memory" when the native side saved no
+    // file: it reads the Record menu at record start, and the menu can be
+    // changed while recording. Browser recordings follow the menu.
+    let to_memory = if native.is_some() {
+        !has_disk_file
+    } else {
+        state.playback.record_mode().get_untracked() == crate::state::RecordMode::ToMemory
+    };
 
     if has_disk_file && !to_memory {
         state.library.files().update(|files| {
@@ -1929,7 +2034,7 @@ async fn finalize_in_memory_recording(
     );
 
     // ── Phase 5: Reset preroll + zoom + spectrogram ─────────────────────
-    if meta.preroll_samples > 0 {
+    if state.mic.preroll_samples().get_untracked() > 0 {
         state.mic.preroll_samples().set(0);
     }
 

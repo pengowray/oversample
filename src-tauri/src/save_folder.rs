@@ -339,12 +339,11 @@ pub fn dirs(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
         .collect())
 }
 
-/// Only the app data folder's `recordings/`, for the WAV a "To memory"
-/// recording leaves on disk at stop (the app reads it back for its hashes).
-/// The user did not ask for a file there, so it stays out of the visible
-/// folder, where it was before. Also used when a "To file" recording could
-/// not stream to disk, which is rare.
-pub fn memory_dirs(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
+/// Only the app data folder's `recordings/`, for a "To file" recording that
+/// could not stream to disk (its `.part` file could not be made), which is
+/// rare: its WAV is written from memory at stop. A "To memory" recording
+/// writes no file.
+pub fn app_data_dirs(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
     Ok(vec![places(app)?.app_data_recordings()])
 }
 

@@ -183,9 +183,15 @@ pub(crate) fn trigger_browser_wav_download(wav_data: &[u8], filename: &str) {
 }
 
 /// Build and download a recording WAV preserving all metadata (GUANO + cue
-/// markers). A 2-channel file is saved with left and right separate. Any other
-/// channel count is saved as a mono mix.
+/// markers), as [`recording_wav_bytes`] builds it.
 pub fn download_recording_wav(audio: &AudioData, filename: &str, markers: &[WavMarker]) {
+    trigger_browser_wav_download(&recording_wav_bytes(audio, markers), filename);
+}
+
+/// A recording kept in memory as a WAV file, with its GUANO metadata and cue
+/// markers, at its own bit depth. A 2-channel file keeps left and right
+/// separate. Any other channel count is written as a mono mix.
+pub fn recording_wav_bytes(audio: &AudioData, markers: &[WavMarker]) -> Vec<u8> {
     use crate::audio::source::ChannelView;
     let source = &audio.source;
     let total = source.total_samples() as usize;
@@ -198,7 +204,7 @@ pub fn download_recording_wav(audio: &AudioData, filename: &str, markers: &[WavM
     } else {
         (source.read_region(ChannelView::MonoMix, 0, total), 1)
     };
-    let wav_data = encode_wav_complete(
+    encode_wav_complete(
         &samples,
         channels,
         audio.sample_rate,
@@ -207,8 +213,7 @@ pub fn download_recording_wav(audio: &AudioData, filename: &str, markers: &[WavM
         audio.metadata.is_float,
         audio.metadata.guano.as_ref(),
         markers,
-    );
-    trigger_browser_wav_download(&wav_data, filename);
+    )
 }
 
 /// Save WAV bytes directly to shared storage (Recordings/Oversample)
@@ -247,6 +252,95 @@ pub(crate) async fn try_tauri_save(wav_data: &[u8], filename: &str) -> Option<St
         Err(e) => {
             log::error!("Tauri save failed: {e}");
             None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::source::InMemorySource;
+    use crate::types::{AudioFormat, FileMetadata};
+    use std::sync::Arc;
+
+    /// A recording kept in memory as `finalize_in_memory_recording` builds it,
+    /// and the WAV it hashes for the file's identity.
+    fn recording(
+        mono: Vec<f32>,
+        interleaved: Option<Vec<f32>>,
+        bits: u16,
+        is_float: bool,
+        markers: &[WavMarker],
+    ) -> (AudioData, Vec<u8>) {
+        let mut guano = crate::audio::guano::GuanoMetadata::new();
+        guano.add("GUANO|Version", "1.0");
+        guano.add("Oversample|Mic|Name", "DUO-CAPTURE EX");
+        let channels: u32 = if interleaved.is_some() { 2 } else { 1 };
+        let hashed = encode_wav_complete(
+            interleaved.as_deref().unwrap_or(&mono),
+            channels as u16,
+            48_000,
+            bits,
+            is_float,
+            Some(&guano),
+            markers,
+        );
+        let samples = Arc::new(mono);
+        let duration_secs = samples.len() as f64 / 48_000.0;
+        let audio = AudioData {
+            samples: samples.clone(),
+            source: Arc::new(InMemorySource {
+                samples,
+                raw_samples: interleaved.map(Arc::new),
+                sample_rate: 48_000,
+                channels,
+            }),
+            sample_rate: 48_000,
+            channels,
+            duration_secs,
+            metadata: FileMetadata {
+                format: AudioFormat::Rec,
+                bits_per_sample: bits,
+                is_float,
+                guano: Some(guano),
+                ..Default::default()
+            },
+        };
+        (audio, hashed)
+    }
+
+    #[test]
+    fn a_recording_saved_later_is_the_wav_its_hashes_were_taken_from() {
+        let markers = [WavMarker {
+            id: 1,
+            position: 2,
+            label: Some("Recording start".to_string()),
+            note: None,
+        }];
+        let left = [0.5, -0.25, 1.0 / 32_768.0, 0.0];
+        let right = [-1.0, 0.125, 0.75, 3.0 / 8_388_608.0];
+        let mut interleaved = Vec::new();
+        oversample_core::audio::stereo::interleave_stereo(&left, &right, &mut interleaved);
+        let mono: Vec<f32> = left
+            .iter()
+            .zip(&right)
+            .map(|(l, r)| (l + r) / 2.0)
+            .collect();
+        for (bits, is_float) in [(16, false), (24, false), (32, true)] {
+            let (audio, hashed) = recording(
+                mono.clone(),
+                Some(interleaved.clone()),
+                bits,
+                is_float,
+                &markers,
+            );
+            assert_eq!(
+                recording_wav_bytes(&audio, &markers),
+                hashed,
+                "stereo {bits}"
+            );
+            let (audio, hashed) = recording(left.to_vec(), None, bits, is_float, &[]);
+            assert_eq!(recording_wav_bytes(&audio, &[]), hashed, "mono {bits}");
         }
     }
 }

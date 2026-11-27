@@ -133,6 +133,7 @@ pub fn mic_start_recording(
     loc_elevation: Option<f64>,
     loc_accuracy: Option<f64>,
     enable_recovery: Option<bool>,
+    to_memory: Option<bool>,
     force_bits: Option<u16>,
     preroll_samples: Option<u32>,
 ) -> Result<(), String> {
@@ -143,6 +144,7 @@ pub fn mic_start_recording(
         buf.clear();
         buf.shared_fd = shared_fd;
         buf.force_bits = force_bits;
+        buf.to_memory = to_memory.unwrap_or(false);
         let write_format = buf.choose_write_format();
         // Seed the just-cleared buffer with the listening pre-roll ring, then
         // flip is_recording while still holding the buffer lock so the next
@@ -217,7 +219,7 @@ pub fn mic_stop_recording(
 
     // Snapshot totals before we drain the tail — we want the sample count as
     // captured, not the remainder-in-memory count.
-    let (num_samples, sample_rate, shared_fd, preroll_seeded, write_format) = {
+    let (num_samples, sample_rate, shared_fd, preroll_seeded, write_format, to_memory) = {
         let mut buf = m.buffer.lock().unwrap();
         buf.warn_if_write_format_dropped_bits("mic_stop_recording");
         (
@@ -226,12 +228,13 @@ pub fn mic_stop_recording(
             buf.shared_fd.take(),
             buf.preroll_seeded,
             buf.write_format,
+            buf.to_memory,
         )
     };
     // RAII-own the shared-storage fd so every early return below (no-samples,
     // skip-save, finalize error) closes it instead of leaking it.
     let mut shared_fd = recording::SharedFdGuard::new(shared_fd);
-    // Both the streamed file and the to-memory WAV are written in this format.
+    // Recordings streamed to disk and kept in memory use this format.
     let bits_per_sample = write_format.bits_per_sample();
     let is_float = write_format.is_float();
     let channels = m.channels;
@@ -241,7 +244,7 @@ pub fn mic_stop_recording(
     // Take the recovery writer out. Done INSIDE the writer lock to race-safely
     // handle the emitter — while we hold the lock the emitter can't flush.
     let recovery_writer = m.recovery.writer.lock().ok().and_then(|mut g| g.take());
-    let streaming_mode = recovery_writer.is_some();
+    let plan = recording::stop_plan(recovery_writer.is_some(), to_memory);
 
     if num_samples == 0 {
         if let Some(writer) = recovery_writer {
@@ -267,10 +270,12 @@ pub fn mic_stop_recording(
             channels,
             has_memory_samples: false,
             file_size_bytes: 0,
+            mic: None,
+            preroll_frames: preroll_seeded,
         });
     }
 
-    // Build the GUANO chunk for either path below.
+    // The GUANO fields for any of the paths below.
     let now = chrono::Local::now();
     let mut filename_ts = now.format("batcap_%Y%m%d_%H%M%S.wav").to_string();
     let location = match (loc_latitude, loc_longitude) {
@@ -297,10 +302,39 @@ pub fn mic_stop_recording(
         preroll_secs: (preroll_seeded > 0 && sample_rate > 0)
             .then(|| preroll_seeded as f64 / sample_rate as f64),
     };
+    let mic_fields = recording::guano_mic(&guano_params);
+
+    if plan == recording::StopPlan::KeepInMemory {
+        // "To memory": nothing is written. Any shared-storage fd is closed
+        // unwritten when `shared_fd` drops (the frontend asks for none).
+        let samples = recording::memory_samples(&m.buffer.lock().unwrap());
+        drop(mic);
+        let has_memory_samples = !samples.is_empty();
+        *app.state::<crate::RecordedMemoryMutex>()
+            .inner()
+            .lock()
+            .unwrap() = samples;
+        return Ok(RecordingResult {
+            filename: String::new(),
+            saved_path: String::new(),
+            sample_rate,
+            bits_per_sample,
+            is_float,
+            duration_secs,
+            num_samples,
+            channels,
+            has_memory_samples,
+            file_size_bytes: 0,
+            mic: Some(mic_fields),
+            preroll_frames: preroll_seeded,
+        });
+    }
+
     let guano =
         recording::build_tauri_guano(sample_rate, num_samples, &filename_ts, &now, &guano_params);
     let guano_text = guano.to_text();
 
+    let streaming_mode = plan == recording::StopPlan::FinishStreamedFile;
     let (saved_path, file_size_bytes, has_memory_samples) = if streaming_mode {
         // Streaming-to-disk: the partial file already contains every sample
         // that was flushed. Take whatever's still in the tail buffer, append
@@ -338,9 +372,9 @@ pub fn mic_stop_recording(
         };
         (saved_path, final_size as usize, false)
     } else {
-        // To-memory mode: encode from the accumulated in-memory samples (no
-        // streaming happened). The captured samples are stashed on the native
-        // side for the WASM finalizer to fetch as raw f32 bytes via
+        // A "To file" recording that could not stream to disk: encode the WAV
+        // from the samples in memory. The samples are also stashed for the
+        // WASM finalizer to fetch as raw f32 bytes via
         // `mic_take_recorded_samples` (instead of a giant inline JSON array).
         let buf = m.buffer.lock().unwrap();
         let samples_f32 = recording::get_samples_f32(&buf);
@@ -358,7 +392,7 @@ pub fn mic_stop_recording(
             recording::write_wav_to_fd(fd, &wav_data)?;
             "shared://recording".to_string()
         } else {
-            let dirs = crate::save_folder::memory_dirs(&app)?;
+            let dirs = crate::save_folder::app_data_dirs(&app)?;
             let full_path = crate::save_folder::write_in(&dirs, &filename_ts, &wav_data)?;
             filename_ts = crate::save_folder::file_name_of(&full_path, filename_ts);
             full_path.to_string_lossy().to_string()
@@ -383,6 +417,8 @@ pub fn mic_stop_recording(
         channels,
         has_memory_samples,
         file_size_bytes,
+        mic: Some(mic_fields),
+        preroll_frames: preroll_seeded,
     })
 }
 

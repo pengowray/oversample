@@ -1,4 +1,3 @@
-use oversample_core::erased_sort::SortErased;
 use crate::audio::streaming_source;
 use crate::components::file_sidebar::file_badges::{
     self, get_xc_field, FileBadgeData, FileBadgeRow,
@@ -11,6 +10,7 @@ use crate::state::{
     AppState, MicAcquisitionState, PlaybackMode, RecordReadyState, RightSidebarTab,
 };
 use leptos::prelude::*;
+use oversample_core::erased_sort::SortErased;
 use wasm_bindgen::JsCast;
 
 /// CSS selectors for the sequence and track menus and the heading buttons
@@ -447,16 +447,20 @@ pub fn Toolbar() -> impl IntoView {
         if let Some(idx) = state.library.current_index().get_untracked() {
             if let Some(f) = files.get(idx) {
                 if is_tauri {
-                    // On Tauri, the backend already saved to disk — just clear unsaved state
-                    state.status.message().set(Some("Recording saved".into()));
-                } else {
-                    // On web, trigger browser download with preserved GUANO + cue markers
-                    crate::audio::wav_encoder::download_recording_wav(
-                        &f.audio,
-                        &f.name,
-                        &f.wav_markers,
-                    );
+                    // A "To memory" recording: write the file now. The unsaved
+                    // mark is cleared once the file is written.
+                    let file_id = f.id;
+                    wasm_bindgen_futures::spawn_local(async move {
+                        crate::audio::live_recording::save_unsaved_recording(state, file_id).await;
+                    });
+                    return;
                 }
+                // On web, trigger browser download with preserved GUANO + cue markers
+                crate::audio::wav_encoder::download_recording_wav(
+                    &f.audio,
+                    &f.name,
+                    &f.wav_markers,
+                );
                 // Clear unsaved state
                 state.library.files().update(|files| {
                     if let Some(f) = files.get_mut(idx) {
@@ -561,7 +565,13 @@ pub fn Toolbar() -> impl IntoView {
 
                         let badge_data = current_badge_data.get();
                         let license = license_badge.get();
-                        let unsaved = is_unsaved.get();
+                        // On Tauri a recording in progress is written by the
+                        // native side ("To file") or kept until it stops ("To
+                        // memory"), so Save is offered only once it has stopped.
+                        let recording_now = is_tauri
+                            && state.mic.live_file_idx().get().is_some()
+                            && state.mic.live_file_idx().get() == state.library.current_index().get();
+                        let unsaved = is_unsaved.get() && !recording_now;
 
                         Some(view! {
                             // FileBadgeRow (sample rate, bit depth, duration, streaming, seq, track)
