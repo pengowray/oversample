@@ -447,10 +447,12 @@ Capture:
     Implicit Feedback Mode: Yes
 ";
 
-    /// A two-channel UAC2 interface with a 24-bit and a 16-bit altset, while
-    /// it is recording (the running status comes before the altsets).
+    /// Written for this test in the kernel's format, not copied from a real
+    /// device: a two-channel UAC2 interface with a 24-bit and a 16-bit
+    /// altset, while it is recording (the running status comes before the
+    /// altsets).
     const UAC2_TWO_ALTSETS: &str = "\
-Focusrite Scarlett 2i2 USB at usb-0000:00:14.0-1, high speed : USB Audio
+Example 2-channel interface at usb-0000:00:14.0-1, high speed : USB Audio
 
 Capture:
   Status: Running
@@ -479,10 +481,10 @@ Capture:
     Channel map: FL FR
 ";
 
-    /// An older USB 1.1 webcam microphone with a continuous range and no
-    /// `Bits:` line.
+    /// Written for this test, as above: a webcam microphone with a
+    /// continuous range and no `Bits:` line, as older kernels print it.
     const CONTINUOUS: &str = "\
-USB Camera at usb-0000:00:1d.0-1.2, high speed : USB Audio
+Example webcam at usb-0000:00:1d.0-1.2, high speed : USB Audio
 
 Capture:
   Status: Stop
@@ -494,9 +496,10 @@ Capture:
     Rates: 8000 - 48000 (continuous)
 ";
 
-    /// A one-channel 384 kHz bat microphone.
+    /// Written for this test, as above: a one-channel 384 kHz bat
+    /// microphone.
     const BAT_MIC: &str = "\
-Pettersson M500-384 at usb-0000:00:14.0-2, high speed : USB Audio
+Example 384 kHz bat mic at usb-0000:00:14.0-2, high speed : USB Audio
 
 Capture:
   Status: Stop

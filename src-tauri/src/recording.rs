@@ -589,6 +589,9 @@ pub struct MicState {
     /// The device that records, when the system says what it is (Linux: a
     /// USB card's name and maker, or the sound server's default source).
     pub source: Option<crate::alsa_sources::SourceIdentity>,
+    /// `device_name` is a USB device (false for the PipeWire and PulseAudio
+    /// rows, whose name is the sound server's, whatever `source` is).
+    pub is_usb: bool,
     pub supported_sample_rates: Vec<u32>,
     /// Crash-recovery writer + shared state. Active between
     /// `mic_start_recording` and `mic_stop_recording` on Android.
@@ -777,6 +780,23 @@ fn default_only(device: &cpal::Device) -> Vec<cpal::SupportedStreamConfigRange> 
         .collect()
 }
 
+/// `default`, `pipewire` and `pulse` record from the PulseAudio or PipeWire
+/// default source. JACK does not.
+fn records_default_source(pcm_id: &str) -> bool {
+    use oversample_core::audio::alsa_pcm::{classify, PcmKind};
+    matches!(
+        classify(pcm_id),
+        PcmKind::Default | PcmKind::SoundServer(0 | 1)
+    )
+}
+
+/// The `pipewire` and `pulse` rows keep the sound server's name ("PipeWire
+/// Sound Server"), so they are not marked as the USB device behind them;
+/// System default (`default`) is shown under that device's name.
+fn keeps_server_name(pcm_id: &str) -> bool {
+    records_default_source(pcm_id) && pcm_id != "default"
+}
+
 /// The real settings of the ALSA PCM `pcm_id`, given what cpal reports for
 /// it (`configs`).
 ///
@@ -811,7 +831,7 @@ fn alsa_caps(
             .collect::<Vec<_>>()
     };
     match classify(pcm_id) {
-        PcmKind::Default | PcmKind::SoundServer(_) => {
+        PcmKind::Default | PcmKind::SoundServer(0 | 1) => {
             let Some(source) = ctx.default_source() else {
                 return fallback(None);
             };
@@ -952,15 +972,13 @@ fn alsa_input_devices(host: &cpal::Host) -> Vec<AlsaRow> {
         .map(|l| {
             let i = l.index;
             let caps = alsa_caps(&ids[i], &devices[i], &configs[i], &mut ctx);
-            let server = matches!(
-                alsa_pcm::classify(&ids[i]),
-                alsa_pcm::PcmKind::Default | alsa_pcm::PcmKind::SoundServer(_)
-            );
+            let server = records_default_source(&ids[i]);
             let info = DeviceInfo {
                 name: l.name,
                 is_default: l.is_default,
                 sample_rate_ranges: ranges_of(&caps.configs),
-                is_usb: caps.identity.as_ref().is_some_and(|s| s.is_usb),
+                is_usb: !keeps_server_name(&ids[i])
+                    && caps.identity.as_ref().is_some_and(|s| s.is_usb),
                 manufacturer: caps.identity.as_ref().and_then(|s| s.manufacturer.clone()),
                 source_name: server
                     .then(|| caps.identity.as_ref().map(|s| s.name.clone()))
@@ -1179,12 +1197,22 @@ pub fn open_mic(
         let mut ctx = crate::alsa_sources::AlsaContext::new();
         caps = Some(alsa_caps(&id, &device, &input_configs(&device), &mut ctx));
     }
-    let device_name = listed_name.unwrap_or_else(|| {
-        device
-            .description()
-            .map(|d| d.name().to_string())
-            .unwrap_or_else(|_| "Unknown".into())
-    });
+    // The system default is named after the device behind it (such as
+    // "DUO-CAPTURE EX") when the sound server says which one it is.
+    let source = caps.as_ref().and_then(|c| c.identity.clone());
+    let pcm_id = device
+        .id()
+        .map(|id| id.id().to_string())
+        .unwrap_or_default();
+    let is_usb = source.as_ref().is_some_and(|s| s.is_usb) && !(alsa && keeps_server_name(&pcm_id));
+    let device_name = listed_name
+        .or_else(|| source.as_ref().map(|s| s.name.clone()))
+        .unwrap_or_else(|| {
+            device
+                .description()
+                .map(|d| d.name().to_string())
+                .unwrap_or_else(|_| "Unknown".into())
+        });
     // The settings to choose from: on ALSA only the ones the hardware has,
     // elsewhere everything the device reports.
     let all_configs: Vec<cpal::SupportedStreamConfigRange> = match &caps {
@@ -1464,7 +1492,8 @@ pub fn open_mic(
         channels: stored_channels as u16,
         device_channels,
         device_name,
-        source: caps.and_then(|c| c.identity),
+        source,
+        is_usb,
         supported_sample_rates: supported_rates,
         recovery: crate::recovery::RecoveryHandle::default(),
     })
@@ -1507,6 +1536,23 @@ pub struct TauriGuanoParams {
     /// Pre-roll duration (seconds) seeded at record start, for the GUANO
     /// `OVRS|Preroll` field. `None` when no pre-roll was used.
     pub preroll_secs: Option<f64>,
+}
+
+/// The GUANO mic fields for a cpal recording: interface, name and make.
+/// A USB device the system named (Linux) is "USB" with its name and maker;
+/// anything else is the audio host ("ALSA", "WASAPI", ...) and "Internal".
+pub fn guano_mic_fields(
+    source: Option<&crate::alsa_sources::SourceIdentity>,
+    host_name: String,
+) -> (Option<String>, Option<String>, Option<String>) {
+    match source {
+        Some(s) if s.is_usb => (
+            Some("USB".to_string()),
+            Some(s.name.clone()),
+            s.manufacturer.clone(),
+        ),
+        _ => (Some(host_name), Some("Internal".to_string()), None),
+    }
 }
 
 /// Build GUANO metadata for a Tauri-side recording using the shared builder.
@@ -1744,6 +1790,10 @@ mod tests {
             m.device_name, m.sample_rate, m.format, m.channels, m.device_channels,
             m.supported_sample_rates
         );
+        println!(
+            "GUANO mic fields (interface, name, make): {:?}",
+            guano_mic_fields(m.source.as_ref(), "ALSA".into())
+        );
         m.is_recording.store(true, Ordering::Relaxed);
         std::thread::sleep(std::time::Duration::from_millis(1000));
         if let Ok(cards) = std::fs::read_dir("/proc/asound") {
@@ -1883,6 +1933,51 @@ mod tests {
             collect_supported_rates(&configs),
             vec![8_000, 44_100, 48_000]
         );
+    }
+
+    fn guano_for(source: Option<&crate::alsa_sources::SourceIdentity>) -> String {
+        let (connection_type, mic_name, mic_make) = guano_mic_fields(source, "ALSA".into());
+        let params = TauriGuanoParams {
+            connection_type,
+            location: None,
+            device_make: None,
+            device_model: None,
+            mic_name,
+            mic_make,
+            app_version: "0.0.0".into(),
+            is_mobile: false,
+            preroll_secs: None,
+        };
+        build_tauri_guano(48_000, 48_000, "t.wav", &chrono::Local::now(), &params).to_text()
+    }
+
+    #[test]
+    fn guano_names_the_usb_interface_behind_the_system_default() {
+        let duo = crate::alsa_sources::SourceIdentity {
+            name: "DUO-CAPTURE EX".into(),
+            manufacturer: Some("Roland".into()),
+            is_usb: true,
+        };
+        let text = guano_for(Some(&duo));
+        for line in [
+            "Oversample|Mic|Interface: USB",
+            "Oversample|Mic|Name: DUO-CAPTURE EX",
+            "Make: Roland",
+            "Model: DUO-CAPTURE EX",
+        ] {
+            assert!(text.lines().any(|l| l == line), "{line} in\n{text}");
+        }
+        // An unknown or built-in device keeps the host and "Internal".
+        let internal = crate::alsa_sources::SourceIdentity {
+            name: "HD-Audio Generic".into(),
+            manufacturer: None,
+            is_usb: false,
+        };
+        for text in [guano_for(None), guano_for(Some(&internal))] {
+            assert!(text.lines().any(|l| l == "Oversample|Mic|Interface: ALSA"));
+            assert!(text.lines().any(|l| l == "Oversample|Mic|Name: Internal"));
+            assert!(!text.lines().any(|l| l.starts_with("Model:")));
+        }
     }
 
     #[test]

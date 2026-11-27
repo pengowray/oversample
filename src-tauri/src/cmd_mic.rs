@@ -55,7 +55,7 @@ fn mic_info(m: &recording::MicState) -> MicInfo {
         host_name: cpal_host_name(),
         channels: m.channels,
         device_channels: m.device_channels,
-        is_usb: m.source.as_ref().is_some_and(|s| s.is_usb),
+        is_usb: m.is_usb,
         manufacturer: m.source.as_ref().and_then(|s| s.manufacturer.clone()),
     }
 }
@@ -161,6 +161,12 @@ pub fn mic_start_recording(
         write_format
     };
 
+    // The crash-recovery file gets the same mic fields as the finished file
+    // when the backend knows the device (Linux).
+    let (connection_type, mic_name, mic_make) = match &m.source {
+        Some(_) => recording::guano_mic_fields(m.source.as_ref(), cpal_host_name()),
+        None => (connection_type, mic_name, mic_make),
+    };
     let args = recovery::StartArgs {
         filename,
         connection_type,
@@ -277,14 +283,15 @@ pub fn mic_stop_recording(
         _ => None,
     };
     let is_mobile = cfg!(target_os = "android");
-    let host_name = cpal_host_name();
+    let (connection_type, mic_name, mic_make) =
+        recording::guano_mic_fields(m.source.as_ref(), cpal_host_name());
     let guano_params = recording::TauriGuanoParams {
-        connection_type: Some(host_name),
+        connection_type,
         location,
         device_make,
         device_model,
-        mic_name: Some("Internal".to_string()),
-        mic_make: None,
+        mic_name,
+        mic_make,
         app_version: app_version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
         is_mobile,
         preroll_secs: (preroll_seeded > 0 && sample_rate > 0)

@@ -229,7 +229,14 @@ pub async fn query_mic_info(state: &AppState) {
                         "Internal"
                     };
                     state.mic.connection_type().set(Some(conn.to_string()));
-                    state.mic.device_name().set(Some(dev.name.clone()));
+                    // The system default is named after the device behind it
+                    // when the backend knows it (Linux sound servers).
+                    let name = match (&selected, &dev.source_name) {
+                        (None, Some(source)) => source.clone(),
+                        _ => dev.name.clone(),
+                    };
+                    state.mic.device_name().set(Some(name));
+                    state.mic.manufacturer().set(dev.manufacturer.clone());
 
                     let mut max_rate: u32 = 0;
                     let mut format_str: Option<String> = None;
