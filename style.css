@@ -1766,6 +1766,19 @@ body.sidebar-resizing {
     flex: 1;
 }
 
+/* Info: an inline row whose value wraps instead of ending in "...", for
+   Oversample's GUANO rows. A mic name such as "Echo Meter Touch 2 Pro" does
+   not fit beside its label in the sidebar, and a phone shows no tooltip with
+   the rest. The label stays on the value's first line. */
+.metadata-row-wraps {
+    align-items: baseline;
+}
+.metadata-row-wraps .setting-value.metadata-value {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+}
+
 .metadata-row {
     position: relative;
 }

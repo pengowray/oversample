@@ -11,49 +11,6 @@ use oversample_core::dsp::chime_scan::{
 };
 use oversample_core::position::parse_lat_lon;
 
-/// Returns (section, display_key) for a GUANO field.
-/// Known fields return "GUANO" as section; unknown pipe-separated keys
-/// return the prefix (e.g. "BatGizmo App") as section and the last segment as display key.
-fn categorize_guano_key(key: &str) -> (String, String) {
-    let known = match key {
-        // Pipe-separated variants
-        "Loc|Lat" => Some("Latitude"),
-        "Loc|Lon" => Some("Longitude"),
-        "Loc|Elev" => Some("Elevation"),
-        "Filter|HP" => Some("High-pass Filter"),
-        "Filter|LP" => Some("Low-pass Filter"),
-        "Species|Auto" => Some("Species (Auto)"),
-        "Species|Manual" => Some("Species (Manual)"),
-        // Standard GUANO space-separated field names
-        "Loc Position" => Some("GPS Position"),
-        "Loc Elevation" => Some("Elevation"),
-        "Filter HP" => Some("High-pass Filter (kHz)"),
-        "Filter LP" => Some("Low-pass Filter (kHz)"),
-        "Species Auto ID" => Some("Species (Auto)"),
-        "Species Manual ID" => Some("Species (Manual)"),
-        "Temperature Int" => Some("Internal Temp"),
-        "Temperature Ext" => Some("External Temp"),
-        "Model" => Some("Model"),
-        "Serial" => Some("Serial"),
-        "Microphone" => Some("Microphone"),
-        // Common fields
-        "TE" => Some("Time Expansion"),
-        "Samplerate" => Some("Sample Rate"),
-        "Length" => Some("Length"),
-        _ => None,
-    };
-    if let Some(display) = known {
-        return ("GUANO".into(), display.into());
-    }
-    if let Some(pos) = key.rfind('|') {
-        let prefix = &key[..pos];
-        let short = &key[pos + 1..];
-        (prefix.replace('|', " "), short.into())
-    } else {
-        ("GUANO".into(), key.into())
-    }
-}
-
 /// Classify a metadata field by its display label. Drives formatted-mode
 /// transforms (humanized dates, °F conversion, coordinate parsing, JSON
 /// expansion) and is robust to both GUANO and XC field name variants.
@@ -342,6 +299,22 @@ fn format_temp_c_f(value: &str) -> Option<(String, String)> {
 
 /// Inline (single-line) metadata row — used by the File section.
 fn inline_row(label: String, value: String, label_title: Option<String>) -> impl IntoView {
+    inline_row_class(label, value, label_title, "")
+}
+
+/// An inline row whose value wraps onto more lines when it is too long to fit
+/// beside the label. Used for Oversample's GUANO rows, where a mic name can be
+/// long.
+fn inline_row_wrapping(label: String, value: String, label_title: Option<String>) -> impl IntoView {
+    inline_row_class(label, value, label_title, " metadata-row-wraps")
+}
+
+fn inline_row_class(
+    label: String,
+    value: String,
+    label_title: Option<String>,
+    extra_class: &'static str,
+) -> impl IntoView {
     let value_for_copy = value.clone();
     let value_for_title = value.clone();
     let on_copy = move |ev: web_sys::MouseEvent| {
@@ -349,7 +322,7 @@ fn inline_row(label: String, value: String, label_title: Option<String>) -> impl
         super::copy_to_clipboard(&value_for_copy);
     };
     view! {
-        <div class="setting-row metadata-row metadata-row-inline">
+        <div class=format!("setting-row metadata-row metadata-row-inline{extra_class}")>
             <span class="setting-label" title=label_title.unwrap_or_default()>{label}</span>
             <span class="setting-value metadata-value" title=value_for_title>{value}</span>
             <button class="copy-btn" on:click=on_copy title="Copy">{"\u{2398}"}</button>
@@ -1965,46 +1938,39 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                                 view! { <span></span> }.into_any()
                             }}
                             {if has_guano {
-                                let is_guano_source =
-                                    matches!(meta.format, AudioFormat::Wav | AudioFormat::W4v);
+                                // A recording made in the app (format Rec) is a
+                                // WAV with Oversample's own GUANO block.
+                                let is_guano_source = matches!(
+                                    meta.format,
+                                    AudioFormat::Wav | AudioFormat::W4v | AudioFormat::Rec
+                                );
                                 let default_section: &str = if is_guano_source {
                                     "Guano metadata"
                                 } else {
                                     "Audio file metadata"
                                 };
                                 let mut items: Vec<leptos::tachys::view::any_view::AnyView> = Vec::new();
-                                let mut current_section: Option<String> = None;
-                                let mut first_heading = true;
-                                for (k, v) in guano_fields {
-                                    let (section, display_key) = if is_guano_source {
-                                        let (s, d) = categorize_guano_key(&k);
-                                        let s = if s == "GUANO" { default_section.to_string() } else { s };
-                                        (s, d)
+                                let sections = super::guano_labels::guano_sections(&guano_fields, is_guano_source);
+                                for (i, section) in sections.into_iter().enumerate() {
+                                    let heading_class = if i == 0 {
+                                        "setting-group-title setting-group-title-major"
                                     } else {
-                                        (default_section.to_string(), k.clone())
+                                        "setting-group-title setting-group-title-sub"
                                     };
-                                    if current_section.as_ref() != Some(&section) {
-                                        let heading = section.clone();
-                                        let show_badge = is_guano_source && heading != default_section;
-                                        let heading_class = if first_heading {
-                                            "setting-group-title setting-group-title-major"
+                                    let badge = section.vendor.is_some().then(|| {
+                                        view! { <span class="metadata-source-badge">"GUANO"</span> }
+                                    });
+                                    let heading = section.vendor.unwrap_or_else(|| default_section.to_string());
+                                    items.push(view! {
+                                        <div class=heading_class>{heading}{badge}</div>
+                                    }.into_any());
+                                    for r in section.rows {
+                                        items.push(if r.inline {
+                                            inline_row_wrapping(r.label, r.value, Some(r.key)).into_any()
                                         } else {
-                                            "setting-group-title setting-group-title-sub"
-                                        };
-                                        items.push(view! {
-                                            <div class=heading_class>
-                                                {heading}
-                                                {if show_badge {
-                                                    view! { <span class="metadata-source-badge">"GUANO"</span> }.into_any()
-                                                } else {
-                                                    view! { <span></span> }.into_any()
-                                                }}
-                                            </div>
-                                        }.into_any());
-                                        current_section = Some(section);
-                                        first_heading = false;
+                                            spacious_row(r.label, r.value, Some(r.key), view_mode).into_any()
+                                        });
                                     }
-                                    items.push(spacious_row(display_key, v, Some(k), view_mode).into_any());
                                 }
                                 view! {
                                     <div class="setting-group">
