@@ -32,7 +32,8 @@ jobs:
   # the desktop jobs download it. src-tauri/tauri.ci.conf.json turns off
   # Tauri's own frontend build.
   frontend:
-    runs-on: ubuntu-22.04
+    # Trunk's prebuilt binary needs a newer glibc than Ubuntu 22.04 has.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 

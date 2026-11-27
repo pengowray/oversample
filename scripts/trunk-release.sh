@@ -55,4 +55,6 @@ grep -q 'data-type="main" data-wasm-opt="s"' "$page" || {
     exit 1
 }
 
-trunk build --release "$@" "$page"
+# The page goes before --release: with nothing between them, Trunk reads the
+# page's name as --release's value and stops.
+trunk build "$page" --release "$@"
