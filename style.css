@@ -5532,6 +5532,15 @@ a.open-link-btn {
 :is(.toolbar-badge-row, .file-item-info) .badge-btn:is(.badge-warn, .unsaved):hover {
     background: #4d3400;
 }
+/* Save while the recording is being written (toolbar.rs, is_saving): dimmed
+   and unpressable, so a second press can't write a second copy. The label
+   stays the same, so the heading does not move. */
+:is(.toolbar-badge-row, .file-item-info) .badge-btn.unsaved:disabled,
+:is(.toolbar-badge-row, .file-item-info) .badge-btn.unsaved:disabled:hover {
+    background: #3a2700;
+    opacity: 0.55;
+    cursor: progress;
+}
 /* The row download sits at the right end of the row. */
 .badge-download-btn {
     margin-left: auto;

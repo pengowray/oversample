@@ -1317,6 +1317,23 @@ pub(crate) struct NativeRecordingMeta {
     pub preroll_frames: usize,
 }
 
+/// Whether a finished recording is kept in memory, with no file written
+/// ("To memory", and every browser recording). A cpal or USB recording is
+/// "To memory" when the native side saved no file: it reads the Record menu
+/// at record start, and the menu can be changed while recording. Browser
+/// recordings follow the menu.
+fn kept_in_memory(
+    state: &AppState,
+    native: Option<&NativeRecordingMeta>,
+    saved_path: &str,
+) -> bool {
+    if native.is_some() {
+        saved_path.is_empty()
+    } else {
+        state.playback.record_mode().get_untracked() == crate::state::RecordMode::ToMemory
+    }
+}
+
 /// Collected recording metadata (GUANO, markers, naming) built from AppState.
 struct RecordingMeta {
     guano: crate::audio::guano::GuanoMetadata,
@@ -1592,8 +1609,32 @@ fn persist_and_identify(
 /// Save a finished recording that is shown as unsaved (Tauri, "To memory"):
 /// to the recordings folder on the desktop, to shared storage on Android.
 /// Clears the unsaved mark only once the file is written, and tells the user
-/// how it went.
+/// how it went. A second call for the same recording while one is running
+/// does nothing, so pressing Save twice writes one file.
 pub(crate) async fn save_unsaved_recording(state: AppState, file_id: u64) {
+    // Check and mark before any await, so a second press in the same tick
+    // sees the mark.
+    let already_saving = state
+        .library
+        .saving_recordings()
+        .with_untracked(|ids| ids.contains(&file_id));
+    if already_saving {
+        return;
+    }
+    state
+        .library
+        .saving_recordings()
+        .update(|ids| ids.push(file_id));
+    // Let the busy Save button paint before the WAV is built.
+    crate::web_util::yield_now().await;
+    write_unsaved_recording(state, file_id).await;
+    state
+        .library
+        .saving_recordings()
+        .update(|ids| ids.retain(|&id| id != file_id));
+}
+
+async fn write_unsaved_recording(state: AppState, file_id: u64) {
     let live_idx = state.mic.live_file_idx().get_untracked();
     let Some((wav, name)) = state.library.files().with_untracked(|files| {
         let idx = files.iter().position(|f| f.id == file_id)?;
@@ -1660,7 +1701,7 @@ pub(crate) async fn save_unsaved_recording(state: AppState, file_id: u64) {
             }
         }
     });
-    state.status.message().set(Some("Recording saved".into()));
+    state.show_info_toast("Recording saved");
 }
 
 /// Unified recording finalization. Handles both browser (WASM-side save) and
@@ -1815,7 +1856,11 @@ pub(crate) fn finalize_recording(params: FinalizeParams, state: AppState) {
             .files()
             .with_untracked(|f| f.get(i).map(|f| f.id))
     });
-    state.show_info_toast("Saving recording\u{2026}");
+    // A recording kept in memory is not written now: the heading shows it as
+    // unsaved, with a Save or Download button.
+    if !kept_in_memory(&state, native.as_ref(), &saved_path) {
+        state.show_info_toast("Saving recording\u{2026}");
+    }
     wasm_bindgen_futures::spawn_local(async move {
         finalize_in_memory_recording(
             samples,
@@ -1890,6 +1935,7 @@ async fn finalize_in_memory_recording(
     let shared_saved = saved_path.starts_with("shared://");
     let native_saved = !saved_path.is_empty();
     let has_disk_file = native_saved || shared_saved;
+    let to_memory = kept_in_memory(&state, native.as_ref(), &saved_path);
 
     // ── Phase 2: Encode WAV bytes — only when there is no on-disk file to hash
     // (browser and "To memory" recordings). When the native side saved the
@@ -1915,7 +1961,8 @@ async fn finalize_in_memory_recording(
     let wav_bytes: Option<Vec<u8>> = if has_disk_file {
         None
     } else {
-        // Yield so the "Saving…" toast paints before the heavy encode runs.
+        // Yield so the stopped recording (and the "Saving recording…" toast,
+        // when there is one) paints before the heavy encode runs.
         crate::web_util::yield_now().await;
         Some(crate::audio::wav_encoder::encode_wav_complete(
             raw_samples.as_deref().unwrap_or(&samples),
@@ -1999,14 +2046,6 @@ async fn finalize_in_memory_recording(
     // Mark saved if native backend already persisted the file
     let is_tauri = state.is_tauri;
     let is_mobile = state.status.is_mobile().get_untracked();
-    // A cpal or USB recording is "To memory" when the native side saved no
-    // file: it reads the Record menu at record start, and the menu can be
-    // changed while recording. Browser recordings follow the menu.
-    let to_memory = if native.is_some() {
-        !has_disk_file
-    } else {
-        state.playback.record_mode().get_untracked() == crate::state::RecordMode::ToMemory
-    };
 
     if has_disk_file && !to_memory {
         state.library.files().update(|files| {

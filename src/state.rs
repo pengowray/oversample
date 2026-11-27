@@ -2660,6 +2660,10 @@ pub struct LibraryState {
     /// selection, keyed by `LoadedFile.id` (cross-file state-scoping side-table). A closed
     /// file's entry is removed.
     pub per_file_view: std::collections::HashMap<u64, PerFileScope>,
+    /// Ids (`LoadedFile.id`) of the recordings whose Save is running
+    /// (`live_recording::save_unsaved_recording`). A second Save of the same
+    /// recording does nothing until the first one ends.
+    pub saving_recordings: Vec<u64>,
 }
 
 /// Playback / transport state.
@@ -2997,6 +3001,7 @@ impl AppState {
                 loading: Vec::new(),
                 loading_next_id: 0,
                 per_file_view: std::collections::HashMap::new(),
+                saving_recordings: Vec::new(),
             }),
             playback: Store::new(PlaybackState {
                 mode: PlaybackMode::Normal,

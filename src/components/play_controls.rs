@@ -2,11 +2,17 @@ use crate::state::store_fields::*;
 use crate::state::{AppState, StatusLevel};
 use crate::viewport;
 use leptos::prelude::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+/// How long a status message stays on screen.
+const TOAST_MS: i32 = 3000;
 
 /// App-level toast display — always visible regardless of whether a file is open.
 #[component]
 pub fn ToastDisplay() -> impl IntoView {
     let state = expect_context::<AppState>();
+    let toast_count = Arc::new(AtomicU64::new(0));
 
     view! {
         <div class="app-toast-container">
@@ -77,26 +83,29 @@ pub fn ToastDisplay() -> impl IntoView {
                     </div>
                 }
             })}
-            {move || state.status.message().get().map(|msg| {
-                let state2 = state;
+            {move || {
+                // Every change to the status message, from any caller, runs
+                // this closure and gets a new number. A message's timer clears
+                // the message only if no newer message has been set since, so
+                // a newer message is shown for its full 3 seconds.
+                let shown = toast_count.fetch_add(1, Ordering::Relaxed) + 1;
+                let msg = state.status.message().get()?;
+                let count = toast_count.clone();
                 wasm_bindgen_futures::spawn_local(async move {
-                    let p = js_sys::Promise::new(&mut |resolve, _| {
-                        if let Some(w) = web_sys::window() {
-                            let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 3000);
-                        }
-                    });
-                    wasm_bindgen_futures::JsFuture::from(p).await.ok();
-                    state2.status.message().set(None);
+                    crate::web_util::sleep_ms(TOAST_MS).await;
+                    if count.load(Ordering::Relaxed) == shown {
+                        state.status.message().set(None);
+                    }
                 });
                 let cls = if state.status.level().get_untracked() == StatusLevel::Info {
                     "status-toast status-toast-info"
                 } else {
                     "status-toast"
                 };
-                view! {
+                Some(view! {
                     <span class=cls>{msg}</span>
-                }
-            })}
+                })
+            }}
         </div>
     }
 }

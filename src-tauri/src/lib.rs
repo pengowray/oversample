@@ -1,4 +1,5 @@
 mod alsa_sources;
+mod close_warning;
 mod cmd_annotations;
 mod cmd_audio_files;
 mod cmd_denoise;
@@ -54,6 +55,15 @@ pub fn run() {
         .manage(Mutex::new(Vec::<f32>::new()))
         .manage(cmd_save::SaveFiles::default())
         .manage(cmd_denoise::CopyDirs::default())
+        .manage(close_warning::CloseWarning::default())
+        // Desktop: ask before the window closes while a recording is not
+        // saved (close_warning.rs).
+        .on_window_event(|_window, _event| {
+            #[cfg(desktop)]
+            if let tauri::WindowEvent::CloseRequested { api, .. } = _event {
+                close_warning::on_close_requested(_window, api);
+            }
+        })
         .setup(|app| {
             let cache_root = app
                 .path()
@@ -147,6 +157,7 @@ pub fn run() {
             cmd_google::google_sign_in_cancel,
             cmd_google::google_access_token,
             cmd_google::google_sign_out,
+            close_warning::set_unsaved_recordings,
             device_info,
         ])
         .run(tauri::generate_context!())

@@ -176,6 +176,7 @@ pub fn App() -> impl IntoView {
     }
 
     crate::page_zoom::restore();
+    crate::close_warning::watch(state);
 
     // Startup: scan for orphaned crash-recovery recordings and finalize them.
     // Cheap no-op if the recovery dir is empty or missing.
