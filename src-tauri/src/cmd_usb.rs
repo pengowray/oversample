@@ -188,7 +188,7 @@ pub fn usb_stop_recording(
     }
 
     let now = chrono::Local::now();
-    let filename = now.format("batcap_%Y%m%d_%H%M%S.wav").to_string();
+    let mut filename = now.format("batcap_%Y%m%d_%H%M%S.wav").to_string();
     let location = match (loc_latitude, loc_longitude) {
         (Some(lat), Some(lon)) => Some(recording::RecordingLocation {
             latitude: lat,
@@ -248,15 +248,9 @@ pub fn usb_stop_recording(
             let _ = std::fs::remove_file(&finalized_path);
             "shared://recording".to_string()
         } else {
-            let dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| e.to_string())?
-                .join("recordings");
-            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let target = dir.join(&filename);
-            std::fs::rename(&finalized_path, &target)
-                .map_err(|e| format!("recovery: rename to final path: {}", e))?;
+            let dirs = crate::save_folder::dirs(&app)?;
+            let target = crate::save_folder::place_in(&dirs, &finalized_path, &filename)?;
+            filename = crate::save_folder::file_name_of(&target, filename);
             target.to_string_lossy().to_string()
         };
         (saved_path, final_size, false)
@@ -275,14 +269,9 @@ pub fn usb_stop_recording(
             recording::write_wav_to_fd(fd, &wav_data)?;
             "shared://recording".to_string()
         } else {
-            let dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| e.to_string())?
-                .join("recordings");
-            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let full_path = dir.join(&filename);
-            std::fs::write(&full_path, &wav_data).map_err(|e| e.to_string())?;
+            let dirs = crate::save_folder::memory_dirs(&app)?;
+            let full_path = crate::save_folder::write_in(&dirs, &filename, &wav_data)?;
+            filename = crate::save_folder::file_name_of(&full_path, filename);
             full_path.to_string_lossy().to_string()
         };
         let has_mem = !samples_f32.is_empty();

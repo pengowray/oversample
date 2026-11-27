@@ -7,6 +7,7 @@ mod cmd_mic;
 mod cmd_models;
 mod cmd_noise_presets;
 mod cmd_playback;
+mod cmd_recording_folder;
 mod cmd_save;
 mod cmd_usb;
 #[cfg(desktop)]
@@ -15,6 +16,7 @@ mod ipc_bytes;
 mod native_playback;
 mod recording;
 mod recovery;
+mod save_folder;
 mod tls;
 mod usb_audio;
 mod xc;
@@ -50,6 +52,7 @@ pub fn run() {
         .manage(Mutex::new(None::<UsbStreamState>))
         .manage(Mutex::new(Vec::<f32>::new()))
         .manage(cmd_save::SaveFiles::default())
+        .manage(cmd_denoise::CopyDirs::default())
         .setup(|app| {
             let cache_root = app
                 .path()
@@ -134,6 +137,10 @@ pub fn run() {
             cmd_denoise::denoise_copy_write,
             cmd_denoise::denoise_copy_commit,
             cmd_denoise::denoise_copy_discard,
+            cmd_recording_folder::recording_folder_get,
+            cmd_recording_folder::recording_folder_choose,
+            cmd_recording_folder::recording_folder_reset,
+            cmd_recording_folder::open_containing_folder,
             cmd_google::google_status,
             cmd_google::google_sign_in,
             cmd_google::google_sign_in_cancel,

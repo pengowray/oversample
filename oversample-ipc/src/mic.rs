@@ -196,3 +196,27 @@ pub struct RecoveredRecording {
     pub duration_secs: f64,
     pub file_size_bytes: u64,
 }
+
+/// Where new recordings are saved on the desktop. Result of
+/// `recording_folder_get`, `recording_folder_choose` and
+/// `recording_folder_reset`. On Android it is the app data folder's
+/// `recordings/`, which is used only when shared storage is not.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RecordingFolder {
+    /// The folder the next recording is saved in.
+    pub path: String,
+    /// `path` with the home folder written as `~` (not on Windows), for a
+    /// one-line display.
+    pub short_path: String,
+    /// The folder used when the user has not chosen one: the Music folder's
+    /// `Oversample`, or the app data folder's `recordings/` when there is no
+    /// usable Music folder.
+    pub default_path: String,
+    /// The user chose a folder (it may not be usable now; see `unusable_custom`).
+    pub is_custom: bool,
+    /// The folder the user chose, when it can't be used now, so `path` is the
+    /// default folder instead.
+    pub unusable_custom: Option<String>,
+    /// No usable Music folder: the default folder is the app data folder.
+    pub music_missing: bool,
+}

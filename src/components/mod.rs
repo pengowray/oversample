@@ -42,6 +42,7 @@ pub mod playhead;
 pub mod popup;
 pub mod score_strips;
 pub mod sound_groups;
+pub mod recording_folder;
 pub mod right_sidebar;
 pub mod slider_row;
 pub mod species_panel;

@@ -1,27 +1,72 @@
-//! Denoised copies of long recordings, written to the app data folder's
-//! `recordings/` as the webview makes them.
+//! Denoised copies of long recordings, written to the folder recordings are
+//! saved in (`crate::save_folder`) as the webview makes them.
 //!
 //! The webview sends the WAV in parts, as raw IPC bodies, because the copy is
 //! too large to hold whole (and WebKitGTK has no OPFS to write it to). Parts
 //! go to `<name>.<run>.part`, which [`denoise_copy_commit`] renames to
-//! `<name>` and [`denoise_copy_discard`] deletes.
+//! `<name>` and [`denoise_copy_discard`] deletes. The folder is picked when a
+//! copy's first part is written and kept for that copy ([`CopyDirs`]), so
+//! changing the save folder part way through does not split a copy.
 //!
 //! Only names that end in " (denoised).wav" and have no folder in them are
 //! accepted, so no command can touch another file.
 
+use std::collections::HashMap;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tauri::Manager;
 
 /// The end of every copy's name: `DENOISED_SUFFIX` in the frontend's
 /// `file_groups.rs`, with the extension.
 const NAME_END: &str = " (denoised).wav";
 
-fn copies_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let dir = crate::recovery::recordings_dir(&app_data);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir)
+/// The folder each copy being written is in, by name and run.
+#[derive(Default)]
+pub struct CopyDirs(Mutex<HashMap<(String, u32), PathBuf>>);
+
+/// The folder of the copy `name`, `run`: the one its first part went to, or
+/// the first save folder that exists or can be made.
+fn copy_dir(app: &tauri::AppHandle, name: &str, run: u32) -> Result<PathBuf, String> {
+    let key = (name.to_string(), run);
+    if let Some(dir) = app.state::<CopyDirs>().0.lock().unwrap().get(&key) {
+        return Ok(dir.clone());
+    }
+    crate::save_folder::dirs(app)?
+        .into_iter()
+        .find(|d| std::fs::create_dir_all(d).is_ok())
+        .ok_or_else(|| "no folder to save the copy in".to_string())
+}
+
+/// Start the part file of copy `name`, `run` in the first save folder where
+/// that works, and remember the folder.
+fn start_part(app: &tauri::AppHandle, name: &str, run: u32) -> Result<std::fs::File, String> {
+    let part_name = format!("{}.{run}.part", checked_name(name)?);
+    let mut errors = Vec::new();
+    for dir in crate::save_folder::dirs(app)? {
+        let created = std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::File::create(dir.join(&part_name)));
+        match created {
+            Ok(f) => {
+                app.state::<CopyDirs>()
+                    .0
+                    .lock()
+                    .unwrap()
+                    .insert((name.to_string(), run), dir);
+                return Ok(f);
+            }
+            Err(e) => errors.push(format!("{}: {e}", dir.display())),
+        }
+    }
+    Err(errors.join("; "))
+}
+
+fn forget(app: &tauri::AppHandle, name: &str, run: u32) {
+    app.state::<CopyDirs>()
+        .0
+        .lock()
+        .unwrap()
+        .remove(&(name.to_string(), run));
 }
 
 fn checked_name(name: &str) -> Result<&str, String> {
@@ -34,7 +79,7 @@ fn checked_name(name: &str) -> Result<&str, String> {
 }
 
 fn part_path(app: &tauri::AppHandle, name: &str, run: u32) -> Result<PathBuf, String> {
-    Ok(copies_dir(app)?.join(format!("{}.{run}.part", checked_name(name)?)))
+    Ok(copy_dir(app, name, run)?.join(format!("{}.{run}.part", checked_name(name)?)))
 }
 
 /// The file name from its UTF-8 bytes in hexadecimal. Header values are
@@ -70,10 +115,10 @@ pub fn denoise_copy_write(
     let offset: u64 = header("x-copy-offset")?
         .parse()
         .map_err(|_| "bad x-copy-offset".to_string())?;
-    let path = part_path(&app, &name, run)?;
     let mut f = if offset == 0 {
-        std::fs::File::create(&path).map_err(|e| e.to_string())?
+        start_part(&app, &name, run)?
     } else {
+        let path = part_path(&app, &name, run)?;
         let mut f = std::fs::OpenOptions::new()
             .write(true)
             .open(&path)
@@ -98,12 +143,14 @@ pub fn denoise_copy_commit(
     size: u64,
 ) -> Result<String, String> {
     let part = part_path(&app, &name, run)?;
+    let dir = copy_dir(&app, &name, run)?;
+    forget(&app, &name, run);
     let len = std::fs::metadata(&part).map_err(|e| e.to_string())?.len();
     if len != size {
         let _ = std::fs::remove_file(&part);
         return Err(format!("{name} has {len} bytes; expected {size}"));
     }
-    let path = copies_dir(&app)?.join(&name);
+    let path = dir.join(&name);
     std::fs::rename(&part, &path).map_err(|e| e.to_string())?;
     Ok(path.to_string_lossy().to_string())
 }
@@ -111,7 +158,9 @@ pub fn denoise_copy_commit(
 /// Delete an unfinished copy. No part file is not an error.
 #[tauri::command]
 pub fn denoise_copy_discard(app: tauri::AppHandle, name: String, run: u32) -> Result<(), String> {
-    match std::fs::remove_file(part_path(&app, &name, run)?) {
+    let part = part_path(&app, &name, run);
+    forget(&app, &name, run);
+    match std::fs::remove_file(part?) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),

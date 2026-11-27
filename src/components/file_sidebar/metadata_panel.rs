@@ -330,6 +330,37 @@ fn inline_row_class(
     }
 }
 
+/// The File section's Path row (desktop): the full path under the label,
+/// wrapping between folder names, so the file name at the end always shows.
+/// Copy is always shown, as in the hash rows, so it can be reached by touch.
+fn path_row(state: AppState, path: String) -> impl IntoView {
+    let for_copy = path.clone();
+    let for_open = path.clone();
+    let on_copy = move |ev: web_sys::MouseEvent| {
+        ev.stop_propagation();
+        super::copy_to_clipboard(&for_copy);
+    };
+    let on_open = move |ev: web_sys::MouseEvent| {
+        ev.stop_propagation();
+        crate::recording_folder::open_containing(state, for_open.clone());
+    };
+    let folder = crate::recording_folder::head_and_tail(&path).0;
+    view! {
+        <div class="metadata-row path-row" data-testid="info-path-row">
+            <div class="path-row-head">
+                <span class="setting-label">"Path"</span>
+                <button class="hash-calc-btn path-open-btn" title=folder on:click=on_open>
+                    "Open folder"
+                </button>
+                <button class="copy-btn copy-btn-spacious" on:click=on_copy title="Copy">{"\u{2398}"}</button>
+            </div>
+            <div class="path-row-value path-text" title=path.clone()>
+                {crate::recording_folder::path_view(&path)}
+            </div>
+        </div>
+    }
+}
+
 /// Spacious row (key on its own line, value beneath). Used for all
 /// sections other than the File summary. Honors the Formatted/Original
 /// view mode for value rendering.
@@ -1875,6 +1906,11 @@ pub(crate) fn MetadataPanel() -> impl IntoView {
                             <div class="setting-group">
                                 <div class="setting-group-title setting-group-title-major">"File"</div>
                                 {inline_row("Name".into(), f.name.clone(), None)}
+                                // Not while a recording is shown as unsaved
+                                // (in progress, or "To memory").
+                                {(crate::recording_folder::is_desktop(state) && !f.is_recording)
+                                    .then(|| f.disk_path().map(|p| path_row(state, p.to_string())))
+                                    .flatten()}
                                 {inline_row("Format".into(), format_text(meta), None)}
                                 {inline_row("Duration".into(), crate::format_time::format_duration(f.audio.duration_secs, 3), None)}
                                 // Not for a live recording: its length is still growing, and

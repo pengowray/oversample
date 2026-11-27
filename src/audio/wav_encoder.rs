@@ -235,7 +235,7 @@ pub(crate) async fn save_wav_to_shared(wav_data: &[u8], filename: &str) {
     }
 }
 
-/// Save a recording to the app data folder's `recordings/` (Tauri only).
+/// Save a recording to the folder recordings are saved in (Tauri only).
 /// Returns the saved path, or `None` outside Tauri or on failure.
 pub(crate) async fn try_tauri_save(wav_data: &[u8], filename: &str) -> Option<String> {
     crate::tauri_bridge::get_tauri_internals()?;
