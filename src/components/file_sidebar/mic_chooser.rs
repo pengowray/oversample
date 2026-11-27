@@ -457,7 +457,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                             class="mic-chooser-device-caps"
                                             on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
                                         >
-                                            "Record at: "
+                                            "Bit depth: "
                                             <select
                                                 prop:value=move || state.mic.bit_depth_override()
                                                     .with(|m| m.get(&dev_name_for_selval).map(|b| b.to_string()))
