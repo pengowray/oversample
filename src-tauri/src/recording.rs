@@ -726,6 +726,9 @@ struct AlsaCaps {
     configs: Vec<cpal::SupportedStreamConfigRange>,
     /// The audio bits of those settings and whether they are float, when known.
     real_bits: Option<(u16, bool)>,
+    /// `configs` has the hardware's own rates. False when it is cpal's
+    /// default setting only, or a PCM whose settings are not known.
+    rates_real: bool,
     identity: Option<crate::alsa_sources::SourceIdentity>,
 }
 
@@ -821,6 +824,7 @@ fn alsa_caps(
     let fallback = |identity| AlsaCaps {
         configs: default_only(device),
         real_bits: None,
+        rates_real: false,
         identity,
     };
     let openable_only = |configs: &[cpal::SupportedStreamConfigRange]| {
@@ -842,6 +846,7 @@ fn alsa_caps(
             AlsaCaps {
                 configs: real,
                 real_bits: Some((source.format.bits, source.format.is_float)),
+                rates_real: true,
                 identity: source.identity,
             }
         }
@@ -852,6 +857,7 @@ fn alsa_caps(
                 return AlsaCaps {
                     configs: openable_only(configs),
                     real_bits: None,
+                    rates_real: true,
                     identity,
                 };
             }
@@ -869,12 +875,14 @@ fn alsa_caps(
             AlsaCaps {
                 configs: real,
                 real_bits,
+                rates_real: true,
                 identity,
             }
         }
         _ => AlsaCaps {
             configs: openable_only(configs),
             real_bits: None,
+            rates_real: false,
             identity: None,
         },
     }
@@ -973,10 +981,19 @@ fn alsa_input_devices(host: &cpal::Host) -> Vec<AlsaRow> {
             let i = l.index;
             let caps = alsa_caps(&ids[i], &devices[i], &configs[i], &mut ctx);
             let server = records_default_source(&ids[i]);
+            let ranges = ranges_of(&caps.configs);
             let info = DeviceInfo {
                 name: l.name,
                 is_default: l.is_default,
-                sample_rate_ranges: ranges_of(&caps.configs),
+                hardware_rates: if caps.rates_real {
+                    oversample_ipc::mic::listed_rates(&ranges)
+                } else {
+                    Vec::new()
+                },
+                hardware_depth: caps
+                    .real_bits
+                    .map(|(bits, is_float)| oversample_ipc::mic::SampleDepth { bits, is_float }),
+                sample_rate_ranges: ranges,
                 is_usb: !keeps_server_name(&ids[i])
                     && caps.identity.as_ref().is_some_and(|s| s.is_usb),
                 manufacturer: caps.identity.as_ref().and_then(|s| s.manufacturer.clone()),
@@ -1037,6 +1054,8 @@ pub fn list_input_devices() -> Vec<DeviceInfo> {
                     name,
                     is_default,
                     sample_rate_ranges: ranges,
+                    hardware_rates: Vec::new(),
+                    hardware_depth: None,
                     is_usb: false,
                     manufacturer: None,
                     source_name: None,
@@ -1761,7 +1780,7 @@ mod tests {
         if is_alsa(&host) {
             for row in alsa_input_devices(&host) {
                 println!(
-                    "{} opens {:?} (ALSA name {:?}; usb={} maker={:?} source={:?}; rates {:?})",
+                    "{} opens {:?} (ALSA name {:?}; usb={} maker={:?} source={:?}; rates {:?}; hardware rates {:?} depth {:?})",
                     row.info.name,
                     row.device.id().map(|id| id.id().to_string()),
                     row.alsa_name,
@@ -1769,6 +1788,8 @@ mod tests {
                     row.info.manufacturer,
                     row.info.source_name,
                     oversample_ipc::mic::listed_rates(&row.info.sample_rate_ranges),
+                    row.info.hardware_rates,
+                    row.info.hardware_depth,
                 );
             }
         }
@@ -1900,6 +1921,7 @@ mod tests {
         let caps = AlsaCaps {
             configs: configs.clone(),
             real_bits: Some((24, false)),
+            rates_real: true,
             identity: None,
         };
         assert_eq!(

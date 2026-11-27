@@ -39,12 +39,50 @@ pub fn listed_rates(ranges: &[SampleRateRange]) -> Vec<u32> {
         .collect()
 }
 
+/// The rate a mic opens at for a maximum sample rate of `max` (0 = Auto, which
+/// gives `None`), given the rates the hardware has (`rates`, from
+/// [`DeviceInfo::hardware_rates`]): `max` itself when the hardware has it,
+/// otherwise the highest rate below it, otherwise the lowest rate. This is
+/// the rule `open_mic` follows on ALSA. `None` too when `rates` is empty.
+pub fn rate_used(rates: &[u32], max: u32) -> Option<u32> {
+    if max == 0 {
+        return None;
+    }
+    if rates.contains(&max) {
+        return Some(max);
+    }
+    rates
+        .iter()
+        .copied()
+        .filter(|&r| r <= max)
+        .max()
+        .or_else(|| rates.iter().copied().min())
+}
+
+/// Bits per sample and whether the samples are float.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SampleDepth {
+    pub bits: u16,
+    pub is_float: bool,
+}
+
 /// One enumerated audio input device.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeviceInfo {
     pub name: String,
     pub is_default: bool,
+    /// The settings the device can open. A format here is the container the
+    /// driver delivers, which may be converted from the hardware's own.
     pub sample_rate_ranges: Vec<SampleRateRange>,
+    /// The rates the hardware records at without converting, lowest first.
+    /// Empty when they are not known: other hosts (Android's AAudio, for
+    /// one) list rates they convert to.
+    #[serde(default)]
+    pub hardware_rates: Vec<u32>,
+    /// The hardware's own sample depth, such as 24-bit for a USB interface
+    /// that cpal also offers as I16, I32 and F32. `None` when not known.
+    #[serde(default)]
+    pub hardware_depth: Option<SampleDepth>,
     /// The device is a USB audio interface (Linux sound cards; false when not
     /// known).
     #[serde(default)]
@@ -265,4 +303,53 @@ pub struct RecordingFolder {
     pub unusable_custom: Option<String>,
     /// No usable Music folder: the default folder is the app data folder.
     pub music_missing: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_used_follows_the_hardware_rates() {
+        let rates = [44100, 48000, 96000, 192000];
+        assert_eq!(rate_used(&rates, 0), None);
+        assert_eq!(rate_used(&rates, 96000), Some(96000));
+        assert_eq!(rate_used(&rates, 384000), Some(192000));
+        assert_eq!(rate_used(&rates, 50000), Some(48000));
+        assert_eq!(rate_used(&rates, 22050), Some(44100));
+        assert_eq!(rate_used(&[48000], 384000), Some(48000));
+        assert_eq!(rate_used(&[48000], 44100), Some(48000));
+        assert_eq!(rate_used(&[], 48000), None);
+    }
+
+    #[test]
+    fn device_info_without_hardware_fields_parses() {
+        let json = r#"{"name":"Mic","is_default":true,"sample_rate_ranges":[
+            {"min":48000,"max":48000,"channels":2,"format":"I16"}]}"#;
+        let d: DeviceInfo = serde_json::from_str(json).unwrap();
+        assert!(d.hardware_rates.is_empty());
+        assert_eq!(d.hardware_depth, None);
+        assert!(!d.is_usb);
+    }
+
+    #[test]
+    fn device_info_hardware_fields_round_trip() {
+        let d = DeviceInfo {
+            name: "DUO-CAPTURE EX".into(),
+            is_default: false,
+            sample_rate_ranges: Vec::new(),
+            hardware_rates: vec![48000],
+            hardware_depth: Some(SampleDepth {
+                bits: 24,
+                is_float: false,
+            }),
+            is_usb: true,
+            manufacturer: Some("Roland".into()),
+            source_name: None,
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        let back: DeviceInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.hardware_rates, vec![48000]);
+        assert_eq!(back.hardware_depth, d.hardware_depth);
+    }
 }

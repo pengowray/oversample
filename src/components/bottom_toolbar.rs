@@ -925,6 +925,11 @@ pub fn BottomToolbar() -> impl IntoView {
                                                 state.mic.backend().set(None);
                                                 state.mic.device_info().set(None);
                                                 state.mic.selected_device().set(None);
+                                                // The default device's rates replace the chosen one's.
+                                                state.mic.hardware_rates().set(Vec::new());
+                                                leptos::task::spawn_local(async move {
+                                                    microphone::query_mic_info(&state).await;
+                                                });
                                             }
                                         >"Ask"</button>
                                         <button class=move || {
@@ -962,10 +967,10 @@ pub fn BottomToolbar() -> impl IntoView {
                                                 let info = state.mic.device_info().get();
                                                 match info {
                                                     Some(info) => {
-                                                        let rate_str = if !info.supported_rates.is_empty() {
-                                                            let max = info.supported_rates.iter().max().copied().unwrap_or(0);
-                                                            if max >= 1000 { format!("{}k", max / 1000) } else { format!("{}", max) }
-                                                        } else { "?".to_string() };
+                                                        let rate_str = match info.supported_rates.iter().max() {
+                                                            Some(&max) => crate::format_units::sample_rate_short(max),
+                                                            None => "?".to_string(),
+                                                        };
                                                         let bits_str = if !info.supported_bit_depths.is_empty() {
                                                             let max = info.supported_bit_depths.iter().max().copied().unwrap_or(0);
                                                             format!("{}-bit", max)
@@ -992,22 +997,7 @@ pub fn BottomToolbar() -> impl IntoView {
                                     <div style="padding: 2px 8px;">
                                         <div class="layer-panel-slider-row het-text-row">
                                             <label style="font-size: 11px;">"Max sample rate"</label>
-                                            <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px;"
-                                                on:change=move |ev| {
-                                                    if let Ok(val) = leptos::prelude::event_target_value(&ev).parse::<u32>() {
-                                                        state.mic.max_sample_rate().set(val);
-                                                    }
-                                                }
-                                            >
-                                                <option value="0" selected=move || state.mic.max_sample_rate().get() == 0>"Auto"</option>
-                                                <option value="44100" selected=move || state.mic.max_sample_rate().get() == 44100>"44.1k"</option>
-                                                <option value="48000" selected=move || state.mic.max_sample_rate().get() == 48000>"48k"</option>
-                                                <option value="96000" selected=move || state.mic.max_sample_rate().get() == 96000>"96k"</option>
-                                                <option value="192000" selected=move || state.mic.max_sample_rate().get() == 192000>"192k"</option>
-                                                <option value="256000" selected=move || state.mic.max_sample_rate().get() == 256000>"256k"</option>
-                                                <option value="384000" selected=move || state.mic.max_sample_rate().get() == 384000>"384k"</option>
-                                                <option value="500000" selected=move || state.mic.max_sample_rate().get() == 500000>"500k"</option>
-                                            </select>
+                                            <MaxSampleRateSelect />
                                         </div>
                                         <div class="layer-panel-slider-row het-text-row">
                                             <label style="font-size: 11px;">"Max bit depth"</label>
@@ -1159,6 +1149,81 @@ pub(super) fn restart_listening(state: AppState) {
             crate::audio::microphone::toggle_listen(&state).await;
             crate::audio::microphone::toggle_listen(&state).await;
         });
+    }
+}
+
+/// The rates the Max sample rate list offers when the chosen mic's are not
+/// known (no native mic listed yet, Direct USB, the browser).
+const DEFAULT_MAX_RATES: [u32; 7] = oversample_ipc::mic::COMMON_RATES;
+
+/// The chosen native mic's hardware rates, or `None` when they are not known.
+fn known_mic_rates(state: &AppState) -> Option<Vec<u32>> {
+    use crate::state::MicBackend;
+    let native = state.is_tauri
+        && !matches!(
+            state.mic.backend().get(),
+            Some(MicBackend::RawUsb | MicBackend::Browser)
+        );
+    let rates = state.mic.hardware_rates().get();
+    (native && !rates.is_empty()).then_some(rates)
+}
+
+/// The Max sample rate list: Auto and the chosen mic's hardware rates when
+/// they are known, otherwise Auto and [`DEFAULT_MAX_RATES`].
+///
+/// A saved maximum that the mic does not have shows as the rate the mic opens
+/// at for it (`rate_used`). The saved maximum is kept, so a mic with higher
+/// rates chosen later still gets it. A mic with one rate shows that rate in a
+/// disabled list: Auto and the rate would record the same.
+#[component]
+fn MaxSampleRateSelect() -> impl IntoView {
+    let state = expect_context::<AppState>();
+    let on_change = move |ev: leptos::ev::Event| {
+        if let Ok(val) = leptos::prelude::event_target_value(&ev).parse::<u32>() {
+            state.mic.max_sample_rate().set(val);
+        }
+    };
+    let style =
+        "font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px;";
+    move || {
+        let saved = state.mic.max_sample_rate().get();
+        let (rates, shown) = match known_mic_rates(&state) {
+            Some(rates) if rates.len() == 1 => {
+                let rate = rates[0];
+                return view! {
+                    <select style=style disabled=true
+                        title=format!(
+                            "This microphone has only one sample rate: {}",
+                            crate::format_units::sample_rate_khz(rate)
+                        )
+                    >
+                        <option value=rate.to_string() selected=true>
+                            {crate::format_units::sample_rate_short(rate)}
+                        </option>
+                    </select>
+                }
+                .into_any();
+            }
+            Some(rates) => {
+                let shown = oversample_ipc::mic::rate_used(&rates, saved).unwrap_or(0);
+                (rates, shown)
+            }
+            None => (DEFAULT_MAX_RATES.to_vec(), saved),
+        };
+        view! {
+            <select style=style on:change=on_change>
+                <option value="0" selected=shown == 0>"Auto"</option>
+                {rates
+                    .into_iter()
+                    .map(|r| view! {
+                        <option value=r.to_string() selected=shown == r>
+                            {crate::format_units::sample_rate_short(r)}
+                        </option>
+                    })
+                    .collect_view()}
+            </select>
+        }
+        .into_any()
     }
 }
 

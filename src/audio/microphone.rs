@@ -147,34 +147,6 @@ pub async fn ensure_usb_permission(state: &AppState, device_name: &str) {
     }
 }
 
-/// Query the chosen (or default) cpal input device's supported sample rates
-/// without opening the mic.
-/// Updates `state.mic.supported_rates()` with the result.
-pub async fn query_cpal_supported_rates(state: &AppState) {
-    if !state.is_tauri {
-        return;
-    }
-    let result = match tauri_invoke_typed_no_args::<oversample_ipc::mic::DeviceListResult>(
-        "mic_list_devices",
-    )
-    .await
-    {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    // The chosen device, or the default when none is chosen.
-    let selected = state.mic.selected_device().get_untracked();
-    if let Some(dev) = result.devices.iter().find(|d| match &selected {
-        Some(name) => &d.name == name,
-        None => d.is_default,
-    }) {
-        let rates_vec = oversample_ipc::mic::listed_rates(&dev.sample_rate_ranges);
-        if !rates_vec.is_empty() {
-            state.mic.supported_rates().set(rates_vec);
-        }
-    }
-}
-
 /// Query mic info without opening the mic. Populates device name/type signals.
 pub async fn query_mic_info(state: &AppState) {
     if !state.is_tauri {
@@ -219,6 +191,10 @@ pub async fn query_mic_info(state: &AppState) {
                     .and_then(|d| d.sample_rate_ranges.iter().map(|r| r.channels).max())
                     .unwrap_or(0);
                 state.mic.cpal_device_channels().set(device_channels as u32);
+                state
+                    .mic
+                    .hardware_rates()
+                    .set(chosen.map(|d| d.hardware_rates.clone()).unwrap_or_default());
                 if let Some(dev) = chosen {
                     let n = dev.name.to_lowercase();
                     let conn = if dev.is_usb || n.contains("usb") {
@@ -249,7 +225,10 @@ pub async fn query_mic_info(state: &AppState) {
                     if max_rate > 0 {
                         state.mic.sample_rate().set(max_rate);
                     }
-                    if let Some(fmt) = format_str {
+                    if let Some(depth) = dev.hardware_depth {
+                        state.mic.bits_per_sample().set(depth.bits);
+                        state.mic.is_float().set(depth.is_float);
+                    } else if let Some(fmt) = format_str {
                         let bits: u16 = match fmt.as_str() {
                             "I16" => 16,
                             "I24" => 24,
