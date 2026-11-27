@@ -875,6 +875,30 @@ struct AlsaRow {
     caps: AlsaCaps,
 }
 
+/// The name a card PCM's row shows: a USB card's product name (such as
+/// "DUO-CAPTURE EX", where ALSA says "UA-22, USB Audio"), with ALSA's device
+/// name added when the card has more than one capture device. `None` for
+/// other cards, which keep ALSA's description.
+fn usb_row_name(
+    pcm_id: &str,
+    alsa_name: &str,
+    ctx: &mut crate::alsa_sources::AlsaContext,
+) -> Option<String> {
+    use oversample_core::audio::alsa_pcm::{classify, PcmKind};
+    let PcmKind::Card { card, .. } = classify(pcm_id) else {
+        return None;
+    };
+    let number = ctx.card_number(&card)?;
+    let identity = ctx.usb_identity(number)?;
+    let device_part = alsa_name.split_once(", ").map(|(_, d)| d.trim());
+    match device_part {
+        Some(d) if !d.is_empty() && crate::alsa_sources::capture_device_count(number) > 1 => {
+            Some(format!("{}, {d}", identity.name))
+        }
+        _ => Some(identity.name),
+    }
+}
+
 /// The ALSA input list as [`oversample_core::audio::alsa_pcm::arrange`] orders
 /// it: `default`, one entry per card device, running sound servers, then other
 /// PCMs with input settings. Plugins and a card's other PCM names are left out,
@@ -900,7 +924,11 @@ fn alsa_input_devices(host: &cpal::Host) -> Vec<AlsaRow> {
                 .unwrap_or_default()
         })
         .collect();
-    let names: Vec<String> = alsa_names.clone();
+    let names: Vec<String> = ids
+        .iter()
+        .zip(&alsa_names)
+        .map(|(id, name)| usb_row_name(id, name, &mut ctx).unwrap_or_else(|| name.clone()))
+        .collect();
     let configs: Vec<Vec<cpal::SupportedStreamConfigRange>> = devices
         .iter()
         .zip(&ids)
@@ -1708,7 +1736,9 @@ mod tests {
     #[test]
     #[ignore]
     fn capture_system_default() {
-        let m = open_mic(0, None, 0, 1, &[], false).expect("open System default");
+        // OVERSAMPLE_TEST_MIC=<row name> opens that row instead.
+        let name = std::env::var("OVERSAMPLE_TEST_MIC").ok();
+        let m = open_mic(0, name.as_deref(), 0, 1, &[], false).expect("open the mic");
         println!(
             "opened: name={:?} sr={} fmt={:?} channels stored={} device_channels={} supported_rates={:?}",
             m.device_name, m.sample_rate, m.format, m.channels, m.device_channels,

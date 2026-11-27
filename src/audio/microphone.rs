@@ -221,7 +221,7 @@ pub async fn query_mic_info(state: &AppState) {
                 state.mic.cpal_device_channels().set(device_channels as u32);
                 if let Some(dev) = chosen {
                     let n = dev.name.to_lowercase();
-                    let conn = if n.contains("usb") {
+                    let conn = if dev.is_usb || n.contains("usb") {
                         "USB"
                     } else if n.contains("bluetooth") || n.contains("bt ") {
                         "Bluetooth"
