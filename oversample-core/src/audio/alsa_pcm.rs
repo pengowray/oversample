@@ -51,6 +51,8 @@ pub enum CardAlias {
     Front,
     /// `dsnoop:`: capture shared between programs.
     Dsnoop,
+    /// `default:CARD=x`: the card's default PCM.
+    CardDefault,
     /// `surround51:`, `iec958:`, `hdmi:`, `dmix:`, `usbstream:` and the rest:
     /// outputs or special streams, never used for the microphone list.
     Unused,
@@ -102,6 +104,7 @@ pub fn classify(pcm_id: &str) -> PcmKind {
         "sysdefault" => CardAlias::SysDefault,
         "front" => CardAlias::Front,
         "dsnoop" => CardAlias::Dsnoop,
+        "default" => CardAlias::CardDefault,
         "dmix" | "usbstream" | "iec958" | "spdif" | "hdmi" | "rear" | "center_lfe" | "side"
         | "surround21" | "surround40" | "surround41" | "surround50" | "surround51"
         | "surround71" => CardAlias::Unused,
@@ -173,8 +176,8 @@ pub struct ListedPcm {
 ///
 /// For each card device the entry is `hw:` when it reports input settings
 /// (the device's own rates), otherwise the first of `plughw:`, `sysdefault:`,
-/// `front:`, `dsnoop:` that does, otherwise `plughw:` (or whichever name
-/// exists) so the card is still listed. A numbered card (`hw:CARD=1,DEV=0`) is
+/// `front:`, `dsnoop:`, `default:` that does. A card device where none of
+/// these report input settings is left out. A numbered card (`hw:CARD=1,DEV=0`) is
 /// left out when a named card has the same description, since cpal lists both
 /// for each card.
 pub fn arrange(entries: &[PcmEntry]) -> Vec<ListedPcm> {
@@ -215,8 +218,6 @@ pub fn arrange(entries: &[PcmEntry]) -> Vec<ListedPcm> {
         let chosen = aliases
             .iter()
             .find(|&&(_, i)| entries[i].has_input)
-            .or_else(|| aliases.iter().find(|&&(a, _)| a == CardAlias::PlugHw))
-            .or_else(|| aliases.first())
             .map(|&(_, i)| i);
         if let Some(i) = chosen {
             let numbered = card.chars().all(|c| c.is_ascii_digit());
@@ -476,15 +477,33 @@ mod tests {
     }
 
     #[test]
-    fn a_card_with_no_working_name_is_still_listed_as_plughw() {
+    fn a_card_with_no_name_that_reports_input_settings_is_left_out() {
         let entries = vec![
             e("hw:CARD=X,DEV=0", "Card X", false),
             e("plughw:CARD=X,DEV=0", "Card X", false),
             e("front:CARD=X,DEV=0", "Card X", false),
         ];
+        assert!(arrange(&entries).is_empty());
+    }
+
+    #[test]
+    fn a_cards_default_pcm_is_one_of_its_names() {
+        let entries = vec![
+            e("default:CARD=PCH", "HDA Intel PCH, ALC892 Analog", true),
+            e("sysdefault:CARD=PCH", "HDA Intel PCH, ALC892 Analog", true),
+            e("pipewire", "PipeWire Sound Server", true),
+        ];
         assert_eq!(
             pcm_ids(&entries, &arrange(&entries)),
-            vec!["plughw:CARD=X,DEV=0"]
+            vec!["sysdefault:CARD=PCH", "pipewire"]
+        );
+        assert_eq!(
+            classify("default:CARD=PCH"),
+            PcmKind::Card {
+                alias: CardAlias::CardDefault,
+                card: "PCH".into(),
+                dev: 0
+            }
         );
     }
 

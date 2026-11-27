@@ -226,7 +226,8 @@ pub fn MicChooserModal() -> impl IntoView {
 
     // On ALSA the device list starts with the `default` PCM, which is the same
     // device as the "System default" row, so that row goes first and the PCM is
-    // left out of the list. Other hosts keep "System default" last.
+    // left out of the list. Other hosts keep "System default" last. The row
+    // waits for the list, so it does not appear in one place and then move.
     let is_alsa = move || cpal_host_name.get() == "ALSA";
 
     // "Use Default" option (Tauri only — cpal not available in browser)
@@ -338,7 +339,7 @@ pub fn MicChooserModal() -> impl IntoView {
                         })
                     }}
 
-                    {move || (state.is_tauri && is_alsa()).then(system_default_row)}
+                    {move || (state.is_tauri && !loading.get() && is_alsa()).then(system_default_row)}
 
                     // Native Audio (cpal) section
                     {move || {
@@ -571,7 +572,7 @@ pub fn MicChooserModal() -> impl IntoView {
                     }}
 
                     {move || {
-                        if !state.is_tauri || is_alsa() { return None; }
+                        if !state.is_tauri || loading.get() || is_alsa() { return None; }
                         Some(view! {
                             <div class="mic-chooser-group-title" style="margin-top: 8px;"></div>
                             {system_default_row()}
