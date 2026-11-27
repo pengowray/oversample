@@ -224,6 +224,40 @@ pub fn MicChooserModal() -> impl IntoView {
         ev.stop_propagation();
     };
 
+    // On ALSA the device list starts with the `default` PCM, which is the same
+    // device as the "System default" row, so that row goes first and the PCM is
+    // left out of the list. Other hosts keep "System default" last. The row
+    // waits for the list, so it does not appear in one place and then move.
+    let is_alsa = move || cpal_host_name.get() == "ALSA";
+
+    // "Use Default" option (Tauri only — cpal not available in browser)
+    let system_default_row = move || {
+        view! {
+            <div
+                class=move || {
+                    let sel = state.mic.selected_device().get().is_none()
+                        && state.mic.backend().get() != Some(MicBackend::Browser)
+                        && state.mic.backend().get() != Some(MicBackend::RawUsb);
+                    if sel { "mic-chooser-device selected" } else { "mic-chooser-device" }
+                }
+                on:click=move |_| {
+                    select_device(&state, MicBackend::Cpal, None, None);
+                    let pending = take_pending_action(&state);
+                    spawn_local(async move {
+                        crate::audio::microphone::query_cpal_supported_rates(&state).await;
+                        crate::audio::microphone::query_mic_info(&state).await;
+                        if let Some(action) = pending {
+                            dispatch_pending_action(&state, action).await;
+                        }
+                    });
+                }
+            >
+                <div class="mic-chooser-device-name">"System default"</div>
+                <div class="mic-chooser-device-caps">"Automatically selected device"</div>
+            </div>
+        }
+    };
+
     view! {
         <div class="xc-modal-overlay" on:click=on_close>
             <div class="xc-modal" style="width: min(90vw, 480px);" on:click=on_content_click>
@@ -305,9 +339,14 @@ pub fn MicChooserModal() -> impl IntoView {
                         })
                     }}
 
+                    {move || (state.is_tauri && !loading.get() && is_alsa()).then(system_default_row)}
+
                     // Native Audio (cpal) section
                     {move || {
-                        let devs = cpal_devices.get();
+                        let mut devs = cpal_devices.get();
+                        if is_alsa() {
+                            devs.retain(|d| !d.is_default);
+                        }
                         if devs.is_empty() {
                             return None;
                         }
@@ -532,33 +571,11 @@ pub fn MicChooserModal() -> impl IntoView {
                         })
                     }}
 
-                    // "Use Default" option (Tauri only — cpal not available in browser)
                     {move || {
-                        if !state.is_tauri { return None; }
+                        if !state.is_tauri || loading.get() || is_alsa() { return None; }
                         Some(view! {
                             <div class="mic-chooser-group-title" style="margin-top: 8px;"></div>
-                            <div
-                                class=move || {
-                                    let sel = state.mic.selected_device().get().is_none()
-                                        && state.mic.backend().get() != Some(MicBackend::Browser)
-                                        && state.mic.backend().get() != Some(MicBackend::RawUsb);
-                                    if sel { "mic-chooser-device selected" } else { "mic-chooser-device" }
-                                }
-                                on:click=move |_| {
-                                    select_device(&state, MicBackend::Cpal, None, None);
-                                    let pending = take_pending_action(&state);
-                                    spawn_local(async move {
-                                        crate::audio::microphone::query_cpal_supported_rates(&state).await;
-                                        crate::audio::microphone::query_mic_info(&state).await;
-                                        if let Some(action) = pending {
-                                            dispatch_pending_action(&state, action).await;
-                                        }
-                                    });
-                                }
-                            >
-                                <div class="mic-chooser-device-name">"System default"</div>
-                                <div class="mic-chooser-device-caps">"Automatically selected device"</div>
-                            </div>
+                            {system_default_row()}
                         })
                     }}
                 </div>
