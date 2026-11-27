@@ -21,25 +21,44 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub struct CloseWarning {
     /// The newest list's number, and the list.
-    names: Mutex<(u64, Vec<String>)>,
+    names: Mutex<(u64, Unsaved)>,
     #[cfg_attr(not(desktop), allow(dead_code))]
     dialog_open: AtomicBool,
 }
 
+/// The recordings that closing the window would lose.
+#[derive(Default, Clone)]
+struct Unsaved {
+    /// Finished recordings that are not saved.
+    finished: Vec<String>,
+    /// The "To memory" recording still running, if any.
+    running: Option<String>,
+}
+
 /// The frontend's list of open recordings that are not saved (file names).
-/// An empty list lets the window close without asking. `seq` counts up with
+/// `running` is the "To memory" recording still in progress, if any. With
+/// neither, the window closes without asking. `seq` counts up with
 /// each list; a list older than the one kept is dropped.
 #[tauri::command]
-pub fn set_unsaved_recordings(state: tauri::State<CloseWarning>, names: Vec<String>, seq: u64) {
+pub fn set_unsaved_recordings(
+    state: tauri::State<CloseWarning>,
+    names: Vec<String>,
+    running: Option<String>,
+    seq: u64,
+) {
     if let Ok(mut kept) = state.names.lock() {
         if seq >= kept.0 {
-            *kept = (seq, names);
+            let unsaved = Unsaved {
+                finished: names,
+                running,
+            };
+            *kept = (seq, unsaved);
         }
     }
 }
 
-/// Button labels on Linux and macOS. Windows always shows OK and Cancel, so
-/// the message's question reads with either pair.
+/// Button labels. If a system can only show OK and Cancel, the message's
+/// question reads with that pair too.
 #[cfg_attr(not(desktop), allow(dead_code))]
 const CLOSE_LABEL: &str = "Close without saving";
 #[cfg_attr(not(desktop), allow(dead_code))]
@@ -54,7 +73,13 @@ const LISTED_WHEN_CUT: usize = 5;
 
 /// The message box's title and text for these unsaved recordings.
 #[cfg_attr(not(desktop), allow(dead_code))]
-fn message_text(names: &[String]) -> (String, String) {
+fn message_text(unsaved: &Unsaved) -> (String, String) {
+    let names: Vec<&String> = unsaved.running.iter().chain(&unsaved.finished).collect();
+    let stop = if unsaved.running.is_some() {
+        "stop the recording, then "
+    } else {
+        ""
+    };
     let n = names.len();
     let title = if n == 1 {
         "Recording not saved".to_string()
@@ -68,14 +93,14 @@ fn message_text(names: &[String]) -> (String, String) {
         format!("Close Oversample and lose these {n} recordings?")
     });
     let listed = if n > MAX_LISTED { LISTED_WHEN_CUT } else { n };
-    lines.extend(names.iter().take(listed).cloned());
+    lines.extend(names.iter().take(listed).map(|s| s.to_string()));
     if n > listed {
         lines.push(format!("and {} more recordings", n - listed));
     }
     lines.push(if n == 1 {
-        "To keep it, choose Cancel, then press Save.".to_string()
+        format!("To keep it, choose Cancel, then {stop}press Save.")
     } else {
-        "To keep them, choose Cancel, then select each recording and press Save.".to_string()
+        format!("To keep them, choose Cancel, then {stop}select each recording and press Save.")
     });
     (title, lines.join("\n"))
 }
@@ -143,7 +168,7 @@ pub fn on_close_requested<R: tauri::Runtime>(
     use tauri::Manager;
     let state = window.state::<CloseWarning>();
     let names = state.names.lock().map(|n| n.1.clone()).unwrap_or_default();
-    if names.is_empty() {
+    if names.finished.is_empty() && names.running.is_none() {
         return;
     }
     api.prevent_close();
@@ -187,8 +212,31 @@ mod tests {
     use super::rfd_answer::Answer;
     use super::*;
 
-    fn names(n: usize) -> Vec<String> {
-        (1..=n).map(|i| format!("batcap_{i}.wav")).collect()
+    fn names(n: usize) -> Unsaved {
+        Unsaved {
+            finished: (1..=n).map(|i| format!("batcap_{i}.wav")).collect(),
+            running: None,
+        }
+    }
+
+    #[test]
+    fn running_recording_is_listed_first() {
+        let mut unsaved = names(1);
+        unsaved.running = Some("batcap_now.wav".into());
+        let (title, body) = message_text(&unsaved);
+        assert_eq!(title, "2 recordings not saved");
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines[1], "batcap_now.wav");
+        assert_eq!(
+            lines[3],
+            "To keep them, choose Cancel, then stop the recording, then select each recording and press Save."
+        );
+        unsaved.finished.clear();
+        let (title, body) = message_text(&unsaved);
+        assert_eq!(title, "Recording not saved");
+        assert!(
+            body.ends_with("To keep it, choose Cancel, then stop the recording, then press Save.")
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "oversample-desktop"
-version = "0.5.323"
+version = "0.5.324"
 edition = "2021"
 license = "GPL-3.0-only"
 
@@ -27,7 +27,8 @@ tokio = { version = "1", features = ["fs", "io-util", "time", "net", "macros", "
 sha2 = "0.11"
 blake3 = "1"
 [target.'cfg(not(target_os = "android"))'.dependencies]
-rfd = "0.17"
+# common-controls-v6: Windows message boxes with our own button labels.
+rfd = { version = "0.17", features = ["common-controls-v6"] }
 
 # Google sign-in for Drive copies (src/google_auth.rs), desktop only.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
