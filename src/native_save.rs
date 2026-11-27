@@ -4,7 +4,7 @@
 //! as one JSON list of numbers. The commands are in `src-tauri/src/cmd_save.rs`.
 //!
 //! - [`save_with_dialog`] (desktop): a "Save As" dialog.
-//! - [`save_recording`]: the app data folder's `recordings/`.
+//! - [`save_recording`]: the folder recordings are saved in (`crate::recording_folder`).
 //! - [`save_to_shared_storage`] (Android): shared storage, where the gallery and
 //!   Files app see it. The media-store plugin creates the entry and returns its
 //!   file descriptor, then makes the entry visible, or deletes it if a write
@@ -40,8 +40,8 @@ pub async fn save_with_dialog(data: &[u8], filename: &str) -> Result<Option<Stri
     Ok(Some(opened.path))
 }
 
-/// Save `data` as `filename` in the app data folder's `recordings/`, and
-/// return its path.
+/// Save `data` as `filename` in the folder recordings are saved in, and
+/// return its path (numbered if the name was taken).
 pub async fn save_recording(data: &[u8], filename: &str) -> Result<String, String> {
     let opened: OpenedSave =
         tauri_invoke_typed_args("save_open_recording", &Filename { filename }).await?;

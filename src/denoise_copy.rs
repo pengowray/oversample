@@ -2,8 +2,8 @@
 //! at a time, so the copy is never held in memory (`crate::denoise`).
 //!
 //! In the browser the file is in the Origin Private File System
-//! (`crate::opfs_audio`). In the Tauri app it is in the app data folder's
-//! `recordings/`, written by the `denoise_copy_*` commands
+//! (`crate::opfs_audio`). In the Tauri app it is in the folder recordings are
+//! saved in (`crate::recording_folder`), written by the `denoise_copy_*` commands
 //! (`src-tauri/src/cmd_denoise.rs`).
 //!
 //! The file is a 32-bit float WAV. The copy has as many samples as the

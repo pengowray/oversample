@@ -31,6 +31,7 @@ pub mod pca;
 pub mod project;
 pub mod project_store;
 pub mod rate_notes;
+pub mod recording_folder;
 pub mod recording_place;
 pub mod scope;
 pub mod search_client;

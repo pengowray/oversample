@@ -393,6 +393,21 @@ pub struct LoadedFile {
 }
 
 impl LoadedFile {
+    /// The file's full path on this computer, when it has one: a recording
+    /// saved by the native app, or a file opened from disk there. `None` in
+    /// the browser and for an Android content:// file.
+    pub fn disk_path(&self) -> Option<&str> {
+        use crate::audio::streaming_source::FileHandle;
+        [&self.file_handle, &self.hash_source]
+            .into_iter()
+            .flatten()
+            .find_map(|h| match h {
+                FileHandle::TauriPath(p) => Some(p.as_str()),
+                _ => None,
+            })
+            .filter(|p| !p.is_empty() && !p.contains("://"))
+    }
+
     /// The site this file was loaded from, when it came from one.
     pub fn site(&self) -> Option<&crate::source_site::SourceSite> {
         self.site_metadata.as_ref().map(|m| &m.site)

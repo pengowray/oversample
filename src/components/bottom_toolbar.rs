@@ -1109,6 +1109,10 @@ pub fn BottomToolbar() -> impl IntoView {
                         }
                     }
                 >"To file"</button>
+                // Desktop: where "To file" saves (crate::recording_folder).
+                {move || (crate::recording_folder::is_desktop(state)
+                    && state.playback.record_mode().get() == RecordMode::ToFile)
+                    .then(|| view! { <crate::components::recording_folder::RecordMenuFolderLine /> })}
                 <button class=move || layer_opt_class(state.playback.record_mode().get() == RecordMode::ToMemory)
                     on:click=move |_| {
                         state.playback.record_mode().set(RecordMode::ToMemory);

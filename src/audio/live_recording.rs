@@ -1544,14 +1544,23 @@ fn persist_and_identify(
 
     if let Some(wav_data) = wav_bytes_for_save {
         wasm_bindgen_futures::spawn_local(async move {
-            if is_mobile {
+            let saved_path = if is_mobile {
                 crate::audio::wav_encoder::save_wav_to_shared(&wav_data, &filename).await;
-            } else if try_tauri_save(&wav_data, &filename).await.is_some() {
-                // Desktop WASM save succeeded
-            }
+                None
+            } else {
+                try_tauri_save(&wav_data, &filename).await
+            };
             state.library.files().update(|files| {
                 if let Some(f) = files.get_mut(file_index) {
                     f.is_recording = false;
+                    // Desktop: the Info panel shows where it was saved, and
+                    // hashes can be read from it again.
+                    if let Some(path) = saved_path {
+                        if f.file_handle.is_none() {
+                            f.hash_source =
+                                Some(crate::audio::streaming_source::FileHandle::TauriPath(path));
+                        }
+                    }
                 }
             });
         });

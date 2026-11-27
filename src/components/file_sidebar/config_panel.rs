@@ -330,6 +330,12 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                 </div>
             </div>
 
+            // Desktop app only: Android saves recordings to shared storage,
+            // and the browser keeps them in memory.
+            {crate::recording_folder::is_desktop(state).then(|| view! {
+                <crate::components::recording_folder::RecordingFolderSettings />
+            })}
+
             // Android app only. Every setting here needs the Android
             // geolocation plugin (GeolocationPlugin.kt): the position put in
             // recordings, the Wi-Fi network for privacy zones, and the phone
