@@ -241,6 +241,12 @@ pub fn start_tour(state: AppState) {
     }
     state.dialogs.hfr_nudge().set(false);
     state.panels.layer_panel_open().set(None);
+    // On a phone the sidebars lie over the view, and the steps point at
+    // controls under them (the tutorial button is in Settings).
+    if state.status.is_mobile().get_untracked() {
+        state.panels.left_collapsed().set(true);
+        state.panels.right_collapsed().set(true);
+    }
     // The last step is pressing Play, which would stop a play in progress.
     if state.playback.is_playing().get_untracked() {
         crate::audio::playback::stop(&state);
