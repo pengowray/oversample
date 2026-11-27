@@ -212,18 +212,29 @@
     var PLACE = { 'drag-up': placeDragUp, 'drag-right': placeDragRight };
 
     // Put the hand at the start of its drag and set how far it travels.
+    //
+    // .tour-gesture is a square centred on the fingertip, large enough to
+    // hold the whole hand at any lean, flipped or lifted. It was a 0 x 0
+    // point with the hand overflowing it while the Linux desktop app
+    // (WebKitGTK) showed the hand only over the time and frequency strips,
+    // and hid the rest behind the spectrogram. The full-size box is meant to
+    // fix that; it has not yet been checked in the desktop app.
     function placeGesture() {
         if (!gesture) return;
         var r = gesture.el.getBoundingClientRect();
         if (r.width <= 0 || r.height <= 0) return;
         var g = PLACE[gesture.kind](r);
         gesture.node.classList.toggle('tour-gesture-above', g.above);
+        // The farthest any part of the hand gets from the fingertip: the
+        // diagonal of its box (1 x 1.3 of its size), lifted (HAND_LIFTED).
+        var reach = Math.ceil(g.size * 1.65 * 1.18);
         var s = gesture.node.style;
-        s.left = g.x + 'px';
-        s.top = g.y + 'px';
+        s.left = g.x - reach + 'px';
+        s.top = g.y - reach + 'px';
+        s.width = s.height = 2 * reach + 'px';
         s.setProperty('--tour-hand-size', g.size + 'px');
-        s.setProperty('--tour-hand-left', -g.size * HAND_TIP_X + 'px');
-        s.setProperty('--tour-hand-top', -g.size * 1.3 * HAND_TIP_Y + 'px');
+        s.setProperty('--tour-hand-left', reach - g.size * HAND_TIP_X + 'px');
+        s.setProperty('--tour-hand-top', reach - g.size * 1.3 * HAND_TIP_Y + 'px');
         animateGesture(g);
     }
 

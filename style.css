@@ -10434,20 +10434,24 @@ body.hfr-nudge-on .hfr-switch {
    the strip, drags along it, lifts off, and starts again. Large on purpose, so the
    step reads as "drag here" before the text is read. Above driver's overlay
    (10000) and below its popover, so it never covers the instructions. It
-   takes no pointer events: the user drags the strip under it. */
+   takes no pointer events: the user drags the strip under it.
+   js/hfr-tour.js sets its size: a square round the fingertip that holds the
+   whole hand. will-change gives the hand a compositing layer of its own even
+   while it is still (reduced motion). Both are meant to keep the Linux desktop
+   app (WebKitGTK) from hiding the hand behind the spectrogram's canvas; not
+   yet checked there. */
 .tour-gesture {
     position: fixed;
     z-index: 100000;
-    width: 0;
-    height: 0;
     pointer-events: none;
+    will-change: transform, opacity;
     /* Here and not on .tour-hand, so a flipped hand keeps its shadow below. */
     filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.6));
 }
 .tour-gesture[hidden] {
     display: none;
 }
-/* The fingertip sits on .tour-gesture's point; the hand leans to the right
+/* The fingertip sits at the centre of .tour-gesture; the hand leans to the right
    so it lies over the recording and leaves the strip in view. On the time
    strip in a window with no room under it, the hand is flipped to reach down
    from above (.tour-gesture-above). */
