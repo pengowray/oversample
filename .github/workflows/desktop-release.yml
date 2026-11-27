@@ -1,0 +1,136 @@
+name: Desktop Release
+
+# Builds the desktop app for Windows, Linux and macOS when a version tag is
+# pushed, and attaches the installers to a draft GitHub release:
+#
+#   git tag v0.5.315 && git push origin v0.5.315
+#
+# The tag must match the version in src-tauri/tauri.conf.json. The release
+# stays a draft until someone publishes it on GitHub.
+#
+# Nothing is code-signed. The macOS build has an ad-hoc signature only
+# (src-tauri/tauri.ci.conf.json) and has not been run on a Mac.
+#
+# Google Drive sign-in needs the repository secrets
+# OVERSAMPLE_GOOGLE_DESKTOP_CLIENT_ID and OVERSAMPLE_GOOGLE_DESKTOP_CLIENT_SECRET.
+# Without them the builds work and leave the Google Drive settings out.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  # The wasm frontend is the same on every OS, so it is built once here and
+  # the desktop jobs download it. src-tauri/tauri.ci.conf.json turns off
+  # Tauri's own frontend build.
+  frontend:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the app version
+        shell: bash
+        run: |
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in src-tauri/tauri.conf.json"
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Trunk
+        uses: jetli/trunk-action@v0.5.0
+        with:
+          version: latest
+
+      - name: Build frontend
+        run: bash scripts/trunk-release.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
+          retention-days: 1
+          if-no-files-found: error
+
+  desktop:
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04 so the AppImage, .deb and .rpm run on older systems.
+          - os: ubuntu-22.04
+            args: ''
+            rust-targets: ''
+          # The NSIS setup.exe only, no MSI.
+          - os: windows-latest
+            args: '--bundles nsis'
+            rust-targets: ''
+          # One .dmg for Intel and Apple Silicon.
+          - os: macos-latest
+            args: '--target universal-apple-darwin'
+            rust-targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf \
+            libasound2-dev libdbus-1-dev libssl-dev pkg-config
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
+
+      - name: Build and attach to the draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OVERSAMPLE_GOOGLE_DESKTOP_CLIENT_ID: ${{ secrets.OVERSAMPLE_GOOGLE_DESKTOP_CLIENT_ID }}
+          OVERSAMPLE_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ secrets.OVERSAMPLE_GOOGLE_DESKTOP_CLIENT_SECRET }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Oversample __VERSION__'
+          releaseDraft: true
+          prerelease: false
+          args: --config src-tauri/tauri.ci.conf.json ${{ matrix.args }}
+          releaseBody: |
+            Desktop builds of Oversample. The web app at https://app.oversample.com needs no install.
+
+            | System | File |
+            | --- | --- |
+            | Windows 10 and 11 | `oversample_*_x64-setup.exe` |
+            | Linux, any distribution | `oversample_*_amd64.AppImage` |
+            | Debian, Ubuntu, Mint | `oversample_*_amd64.deb` |
+            | Fedora, openSUSE | `oversample-*.x86_64.rpm` |
+            | macOS (untested) | `oversample_*_universal.dmg` |
+
+            **Windows:** the installer is not code-signed. If Windows shows "Windows protected your PC", choose More info, then Run anyway.
+
+            **macOS (untested):** this build has not been run on a Mac, so please report what works and what does not. It is not notarized by Apple. The first time you open it, macOS will refuse; then go to System Settings > Privacy & Security and choose Open Anyway.
