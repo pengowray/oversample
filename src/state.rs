@@ -325,7 +325,9 @@ pub struct LoadedFile {
     pub xc_hashes: Option<SidecarHashes>,
     /// Loaded from the bat-demo-sounds archive (not directly from XC or user's disk).
     pub is_demo: bool,
-    pub is_recording: bool, // true = unsaved recording (show indicator on web)
+    /// A recording in progress, or a finished one that is unsaved ("To memory",
+    /// or a browser recording not yet downloaded).
+    pub is_recording: bool,
     /// Transient listening file — auto-removed when listening stops, converted to
     /// a recording file when the user hits record.
     pub is_live_listen: bool,

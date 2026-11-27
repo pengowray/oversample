@@ -20,6 +20,21 @@ pub async fn tauri_invoke(cmd: &str, args: &JsValue) -> Result<JsValue, String> 
         .map_err(|e| format!("Command '{}' failed: {:?}", cmd, e))
 }
 
+/// The message a native command failed with, from an error that
+/// [`tauri_invoke`] built (`Command 'x' failed: JsValue("message")`), for
+/// showing to the user. Any other text is returned as it is.
+pub fn command_error_message(e: &str) -> String {
+    let Some(start) = e.find("JsValue(\"") else {
+        return e.to_string();
+    };
+    let inner = &e[start + "JsValue(\"".len()..];
+    let Some(inner) = inner.strip_suffix("\")") else {
+        return e.to_string();
+    };
+    // `{:?}` of a JS string escapes quotes and backslashes.
+    inner.replace("\\\"", "\"").replace("\\\\", "\\")
+}
+
 /// Like [`tauri_invoke`], but an error is the value the command rejected
 /// with, so a command's serialized error type can be read back with
 /// `serde_wasm_bindgen`.
@@ -354,4 +369,23 @@ fn unlisten(event: &str, event_id: f64) {
     wasm_bindgen_futures::spawn_local(async move {
         let _ = tauri_invoke_args("plugin:event|unlisten", &args).await;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::command_error_message;
+
+    #[test]
+    fn command_error_message_is_the_native_text() {
+        assert_eq!(
+            command_error_message(
+                r#"Command 'save_open_recording' failed: JsValue("Couldn't save a.wav: /x/\"y\": Permission denied")"#
+            ),
+            r#"Couldn't save a.wav: /x/"y": Permission denied"#
+        );
+        assert_eq!(
+            command_error_message("Not running in Tauri"),
+            "Not running in Tauri"
+        );
+    }
 }

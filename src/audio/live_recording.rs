@@ -1610,7 +1610,8 @@ pub(crate) async fn save_unsaved_recording(state: AppState, file_id: u64) {
     }) else {
         return;
     };
-    let saved_path = if state.status.is_mobile().get_untracked() {
+    // Android, not `is_mobile`: a narrow desktop window counts as mobile.
+    let saved_path = if !crate::recording_folder::is_desktop(state) {
         match crate::native_save::save_to_shared_storage(
             &wav,
             &name,
@@ -1627,7 +1628,10 @@ pub(crate) async fn save_unsaved_recording(state: AppState, file_id: u64) {
                 return;
             }
             Err(e) => {
-                state.show_error_toast(format!("Recording not saved: {e}"));
+                state.show_error_toast(format!(
+                    "Recording not saved: {}",
+                    crate::tauri_bridge::command_error_message(&e)
+                ));
                 return;
             }
         }
@@ -1635,7 +1639,10 @@ pub(crate) async fn save_unsaved_recording(state: AppState, file_id: u64) {
         match crate::native_save::save_recording(&wav, &name).await {
             Ok(path) => Some(path),
             Err(e) => {
-                state.show_error_toast(format!("Recording not saved: {e}"));
+                state.show_error_toast(format!(
+                    "Recording not saved: {}",
+                    crate::tauri_bridge::command_error_message(&e)
+                ));
                 return;
             }
         }
