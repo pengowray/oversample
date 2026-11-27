@@ -141,6 +141,23 @@ pub fn Toolbar() -> impl IntoView {
             .unwrap_or(false)
     });
 
+    // Derived: a Save of the current file is running (Tauri), so Save is
+    // shown busy and can't be pressed again.
+    let is_saving = Memo::new(move |_| {
+        let Some(id) = state.library.current_index().get().and_then(|i| {
+            state
+                .library
+                .files()
+                .with(|files| files.get(i).map(|f| f.id))
+        }) else {
+            return false;
+        };
+        state
+            .library
+            .saving_recordings()
+            .with(|ids| ids.contains(&id))
+    });
+
     // Derived: badge data for current file
     let current_badge_data = Memo::new(move |_| {
         let files = state.library.files().get();
@@ -609,6 +626,8 @@ pub fn Toolbar() -> impl IntoView {
                                     <button
                                         class="badge-btn unsaved"
                                         title=btn_title
+                                        disabled=move || is_saving.get()
+                                        aria-busy=move || is_saving.get().then_some("true")
                                         on:click=on_toolbar_download
                                     ><Icon kind=Icon::Download />" "{btn_label}</button>
                                 }

@@ -118,9 +118,14 @@ async function desktopWithMic(page: Page) {
               });
             case "mic_take_recorded_samples":
               return Promise.resolve(Float32Array.from(recorded).buffer);
-            case "save_open_recording":
-              if (w.__failSave) return Promise.reject(`Couldn't save ${args.filename}: ${saved}: Permission denied`);
-              return Promise.resolve({ id: 7, path: saved });
+            case "save_open_recording": {
+              const answer = () =>
+                w.__failSave
+                  ? Promise.reject(`Couldn't save ${args.filename}: ${saved}: Permission denied`)
+                  : Promise.resolve({ id: 7, path: saved });
+              if (!w.__saveDelay) return answer();
+              return new Promise((r) => setTimeout(r, w.__saveDelay)).then(answer);
+            }
             case "save_write":
               for (const b of args as Uint8Array) w.__written.push(b);
               return Promise.resolve(null);
@@ -169,8 +174,9 @@ test("a To memory recording writes no file until Save, then saves with the mic's
   await desktopWithMic(page);
   await recordToMemory(page);
 
-  // Stopped: shown as unsaved, and nothing was written.
+  // Stopped: shown as unsaved, and nothing was written or said to be saving.
   await expect(page.locator(".toolbar .badge-fact.unsaved")).toHaveText("* File unsaved");
+  await expect(page.getByText("Saving recording")).toHaveCount(0);
   await expect(page.locator(".file-item .file-unsaved-asterisk")).toHaveCount(1);
   expect((await calls(page)).filter((c) => c.cmd.startsWith("save_"))).toEqual([]);
   await page.getByRole("button", { name: "Info" }).click();
@@ -194,9 +200,6 @@ test("a failed save keeps the recording unsaved and says why", async ({ page }) 
   await desktopWithMic(page);
   await page.evaluate(() => ((window as any).__failSave = true));
   await recordToMemory(page);
-  // Let the "Saving recording…" message from the stop time out first: its
-  // timer clears whatever message is showing then.
-  await page.waitForTimeout(3500);
   await page.locator(".badge-btn.unsaved").click();
   await expect(page.locator(".status-toast")).toHaveText(
     /^Recording not saved: Couldn't save batcap_\d{8}_\d{6}\.wav: \/home\/ann\/Music\/Oversample\/batcap_test\.wav: Permission denied$/,
@@ -204,4 +207,45 @@ test("a failed save keeps the recording unsaved and says why", async ({ page }) 
   );
   await expect(page.locator(".badge-btn.unsaved")).toBeVisible();
   expect((await calls(page)).map((c) => c.cmd)).not.toContain("save_write");
+  const opens = async () => (await calls(page)).filter((c) => c.cmd === "save_open_recording").length;
+  expect(await opens()).toBe(1);
+
+  // Save can be pressed again after a failed save. The second message keeps
+  // its own 3 seconds: the first message's timer leaves it alone.
+  await page.waitForTimeout(2000);
+  await page.locator(".badge-btn.unsaved").click();
+  await expect.poll(opens).toBe(2);
+  await page.waitForTimeout(1500);
+  await expect(page.locator(".status-toast")).toHaveText(/^Recording not saved: /);
+  await expect(page.locator(".status-toast")).toHaveCount(0, { timeout: 2_500 });
+});
+
+test("pressing Save twice writes one file, and Save is disabled while it runs", async ({ page }) => {
+  await desktopWithMic(page);
+  await page.evaluate(() => ((window as any).__saveDelay = 800));
+  await recordToMemory(page);
+  // Two presses in the same moment, without waiting for the button.
+  await page.locator(".badge-btn.unsaved").evaluate((b: HTMLButtonElement) => {
+    b.click();
+    b.click();
+  });
+  await expect(page.locator(".badge-btn.unsaved")).toBeDisabled();
+  await page.locator(".badge-btn.unsaved").evaluate((b: HTMLButtonElement) => b.click());
+  await expect(page.locator(".badge-btn.unsaved")).toHaveCount(0, { timeout: 15_000 });
+  const cmds = (await calls(page)).map((c) => c.cmd);
+  expect(cmds.filter((c) => c === "save_open_recording")).toHaveLength(1);
+  expect(cmds.filter((c) => c === "save_close")).toHaveLength(1);
+  await expect(page.locator(".status-toast")).toHaveText("Recording saved");
+});
+
+test("the desktop app is told which recordings are unsaved, for its close warning", async ({ page }) => {
+  await desktopWithMic(page);
+  const lastList = async () =>
+    (await calls(page)).filter((c) => c.cmd === "set_unsaved_recordings").at(-1)?.args?.names;
+  // At startup: nothing unsaved.
+  await expect.poll(lastList).toEqual([]);
+  await recordToMemory(page);
+  await expect.poll(lastList).toEqual([expect.stringMatching(/^batcap_\d{8}_\d{6}\.wav$/)]);
+  await page.locator(".badge-btn.unsaved").click();
+  await expect.poll(lastList).toEqual([]);
 });
