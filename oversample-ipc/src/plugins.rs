@@ -202,6 +202,37 @@ pub struct UsbDeviceInfoResult {
     pub sample_rates: Vec<i32>,
     #[serde(default)]
     pub endpoints: Vec<UsbEndpointEntry>,
+    /// The name of each channel of the widest input setting, read from the
+    /// device's `iChannelNames` strings. Empty when the device names none or
+    /// a read failed.
+    #[serde(default, deserialize_with = "or_default")]
+    pub channel_names: Vec<String>,
+    /// A TASCAM Portacapture X8's reply to vendor request 0x58, the input
+    /// report (`oversample_core::audio::x8_report`), as a JSON array of the
+    /// reply's bytes (0 to 255). Only from an X8 whose reply starts with "X8"
+    /// and version 1, so absent on other devices and on stock firmware.
+    #[serde(default, deserialize_with = "or_default")]
+    pub x8_report: Option<Vec<u8>>,
+}
+
+/// Deserializes a field, or gives its default when the value has the wrong
+/// type (a null, or a number out of range), so that one bad optional field
+/// does not make the whole result fail to deserialize.
+fn or_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OrJunk<T> {
+        Value(T),
+        Junk(serde::de::IgnoredAny),
+    }
+    Ok(match OrJunk::<T>::deserialize(d)? {
+        OrJunk::Value(v) => v,
+        OrJunk::Junk(_) => T::default(),
+    })
 }
 
 /// Args for the native `usb_start_stream` command (Rust, not a plugin), sent
@@ -372,5 +403,28 @@ mod tests {
         assert_eq!(info.endpoints[0].channels, 8);
         assert!(info.endpoints[0].is_float);
         assert_eq!(info.sample_rates, vec![48_000, 192_000]);
+        // An older plugin sends neither channel names nor a report.
+        assert!(info.channel_names.is_empty());
+        assert_eq!(info.x8_report, None);
+    }
+
+    #[test]
+    fn usb_device_info_reads_channel_names_and_the_x8_report() {
+        let json = r#"{"deviceName":"d","uacVersion":2,
+            "channelNames":["Mix L","Mix R"],
+            "x8Report":[88,56,1,28,200,255]}"#;
+        let info: UsbDeviceInfoResult = serde_json::from_str(json).unwrap();
+        assert_eq!(info.channel_names, vec!["Mix L", "Mix R"]);
+        assert_eq!(info.x8_report, Some(vec![88, 56, 1, 28, 200, 255]));
+    }
+
+    #[test]
+    fn a_bad_channel_names_or_report_field_is_dropped_not_fatal() {
+        let json = r#"{"deviceName":"d","uacVersion":2,"sampleRates":[48000],
+            "channelNames":null,"x8Report":[88,-56,300]}"#;
+        let info: UsbDeviceInfoResult = serde_json::from_str(json).unwrap();
+        assert!(info.channel_names.is_empty());
+        assert_eq!(info.x8_report, None);
+        assert_eq!(info.sample_rates, vec![48_000]);
     }
 }

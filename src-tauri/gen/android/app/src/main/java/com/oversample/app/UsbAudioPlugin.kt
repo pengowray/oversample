@@ -48,6 +48,8 @@ private const val USB_SUBCLASS_AUDIOSTREAMING = 2
 // CS_INTERFACE descriptor subtypes (Audio Class)
 private const val UAC_HEADER = 0x01
 private const val UAC1_FORMAT_TYPE = 0x02
+// Under audio control (same value as FORMAT_TYPE, which is under audio streaming).
+private const val UAC_INPUT_TERMINAL = 0x02
 private const val UAC2_CLOCK_SOURCE = 0x0A
 
 // USB descriptor types
@@ -68,8 +70,27 @@ private const val USB_DIR_OUT_STANDARD_INTERFACE = 0x01
 private const val USB_REQUEST_SET_INTERFACE = 11
 private const val DEVICE_TO_HOST_CLASS_ENDPOINT = 0xA2
 
+// Standard GET_DESCRIPTOR(string), read straight from the device.
+private const val DEVICE_TO_HOST_STANDARD_DEVICE = 0x80
+private const val USB_REQUEST_GET_DESCRIPTOR = 6
+private const val DESC_TYPE_STRING = 3
+private const val LANG_EN_US = 0x0409
+private const val STRING_TIMEOUT_MS = 100
+// The most channel names read from one device.
+private const val MAX_CHANNEL_NAMES = 32
+
 // Known device vendors
 private const val VENDOR_WILDLIFE_ACOUSTICS = 0x2926 // Wildlife Acoustics, Inc.
+private const val VENDOR_TASCAM = 0x0644
+private const val PRODUCT_PORTACAPTURE_X8 = 0x8074
+
+// The input report of an X8 on the patched firmware (batchi-tascam-oversample-colab
+// HOMEBREW.md, "Channel names and an input report over USB"): vendor request 0x58,
+// device to host, wValue 1. The reply starts with "X8" and the report version.
+private const val DEVICE_TO_HOST_VENDOR_DEVICE = 0xC0
+private const val X8_REQUEST_REPORT = 0x58
+private const val X8_REPORT_MAX_LEN = 64
+private const val X8_REPORT_TIMEOUT_MS = 200
 
 // EMT2 quirks: Wildlife Acoustics Echo Meter Touch 2 sends oversized USB packets
 // (771 bytes when descriptor declares 515) and sends frames sized for 288 kHz
@@ -397,6 +418,26 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                 endpointsArray.put(epObj)
             }
             result.put("endpoints", endpointsArray)
+
+            // Names of the channels of the widest input setting. When a read fails,
+            // channelNames is empty and the call still succeeds.
+            val channelNames = JSONArray()
+            try {
+                for (name in readChannelNames(connection, audioInfo.endpoints)) {
+                    channelNames.put(name)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Channel names not read: ${e.message}")
+            }
+            result.put("channelNames", channelNames)
+
+            if (device.vendorId == VENDOR_TASCAM && device.productId == PRODUCT_PORTACAPTURE_X8) {
+                try {
+                    readX8Report(connection)?.let { result.put("x8Report", it) }
+                } catch (e: Exception) {
+                    Log.w(TAG, "X8 input report not read: ${e.message}")
+                }
+            }
 
             // EMT2 detection for frontend display
             val emt2 = isEmt2Device(device)
@@ -853,7 +894,12 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         val interfaceNumber: Int,
         val alternateSetting: Int,
         /** The endpoint's bInterval. */
-        val interval: Int
+        val interval: Int,
+        /**
+         * UAC2 iChannelNames for this setting's channels: the string index of the first
+         * channel's name, the next channels at the next indices. 0 when it names none.
+         */
+        val channelNamesIndex: Int = 0
     )
 
     data class AudioDeviceInfo(
@@ -899,6 +945,10 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         // Set by an input data endpoint, cleared once its class-specific descriptor records it, so
         // an output or feedback endpoint's class-specific descriptor records nothing.
         var inputEndpointPending = false
+        // UAC2 Input Terminals by terminal ID: (iChannelNames, bNrChannels).
+        val terminalChannelNames = mutableMapOf<Int, Pair<Int, Int>>()
+        // iChannelNames for the streaming setting being parsed.
+        var currentChannelNamesIndex = 0
 
         var offset = 0
         while (offset < raw.size) {
@@ -927,6 +977,7 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                         currentInterfaceNumber = bInterfaceNumber
                         currentAlternateSetting = bAlternateSetting
                         currentIsFloat = false
+                        currentChannelNamesIndex = 0
                         inAudioControl = bInterfaceClass == USB_CLASS_AUDIO &&
                                 bInterfaceSubClass == USB_SUBCLASS_AUDIOCONTROL
 
@@ -958,6 +1009,16 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                                 uacVersion = 1
                             }
                             Log.d(TAG, "UAC header bcdADC=0x${bcdADC.toString(16)} -> UAC$uacVersion")
+                        }
+
+                        // UAC2 Input Terminal (17 bytes): bTerminalID at 3, bNrChannels at 8,
+                        // iChannelNames at 13. (A UAC1 Input Terminal is 12 bytes.)
+                        if (inAudioControl && uacVersion == 2 &&
+                            bDescriptorSubtype == UAC_INPUT_TERMINAL && bLength >= 17) {
+                            val bTerminalId = raw[offset + 3].toInt() and 0xFF
+                            val bNrChannels = raw[offset + 8].toInt() and 0xFF
+                            val iChannelNames = raw[offset + 13].toInt() and 0xFF
+                            terminalChannelNames[bTerminalId] = Pair(iChannelNames, bNrChannels)
                         }
 
                         // UAC2 Clock Source (subtype 0x0A)
@@ -1040,6 +1101,16 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                             currentChannels = if (bLength >= 11) raw[offset + 10].toInt() and 0xFF else 1
                             // bmFormats (4 bytes from offset 6), bit 2: IEEE_FLOAT.
                             currentIsFloat = bLength >= 10 && (raw[offset + 6].toInt() and 0x04) != 0
+                            // iChannelNames at offset 15. When 0, the terminal it links to
+                            // (bTerminalLink, offset 3) may name the channels, but only if it
+                            // has as many channels as this setting.
+                            val asNames = if (bLength >= 16) raw[offset + 15].toInt() and 0xFF else 0
+                            val linked = terminalChannelNames[raw[offset + 3].toInt() and 0xFF]
+                            currentChannelNamesIndex = when {
+                                asNames != 0 -> asNames
+                                linked != null && linked.second == currentChannels -> linked.first
+                                else -> 0
+                            }
                         }
 
                         // UAC2 Format Type I (subtype 0x02 under audio streaming, UAC2)
@@ -1120,7 +1191,8 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                                 sampleRateSettable = sampleRateSettable,
                                 interfaceNumber = currentInterfaceNumber,
                                 alternateSetting = currentAlternateSetting,
-                                interval = lastInterval
+                                interval = lastInterval,
+                                channelNamesIndex = currentChannelNamesIndex
                             ))
                         }
                     }
@@ -1158,6 +1230,79 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             sampleRates = sampleRates.sorted(),
             endpoints = endpoints
         )
+    }
+
+    /**
+     * The names of the widest input setting's channels, read from the device with
+     * GET_DESCRIPTOR(string) at the setting's iChannelNames and the indices after it.
+     * Empty when the setting names none or any read fails.
+     */
+    private fun readChannelNames(
+        connection: UsbDeviceConnection,
+        endpoints: List<AudioEndpointInfo>
+    ): List<String> {
+        val inputs = endpoints.filter { (it.address and 0x80) != 0 }
+        val widest = inputs.maxOfOrNull { it.channels } ?: return emptyList()
+        val first = inputs.firstOrNull { it.channels == widest && it.channelNamesIndex != 0 }
+            ?.channelNamesIndex ?: return emptyList()
+        if (widest < 1 || widest > MAX_CHANNEL_NAMES || first + widest - 1 > 255) return emptyList()
+        val names = mutableListOf<String>()
+        for (i in 0 until widest) {
+            val name = readStringDescriptor(connection, first + i) ?: return emptyList()
+            names.add(name)
+        }
+        Log.i(TAG, "Channel names from string $first: $names")
+        return names
+    }
+
+    /** One string descriptor in US English, or null when it can't be read or is blank. */
+    private fun readStringDescriptor(connection: UsbDeviceConnection, index: Int): String? {
+        val buf = ByteArray(255)
+        val n = connection.controlTransfer(
+            DEVICE_TO_HOST_STANDARD_DEVICE,
+            USB_REQUEST_GET_DESCRIPTOR,
+            (DESC_TYPE_STRING shl 8) or index,
+            LANG_EN_US,
+            buf,
+            buf.size,
+            STRING_TIMEOUT_MS
+        )
+        if (n < 2) return null
+        val len = minOf(n, buf[0].toInt() and 0xFF)
+        if (len < 2 || (buf[1].toInt() and 0xFF) != DESC_TYPE_STRING) return null
+        // UTF-16LE after the 2-byte header; an odd last byte is dropped.
+        val text = String(buf, 2, (len - 2) and 1.inv(), Charsets.UTF_16LE)
+        return text.trim { it.isWhitespace() || it == '\u0000' }.ifEmpty { null }
+    }
+
+    /**
+     * A Portacapture X8's input report, as its bytes (0 to 255), when the reply starts
+     * with "X8" and version 1. A stock X8 may answer with other bytes, so any other reply
+     * returns null.
+     */
+    private fun readX8Report(connection: UsbDeviceConnection): JSONArray? {
+        val buf = ByteArray(X8_REPORT_MAX_LEN)
+        val n = connection.controlTransfer(
+            DEVICE_TO_HOST_VENDOR_DEVICE,
+            X8_REQUEST_REPORT,
+            1,
+            0,
+            buf,
+            buf.size,
+            X8_REPORT_TIMEOUT_MS
+        )
+        if (n < 3) return null
+        val b0 = buf[0].toInt() and 0xFF
+        val b1 = buf[1].toInt() and 0xFF
+        val version = buf[2].toInt() and 0xFF
+        if (b0 != 0x58 || b1 != 0x38 || version != 1) {
+            Log.i(TAG, "X8 vendor request 0x58: no report ($n bytes)")
+            return null
+        }
+        val bytes = JSONArray()
+        for (i in 0 until n) bytes.put(buf[i].toInt() and 0xFF)
+        Log.i(TAG, "X8 input report: $n bytes")
+        return bytes
     }
 
     /**

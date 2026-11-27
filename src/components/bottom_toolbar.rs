@@ -28,6 +28,7 @@ use crate::state::{
     AppState, Bar, ChannelMode, LayerPanel, MicStrategy, PlayStartMode, PlaybackMode, RecordMode,
 };
 use leptos::prelude::*;
+use oversample_core::audio::channel_labels::ChannelLabels;
 use oversample_core::erased_sort::SortErased;
 use wasm_bindgen::prelude::*;
 
@@ -1026,8 +1027,8 @@ pub fn BottomToolbar() -> impl IntoView {
                                             Some(n) => {
                                                 // Read here so another device with the same channel
                                                 // count gets its own channel names.
-                                                let device = state.mic.device_name().get();
-                                                view! { <WideChannelRow channels=n device=device /> }.into_any()
+                                                let labels = wide_picker_labels(&state, n);
+                                                view! { <WideChannelRow channels=n labels=labels /> }.into_any()
                                             }
                                             None => view! {
                                         <div class="layer-panel-slider-row het-text-row">
@@ -1167,15 +1168,28 @@ fn wide_picker_channels(state: &AppState) -> Option<u32> {
     (n > 2).then_some(n)
 }
 
+/// The channel names for the Channels row of a device with `channels`
+/// channels: the names a USB device reported (raw USB only), then the
+/// built-in names for the mic's device name, or `None`.
+fn wide_picker_labels(state: &AppState, channels: u32) -> Option<ChannelLabels> {
+    use crate::state::MicBackend;
+    let device = state.mic.device_name().get();
+    let reported = match state.mic.backend().get() {
+        Some(MicBackend::RawUsb) | None => state.mic.usb_channel_names().get(),
+        Some(MicBackend::Cpal) | Some(MicBackend::Browser) => Vec::new(),
+    };
+    oversample_core::audio::channel_labels::device_channel_labels(
+        &reported,
+        device.as_deref().unwrap_or(""),
+        channels,
+    )
+}
+
 /// The text of one Channels option for 0-based channels: "5 and 6 (stereo)",
 /// or on a device with named channels "Input 3 and 4 (stereo), USB channels 5
 /// and 6". A native `<select>` can't style part of an option, so the numbers
 /// follow the name as plain text.
-fn channel_option_text(
-    labels: Option<&oversample_core::audio::channel_labels::ChannelLabels>,
-    picked: &[u32],
-    mode: &str,
-) -> String {
+fn channel_option_text(labels: Option<&ChannelLabels>, picked: &[u32], mode: &str) -> String {
     let numbers = match picked {
         [a, b] => format!("{} and {}", a + 1, b + 1),
         [a] => format!("{}", a + 1),
@@ -1196,11 +1210,11 @@ fn channel_option_text(
 
 /// The Channels row for a device with more than 2 channels: each pair
 /// (1 and 2, 3 and 4, ...) in stereo, channels 1 and 2 averaged into one, or
-/// one channel in mono. A known device (`channel_labels`) shows its own
-/// channel names with the numbers after them; any other device shows numbers
+/// one channel in mono. A device with channel names (`wide_picker_labels`)
+/// shows them with the numbers after them; any other device shows numbers
 /// only. With nothing saved, channels 1 and 2 in stereo.
 #[component]
-fn WideChannelRow(channels: u32, device: Option<String>) -> impl IntoView {
+fn WideChannelRow(channels: u32, labels: Option<ChannelLabels>) -> impl IntoView {
     let state = expect_context::<AppState>();
     // The option value: the pick as saved ("5,6", "5" or "avg"), or "1,2"
     // when nothing usable is saved.
@@ -1224,10 +1238,16 @@ fn WideChannelRow(channels: u32, device: Option<String>) -> impl IntoView {
         crate::state::set_channel_pick(&state, &device, crate::state::parse_channel_pick(&val));
         restart_listening(state);
     };
-    let labels = device
-        .and_then(|name| oversample_core::audio::channel_labels::channel_labels(&name, channels));
-    let pairs: Vec<u32> = (3..channels).step_by(2).collect();
-    let singles: Vec<u32> = (1..=channels).collect();
+    let labels = labels.as_ref();
+    let first_pair = channel_option_text(labels, &[0, 1], "stereo");
+    let first_pair_averaged = channel_option_text(labels, &[0, 1], "averaged, mono");
+    let pairs: Vec<(u32, String)> = (3..channels)
+        .step_by(2)
+        .map(|a| (a, channel_option_text(labels, &[a - 1, a], "stereo")))
+        .collect();
+    let singles: Vec<(u32, String)> = (1..=channels)
+        .map(|a| (a, channel_option_text(labels, &[a - 1], "mono")))
+        .collect();
     view! {
         <div class="layer-panel-slider-row het-text-row">
             <label style="font-size: 11px;" title="Channels used for listening and recording. The live spectrogram shows left and right averaged.">"Channels"</label>
@@ -1235,28 +1255,28 @@ fn WideChannelRow(channels: u32, device: Option<String>) -> impl IntoView {
                 on:change=on_change
                 prop:value=current
             >
-                <option value="1,2" selected=move || current() == "1,2">{channel_option_text(labels, &[0, 1], "stereo")}</option>
-                <option value="avg" selected=move || current() == "avg">{channel_option_text(labels, &[0, 1], "averaged, mono")}</option>
+                <option value="1,2" selected=move || current() == "1,2">{first_pair}</option>
+                <option value="avg" selected=move || current() == "avg">{first_pair_averaged}</option>
                 {(!pairs.is_empty()).then(|| view! {
                     <optgroup label="Other stereo pairs (left, right)">
-                        {pairs.into_iter().map(|a| {
+                        {pairs.into_iter().map(|(a, text)| {
                             let value = format!("{},{}", a, a + 1);
                             let v = value.clone();
                             view! {
                                 <option value=value selected=move || current() == v>
-                                    {channel_option_text(labels, &[a - 1, a], "stereo")}
+                                    {text}
                                 </option>
                             }
                         }).collect::<Vec<_>>()}
                     </optgroup>
                 })}
                 <optgroup label="Single channels (mono)">
-                    {singles.into_iter().map(|a| {
+                    {singles.into_iter().map(|(a, text)| {
                         let value = a.to_string();
                         let v = value.clone();
                         view! {
                             <option value=value selected=move || current() == v>
-                                {channel_option_text(labels, &[a - 1], "mono")}
+                                {text}
                             </option>
                         }
                     }).collect::<Vec<_>>()}
@@ -1269,11 +1289,12 @@ fn WideChannelRow(channels: u32, device: Option<String>) -> impl IntoView {
 #[cfg(test)]
 mod channel_option_tests {
     use super::channel_option_text;
-    use oversample_core::audio::channel_labels::channel_labels;
+    use oversample_core::audio::channel_labels::{channel_labels, device_channel_labels};
 
     #[test]
     fn a_known_device_shows_its_channel_names_then_the_numbers() {
         let x8 = channel_labels("Portacapture X8", 8);
+        let x8 = x8.as_ref();
         assert_eq!(
             channel_option_text(x8, &[4, 5], "stereo"),
             "Input 3 and 4 (stereo), USB channels 5 and 6"
@@ -1285,6 +1306,41 @@ mod channel_option_tests {
         assert_eq!(
             channel_option_text(x8, &[1], "mono"),
             "Mix R (mono), USB channel 2"
+        );
+    }
+
+    #[test]
+    fn a_device_s_own_names_are_used_over_the_built_in_ones() {
+        let names: Vec<String> = [
+            "Mix L",
+            "Mix R",
+            "Input 1: INT MIC",
+            "Input 2: INT MIC",
+            "Input 3: EXT MIC",
+            "Input 4: EXT MIC",
+            "Input 5: LINE IN",
+            "Input 6: EXT MIC",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let x8 = device_channel_labels(&names, "Portacapture X8", 8);
+        let x8 = x8.as_ref();
+        assert_eq!(
+            channel_option_text(x8, &[4, 5], "stereo"),
+            "Input 3 and 4: EXT MIC (stereo), USB channels 5 and 6"
+        );
+        assert_eq!(
+            channel_option_text(x8, &[6, 7], "stereo"),
+            "Input 5: LINE IN and Input 6: EXT MIC (stereo), USB channels 7 and 8"
+        );
+        assert_eq!(
+            channel_option_text(x8, &[0, 1], "averaged, mono"),
+            "Mix L and R averaged (mono), USB channels 1 and 2"
+        );
+        assert_eq!(
+            channel_option_text(x8, &[2], "mono"),
+            "Input 1: INT MIC (mono), USB channel 3"
         );
     }
 

@@ -2420,6 +2420,12 @@ pub struct MicState {
     /// Channels in the widest input setting of the connected USB device, as
     /// read from its descriptors. 0 when not known.
     pub usb_device_channels: u32,
+    /// The names the connected USB device gives its channels (one for each of
+    /// `usb_device_channels`), read once per plug. Empty when it names none.
+    pub usb_channel_names: Vec<String>,
+    /// The input report of a connected Portacapture X8 on the patched
+    /// firmware, read once per plug. `None` on any other device.
+    pub usb_x8_report: Option<oversample_core::audio::x8_report::X8Report>,
     /// Information about the selected mic device.
     pub device_info: Option<MicDeviceInfo>,
     /// When true, mic input is processed but the speakers stay silent.
@@ -3076,6 +3082,8 @@ impl AppState {
                     .map(|(device, v)| (device, parse_channel_pick(&v)))
                     .collect(),
                 usb_device_channels: 0,
+                usb_channel_names: Vec::new(),
+                usb_x8_report: None,
                 cpal_device_channels: 0,
                 device_info: None,
                 mute_output: false,

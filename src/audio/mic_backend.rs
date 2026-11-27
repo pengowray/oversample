@@ -16,7 +16,9 @@ use crate::tauri_bridge::{
     tauri_invoke_args, tauri_invoke_no_args, tauri_invoke_typed_args, tauri_invoke_typed_no_args,
 };
 use leptos::prelude::*;
-use oversample_core::audio::channel_labels::{channel_labels, ChannelLabels};
+use oversample_core::audio::channel_labels::{
+    channel_labels, device_channel_labels, ChannelLabels,
+};
 use oversample_core::audio::live_schedule::{plan_live_schedule, DEFAULT_MAX_LOOKAHEAD_SECS};
 use oversample_core::audio::stereo::{interleave_stereo, mix_stereo, split_stereo};
 use std::cell::RefCell;
@@ -1596,7 +1598,7 @@ async fn open_cpal(state: &AppState) -> bool {
                 info.device_channels as u32,
                 None,
                 false,
-                channel_labels(&info.device_name, info.device_channels as u32),
+                channel_labels(&info.device_name, info.device_channels as u32).as_ref(),
             )));
         }
     } else if channels == 2 && info.channels != 2 {
@@ -1828,7 +1830,14 @@ async fn open_usb(state: &AppState) -> bool {
             p.device_channels,
             Some(p.rate),
             saved_pick.averaged,
-            channel_labels(&info.product_name, p.device_channels),
+            device_channel_labels(
+                dev_info
+                    .as_ref()
+                    .map_or(&[][..], |d| d.channel_names.as_slice()),
+                &info.product_name,
+                p.device_channels,
+            )
+            .as_ref(),
         )));
     }
     let (channels, stereo) = usb_stream_channels(
@@ -2124,6 +2133,26 @@ pub async fn query_usb_device_info(
     };
     let channels = oversample_core::audio::usb_alt::usb_max_channels(&usb_alts(&dev));
     state.mic.usb_device_channels().set(channels);
+    if !dev.channel_names.is_empty() {
+        state.log_debug(
+            "info",
+            format!("USB channel names: {}", dev.channel_names.join(", ")),
+        );
+    }
+    state.mic.usb_channel_names().set(dev.channel_names.clone());
+    let report = dev.x8_report.as_deref().and_then(|bytes| {
+        match oversample_core::audio::x8_report::parse_x8_report(bytes) {
+            Ok(r) => {
+                state.log_debug("info", format!("X8 input report: {r:?}"));
+                Some(r)
+            }
+            Err(e) => {
+                state.log_debug("warn", format!("X8 input report not read: {e:?}"));
+                None
+            }
+        }
+    });
+    state.mic.usb_x8_report().set(report);
     USB_DEVICE_INFO.with(|c| *c.borrow_mut() = Some(dev.clone()));
     Some(dev)
 }
@@ -2132,6 +2161,8 @@ pub async fn query_usb_device_info(
 pub fn forget_usb_device_info(state: &AppState) {
     USB_DEVICE_INFO.with(|c| *c.borrow_mut() = None);
     state.mic.usb_device_channels().set(0);
+    state.mic.usb_channel_names().set(Vec::new());
+    state.mic.usb_x8_report().set(None);
 }
 
 async fn close_usb(state: &AppState) {
@@ -2325,8 +2356,27 @@ mod usb_channel_tests {
         );
         let x8 = super::channel_labels("Portacapture X8", 8);
         assert_eq!(
-            channel_fallback_message(&[4, 5], 8, Some(384_000), false, x8),
+            channel_fallback_message(&[4, 5], 8, Some(384_000), false, x8.as_ref()),
             "Input 3 and 4 (USB channels 5 and 6) not available at 384\u{a0}kHz on this device. Using Mix L and R (stereo)."
+        );
+        // A patched X8 names each input's source.
+        let names: Vec<String> = [
+            "Mix L",
+            "Mix R",
+            "Input 1: INT MIC",
+            "Input 2: INT MIC",
+            "Input 3: EXT MIC",
+            "Input 4: EXT MIC",
+            "Input 5: LINE IN",
+            "Input 6: EXT MIC",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let reported = super::device_channel_labels(&names, "Portacapture X8", 8);
+        assert_eq!(
+            channel_fallback_message(&[4, 5], 8, Some(384_000), true, reported.as_ref()),
+            "Input 3 and 4: EXT MIC (USB channels 5 and 6) not available at 384\u{a0}kHz on this device. Using Mix L and R averaged (mono)."
         );
     }
 

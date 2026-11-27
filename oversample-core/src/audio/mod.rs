@@ -8,4 +8,5 @@ pub mod stereo;
 pub mod usb_alt;
 pub mod wamd;
 pub mod wav;
+pub mod x8_report;
 pub mod zc;
