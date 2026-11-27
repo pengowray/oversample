@@ -1,3 +1,4 @@
+mod alsa_sources;
 mod cmd_annotations;
 mod cmd_audio_files;
 mod cmd_denoise;

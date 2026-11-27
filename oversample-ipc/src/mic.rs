@@ -12,12 +12,51 @@ pub struct SampleRateRange {
     pub format: String,
 }
 
+/// Rates below this are not real recording rates. Some hosts report a range
+/// starting at 1 Hz for a device that converts to any rate.
+pub const MIN_LISTED_RATE: u32 = 1000;
+
+/// Rates offered in lists, in this order of preference when a range allows
+/// any rate between its ends.
+pub const COMMON_RATES: [u32; 7] = [44100, 48000, 96000, 192000, 256000, 384000, 500000];
+
+/// The rates to list for a device: each range's ends and the common rates
+/// inside it, lowest first, leaving out anything below [`MIN_LISTED_RATE`].
+pub fn listed_rates(ranges: &[SampleRateRange]) -> Vec<u32> {
+    let mut rates = std::collections::BTreeSet::new();
+    for range in ranges {
+        rates.insert(range.min);
+        rates.insert(range.max);
+        for r in COMMON_RATES {
+            if r >= range.min && r <= range.max {
+                rates.insert(r);
+            }
+        }
+    }
+    rates
+        .into_iter()
+        .filter(|&r| r >= MIN_LISTED_RATE)
+        .collect()
+}
+
 /// One enumerated audio input device.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeviceInfo {
     pub name: String,
     pub is_default: bool,
     pub sample_rate_ranges: Vec<SampleRateRange>,
+    /// The device is a USB audio interface (Linux sound cards; false when not
+    /// known).
+    #[serde(default)]
+    pub is_usb: bool,
+    /// The maker of a USB device, such as "Roland", when known.
+    #[serde(default)]
+    pub manufacturer: Option<String>,
+    /// For the system default and the sound-server devices on Linux: the
+    /// name of the device the sound server records from, such as
+    /// "DUO-CAPTURE EX".
+    #[serde(default)]
+    pub source_name: Option<String>,
 }
 
 /// Result of the `mic_list_devices` command.
@@ -50,6 +89,13 @@ pub struct MicInfo {
     /// chooses which of them are recorded. 0 when not known.
     #[serde(default)]
     pub device_channels: u16,
+    /// The opened device is a USB audio interface (Linux; false when not
+    /// known).
+    #[serde(default)]
+    pub is_usb: bool,
+    /// The maker of a USB device, when known.
+    #[serde(default)]
+    pub manufacturer: Option<String>,
 }
 
 /// Result of `mic_stop_recording` / `usb_stop_recording` (metadata only).

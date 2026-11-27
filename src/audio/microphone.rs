@@ -168,17 +168,7 @@ pub async fn query_cpal_supported_rates(state: &AppState) {
         Some(name) => &d.name == name,
         None => d.is_default,
     }) {
-        let mut rates = std::collections::BTreeSet::new();
-        for range in &dev.sample_rate_ranges {
-            rates.insert(range.min);
-            rates.insert(range.max);
-            for &r in &[44100u32, 48000, 96000, 192000, 256000, 384000, 500000] {
-                if r >= range.min && r <= range.max {
-                    rates.insert(r);
-                }
-            }
-        }
-        let rates_vec: Vec<u32> = rates.into_iter().collect();
+        let rates_vec = oversample_ipc::mic::listed_rates(&dev.sample_rate_ranges);
         if !rates_vec.is_empty() {
             state.mic.supported_rates().set(rates_vec);
         }
@@ -231,7 +221,7 @@ pub async fn query_mic_info(state: &AppState) {
                 state.mic.cpal_device_channels().set(device_channels as u32);
                 if let Some(dev) = chosen {
                     let n = dev.name.to_lowercase();
-                    let conn = if n.contains("usb") {
+                    let conn = if dev.is_usb || n.contains("usb") {
                         "USB"
                     } else if n.contains("bluetooth") || n.contains("bt ") {
                         "Bluetooth"
@@ -239,7 +229,14 @@ pub async fn query_mic_info(state: &AppState) {
                         "Internal"
                     };
                     state.mic.connection_type().set(Some(conn.to_string()));
-                    state.mic.device_name().set(Some(dev.name.clone()));
+                    // The system default is named after the device behind it
+                    // when the backend knows it (Linux sound servers).
+                    let name = match (&selected, &dev.source_name) {
+                        (None, Some(source)) => source.clone(),
+                        _ => dev.name.clone(),
+                    };
+                    state.mic.device_name().set(Some(name));
+                    state.mic.manufacturer().set(dev.manufacturer.clone());
 
                     let mut max_rate: u32 = 0;
                     let mut format_str: Option<String> = None;

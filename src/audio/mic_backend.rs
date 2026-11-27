@@ -1622,10 +1622,12 @@ async fn open_cpal(state: &AppState) -> bool {
     state.mic.bits_per_sample().set(bits_per_sample);
     state.mic.is_float().set(info.is_float);
     state.mic.device_name().set(Some(device_name.clone()));
-    state.mic.manufacturer().set(None);
+    state.mic.manufacturer().set(info.manufacturer.clone());
     // Determine mic interface from the cpal host backend.
-    // The host_label comes from the Tauri backend via mic_info.
-    let conn_type = if device_name.to_lowercase().contains("usb") {
+    // The host_label comes from the Tauri backend via mic_info. On Linux the
+    // backend says when the device is USB, since a USB card is named after
+    // its product ("DUO-CAPTURE EX"), which need not contain "USB".
+    let conn_type = if info.is_usb || device_name.to_lowercase().contains("usb") {
         "USB"
     } else if device_name.to_lowercase().contains("bluetooth")
         || device_name.to_lowercase().contains("bt ")
