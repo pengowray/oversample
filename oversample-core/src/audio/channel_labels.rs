@@ -94,21 +94,32 @@ pub fn pair_name(left: &str, right: &str) -> String {
 /// then INPUT 1 to 6 taken before the faders. From the audio descriptors and
 /// the audio routine, as recorded in the X8 firmware project's HOMEBREW.md
 /// ("What the X8 presents over USB"). The 2-channel settings send the mix,
-/// except at 192 kHz on patch builds B263 to B275, which sent INPUT 3 and 4.
-/// Whether MANUAL's INPUT SELECT changes what channels 3 to 8 carry is not
-/// known. A patched X8 reports its own names, with each input's source.
+/// MANUAL's INPUT SELECT does not change what channels 3 to 8 carry. A patched
+/// X8 reports its own names, with each input's source.
 const PORTACAPTURE_X8: &[&str] = &[
     "Mix L", "Mix R", "Input 1", "Input 2", "Input 3", "Input 4", "Input 5", "Input 6",
 ];
+
+/// TASCAM Portacapture X6: the stereo mix, then inputs 1 to 4, at 96 kHz at
+/// most. From the Reference Manual V2.00, "Portacapture X6 USB audio channel
+/// assignments". Channels 3 and 4 carry the MIC/EXT IN jack in place of inputs
+/// 1 and 2 while INPUT SELECT has it chosen for tracks 1 and 2.
+const PORTACAPTURE_X6: &[&str] = &["Mix L", "Mix R", "Input 1", "Input 2", "Input 3", "Input 4"];
 
 /// Each known device: its names in lower case, and its channels. A name with
 /// a space matches anywhere in the device's name; a name without one must be
 /// the whole name.
 ///
-/// The X8's USB product name has not been read from a unit. Its firmware has
-/// "Portacapture X8", "TASCAM Portacapture X8" and "X8" as text, so all three
-/// are accepted.
-const DEVICES: &[(&[&str], &[&str])] = &[(&["portacapture x8", "x8"], PORTACAPTURE_X8)];
+/// The X8's USB product string is "Portacapture X8" (read from its V2.03
+/// firmware). "X8" is accepted too, for a host that shortens the name.
+///
+/// Not here on purpose: the Sound Devices MixPre recorders. Since firmware
+/// v5.00 the user chooses what each USB channel carries, and before it the
+/// mix was on the last two channels, so no fixed names are right.
+const DEVICES: &[(&[&str], &[&str])] = &[
+    (&["portacapture x8", "x8"], PORTACAPTURE_X8),
+    (&["portacapture x6"], PORTACAPTURE_X6),
+];
 
 /// The built-in channel names for a device, found by its name (the USB
 /// product name, or the name the operating system gives it) and its channel
@@ -170,6 +181,14 @@ mod tests {
         // Not one of the device's pairs.
         assert_eq!(x8.pick(&[1, 2]), None);
         assert_eq!(x8.pick(&[8]), None);
+    }
+
+    #[test]
+    fn the_x6_has_four_inputs_after_the_mix() {
+        let x6 = channel_labels("Portacapture X6", 6).unwrap();
+        assert_eq!(x6.pick(&[0, 1]).as_deref(), Some("Mix L and R"));
+        assert_eq!(x6.pick(&[4, 5]).as_deref(), Some("Input 3 and 4"));
+        assert!(channel_labels("Portacapture X6", 8).is_none());
     }
 
     #[test]
