@@ -1,4 +1,3 @@
-use oversample_core::erased_sort::SortErased;
 use super::file_badges;
 use super::file_groups;
 use crate::audio::playback;
@@ -11,6 +10,7 @@ use crate::state::{AppState, FileSortMode, LoadedFile};
 use crate::types::PreviewImage;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use oversample_core::erased_sort::SortErased;
 use std::collections::HashMap;
 use wasm_bindgen::{Clamped, JsCast};
 use web_sys::{
@@ -505,7 +505,10 @@ pub(super) fn FilesPanel() -> impl IntoView {
                                 files.get(i).map(|f| (f.read_only, f.had_sidecar)).unwrap_or((false, false))
                             })
                         };
-                        let show_unsaved = is_rec && !is_tauri;
+                        // On Tauri a finished "To memory" recording is unsaved;
+                        // one in progress is not marked (see the toolbar).
+                        let show_unsaved = is_rec
+                            && (!is_tauri || state.mic.live_file_idx().get_untracked() != Some(i));
                         let name_title = name.clone();
                         let has_download = is_rec && !is_tauri;
                         let file_view = view! {

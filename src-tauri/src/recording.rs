@@ -201,6 +201,9 @@ pub struct RecordingBuffer {
     /// Raw POSIX fd for writing directly to shared storage (Android ContentResolver).
     /// Set before recording starts, consumed on stop.
     pub shared_fd: Option<i32>,
+    /// The recording was started as "To memory": nothing is written to disk
+    /// at stop. Set at record start.
+    pub to_memory: bool,
     /// Effective-bit-depth detection (I24/I32 streams only). `detect_or` is the
     /// bitwise OR of every raw i32 sample seen on the current stream; the count
     /// of low bits that are ALWAYS zero across all samples (its trailing zeros)
@@ -250,6 +253,7 @@ impl RecordingBuffer {
             pending_f32: Vec::new(),
             total_samples: 0,
             shared_fd: None,
+            to_memory: false,
             detect_or: 0,
             detect_samples: 0,
             float_fit_bits: 16,
@@ -1533,6 +1537,46 @@ pub fn encode_native_wav(buffer: &RecordingBuffer) -> Result<Vec<u8>, String> {
     Ok(wav)
 }
 
+/// What `mic_stop_recording` and `usb_stop_recording` do with a recording.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StopPlan {
+    /// The samples were streamed to a `.part` file during the recording:
+    /// finish that file and move it to the save folder (or shared storage).
+    FinishStreamedFile,
+    /// "To memory": hand the samples to the frontend and write nothing.
+    KeepInMemory,
+    /// A "To file" recording that could not stream to disk (no `.part` file
+    /// could be made): write the WAV from memory at stop.
+    WriteFileFromMemory,
+}
+
+/// The plan for a stopped recording. `streamed` is whether a `.part` writer
+/// was installed at start; once it was, the samples are on disk and no longer
+/// in memory, so the file is finished even for a "To memory" recording.
+pub fn stop_plan(streamed: bool, to_memory: bool) -> StopPlan {
+    match (streamed, to_memory) {
+        (true, _) => StopPlan::FinishStreamedFile,
+        (false, true) => StopPlan::KeepInMemory,
+        (false, false) => StopPlan::WriteFileFromMemory,
+    }
+}
+
+/// The samples of a recording kept in memory, for the frontend: the values a
+/// WAV of this recording holds ([`RecordingBuffer::data_bytes`] in
+/// `write_format`, read back as f32), interleaved L/R when stereo. Written
+/// again at the same depth, 16- and 24-bit PCM and float samples give the same
+/// bytes as the native WAV. 32-bit PCM keeps only f32 precision (24 bits).
+pub fn memory_samples(buffer: &RecordingBuffer) -> Vec<f32> {
+    use oversample_core::audio::wav::{decode_pcm, SampleEncoding};
+    let encoding = match buffer.write_format {
+        NativeSampleFormat::I16 => SampleEncoding::I16,
+        NativeSampleFormat::I24 => SampleEncoding::I24,
+        NativeSampleFormat::I32 => SampleEncoding::I32,
+        NativeSampleFormat::F32 => SampleEncoding::F32,
+    };
+    decode_pcm(&buffer.data_bytes(), encoding)
+}
+
 /// Optional GPS location for GUANO metadata.
 pub struct RecordingLocation {
     pub latitude: f64,
@@ -1574,6 +1618,28 @@ pub fn guano_mic_fields(
     }
 }
 
+/// The mic fields [`build_tauri_guano`] writes: the name and make only for a
+/// USB mic, and "Internal" as the name of any other mic.
+pub fn guano_mic(params: &TauriGuanoParams) -> oversample_ipc::mic::RecordingMic {
+    let is_usb = params
+        .connection_type
+        .as_deref()
+        .is_some_and(|c| c.contains("USB"));
+    oversample_ipc::mic::RecordingMic {
+        interface: params.connection_type.clone(),
+        name: if is_usb {
+            params.mic_name.clone()
+        } else {
+            Some("Internal".to_string())
+        },
+        make: if is_usb {
+            params.mic_make.clone()
+        } else {
+            None
+        },
+    }
+}
+
 /// Build GUANO metadata for a Tauri-side recording using the shared builder.
 /// `timestamp` is chrono::DateTime<chrono::Local> from the stop time;
 /// the actual recording start is computed by subtracting duration.
@@ -1590,28 +1656,12 @@ pub fn build_tauri_guano(
     let start_time = *timestamp - chrono::Duration::milliseconds((duration_secs * 1000.0) as i64);
     let ts = start_time.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
-    let is_usb = params
-        .connection_type
-        .as_deref()
-        .map(|c| c.contains("USB"))
-        .unwrap_or(false);
-
-    // For non-USB (internal) mics, mic_name = "Internal"
-    let mic_name = if is_usb {
-        params.mic_name.clone()
-    } else {
-        Some("Internal".to_string())
-    };
-
+    let mic = guano_mic(params);
     let extra = RecordingGuanoExtra {
-        mic_interface: params.connection_type.clone(),
-        mic_name,
+        mic_interface: mic.interface,
+        mic_name: mic.name,
         mic_audio_device: None, // Web Audio API only — not applicable to native
-        mic_make: if is_usb {
-            params.mic_make.clone()
-        } else {
-            None
-        },
+        mic_make: mic.make,
         loc_position: params.location.as_ref().map(|l| (l.latitude, l.longitude)),
         loc_elevation: params.location.as_ref().and_then(|l| l.elevation),
         loc_accuracy: params.location.as_ref().and_then(|l| l.accuracy),
@@ -1858,6 +1908,47 @@ mod tests {
             detected,
             write
         );
+        drop(m);
+    }
+
+    /// Hardware test: a "To memory" recording from a real mic, done the way
+    /// `mic_start_recording` and `mic_stop_recording` do it, writes no file and
+    /// hands over samples that a later save writes as the native WAV's bytes.
+    /// Run with `cargo test -p oversample-desktop to_memory_capture -- --ignored
+    /// --nocapture`; OVERSAMPLE_TEST_MIC=<row name> picks the device.
+    #[test]
+    #[ignore]
+    fn to_memory_capture() {
+        let name = std::env::var("OVERSAMPLE_TEST_MIC").ok();
+        let m = open_mic(0, name.as_deref(), 0, 2, &[], false).expect("open the mic");
+        start_emitter(m.buffer.clone(), m.emitter_stop.clone(), m.recovery.clone());
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        {
+            let mut buf = m.buffer.lock().unwrap();
+            buf.clear();
+            buf.to_memory = true;
+            buf.choose_write_format();
+            m.is_recording.store(true, Ordering::Relaxed);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        m.is_recording.store(false, Ordering::Relaxed);
+        // Recording to memory installs no recovery writer, so nothing reaches
+        // disk while recording either.
+        let streamed = m.recovery.writer.lock().unwrap().is_some();
+        let buf = m.buffer.lock().unwrap();
+        assert_eq!(stop_plan(streamed, buf.to_memory), StopPlan::KeepInMemory);
+        let samples = memory_samples(&buf);
+        println!(
+            "{}: {} frames x {} channels at {} Hz, written as {:?}",
+            m.device_name, buf.total_samples, buf.channels, buf.sample_rate, buf.write_format
+        );
+        assert!(buf.total_samples > 0);
+        assert_eq!(samples.len(), buf.total_samples * buf.channels as usize);
+        if buf.write_format != NativeSampleFormat::I32 {
+            assert_eq!(frontend_data_bytes(&buf), buf.data_bytes());
+        }
+        drop(buf);
+        m.emitter_stop.store(true, Ordering::Relaxed);
         drop(m);
     }
 
@@ -2206,14 +2297,14 @@ mod tests {
     }
 
     #[test]
-    fn streamed_and_to_memory_recordings_get_the_same_bytes() {
+    fn streamed_and_unstreamed_recordings_get_the_same_bytes() {
         let samples = vec![0x7FFF_FF00_u32 as i32, -0x1234_5600, 0x0000_0100, -0x100];
         let mut buf = i32_stream_with_24_bit_audio();
         buf.clear();
         let format = buf.choose_write_format();
         buf.samples_i32 = samples.clone();
 
-        // To memory: the whole WAV at stop.
+        // Not streamed: the whole WAV written from memory at stop.
         let wav = encode_native_wav(&buf).unwrap();
         let h = parse_wav_header(&wav).unwrap();
         assert_eq!((h.bits_per_sample, h.is_float, h.channels), (24, false, 2));
@@ -2226,6 +2317,101 @@ mod tests {
         assert_eq!(streamed_data, memory_data);
         assert_eq!(&streamed_data[..3], &[0xFF, 0xFF, 0x7F]);
         assert!(buf.samples_i32.is_empty());
+    }
+
+    #[test]
+    fn to_memory_writes_nothing_unless_it_was_streamed() {
+        assert_eq!(stop_plan(false, true), StopPlan::KeepInMemory);
+        assert_eq!(stop_plan(false, false), StopPlan::WriteFileFromMemory);
+        assert_eq!(stop_plan(true, false), StopPlan::FinishStreamedFile);
+        // A streamed recording's samples are on disk only.
+        assert_eq!(stop_plan(true, true), StopPlan::FinishStreamedFile);
+    }
+
+    #[test]
+    fn to_memory_survives_the_clear_at_record_start() {
+        let mut buf = RecordingBuffer::new(NativeSampleFormat::I16, 48_000, 1);
+        buf.to_memory = true;
+        buf.clear();
+        assert!(buf.to_memory);
+    }
+
+    /// The `data` bytes the frontend writes for a recording kept in memory:
+    /// `memory_samples` encoded at the depth `mic_stop_recording` reports, as
+    /// `wav_encoder::encode_wav_at` does.
+    fn frontend_data_bytes(buf: &RecordingBuffer) -> Vec<u8> {
+        use oversample_core::audio::wav::{encode_f32_samples, WavWriteFormat};
+        let fmt = WavWriteFormat::for_f32_samples(
+            buf.sample_rate,
+            buf.channels,
+            buf.write_format.bits_per_sample(),
+            buf.write_format.is_float(),
+        );
+        encode_f32_samples(&memory_samples(buf), &fmt)
+    }
+
+    #[test]
+    fn memory_samples_saved_later_give_the_native_wav_bytes() {
+        // 16-bit device, auto and forced to 12 bits (low 4 bits zeroed).
+        let mut i16_buf = RecordingBuffer::new(NativeSampleFormat::I16, 48_000, 2);
+        i16_buf.choose_write_format();
+        i16_buf.samples_i16 = vec![-32_768, -1, 0, 1, 12_345, 32_767];
+        assert_eq!(frontend_data_bytes(&i16_buf), i16_buf.data_bytes());
+        i16_buf.force_bits = Some(12);
+        i16_buf.choose_write_format();
+        assert_eq!(frontend_data_bytes(&i16_buf), i16_buf.data_bytes());
+        assert_eq!(&memory_samples(&i16_buf)[..2], &[-1.0, -16.0 / 32_768.0]);
+
+        // 24-bit audio in a 32-bit container, written as 24-bit.
+        let mut i32_buf = i32_stream_with_24_bit_audio();
+        i32_buf.clear();
+        assert_eq!(i32_buf.choose_write_format(), NativeSampleFormat::I24);
+        i32_buf.samples_i32 = vec![0x7FFF_FF00_u32 as i32, -0x1234_5600, 0x100, i32::MIN];
+        assert_eq!(frontend_data_bytes(&i32_buf), i32_buf.data_bytes());
+
+        // 24-bit device forced to 16 bits.
+        let mut i24_buf = RecordingBuffer::new(NativeSampleFormat::I24, 48_000, 1);
+        i24_buf.force_bits = Some(16);
+        assert_eq!(i24_buf.choose_write_format(), NativeSampleFormat::I16);
+        i24_buf.samples_i32 = vec![0x1234_5600, -0x0000_0100, i32::MIN];
+        assert_eq!(frontend_data_bytes(&i24_buf), i24_buf.data_bytes());
+
+        // Float stream on the 16-bit grid, on the 24-bit grid, and kept float.
+        let mut f16 = f32_stream_on_grid(1.0 / 32_768.0);
+        assert_eq!(f16.choose_write_format(), NativeSampleFormat::I16);
+        f16.samples_f32 = vec![-1.0, 1.0 / 32_768.0, 12_345.0 / 32_768.0];
+        assert_eq!(frontend_data_bytes(&f16), f16.data_bytes());
+        let mut f24 = f32_stream_on_grid(1.0 / 8_388_608.0);
+        assert_eq!(f24.choose_write_format(), NativeSampleFormat::I24);
+        f24.samples_f32 = vec![-1.0, 3.0 / 8_388_608.0];
+        assert_eq!(frontend_data_bytes(&f24), f24.data_bytes());
+        let mut float = f32_stream_on_grid(1.0 / 8_388_608.0);
+        float.note_f32_bits(&[0.1]);
+        assert_eq!(float.choose_write_format(), NativeSampleFormat::F32);
+        float.samples_f32 = vec![0.1, -0.333, 1.5];
+        assert_eq!(frontend_data_bytes(&float), float.data_bytes());
+    }
+
+    #[test]
+    fn guano_mic_names_only_a_usb_mic() {
+        let params = |interface: &str| TauriGuanoParams {
+            connection_type: Some(interface.to_string()),
+            location: None,
+            device_make: None,
+            device_model: None,
+            mic_name: Some("DUO-CAPTURE EX".to_string()),
+            mic_make: Some("Roland".to_string()),
+            app_version: "0".to_string(),
+            is_mobile: false,
+            preroll_secs: None,
+        };
+        let usb = guano_mic(&params("USB (UAC2)"));
+        assert_eq!(usb.name.as_deref(), Some("DUO-CAPTURE EX"));
+        assert_eq!(usb.make.as_deref(), Some("Roland"));
+        let alsa = guano_mic(&params("ALSA"));
+        assert_eq!(alsa.interface.as_deref(), Some("ALSA"));
+        assert_eq!(alsa.name.as_deref(), Some("Internal"));
+        assert_eq!(alsa.make, None);
     }
 
     #[test]

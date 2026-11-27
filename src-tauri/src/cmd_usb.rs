@@ -62,6 +62,7 @@ pub fn usb_start_recording(
     loc_elevation: Option<f64>,
     loc_accuracy: Option<f64>,
     enable_recovery: Option<bool>,
+    to_memory: Option<bool>,
     preroll_samples: Option<u32>,
 ) -> Result<(), String> {
     let usb = state.lock().map_err(|e| e.to_string())?;
@@ -73,6 +74,7 @@ pub fn usb_start_recording(
         let mut buf = s.buffer.lock().unwrap();
         buf.clear();
         buf.shared_fd = shared_fd;
+        buf.to_memory = to_memory.unwrap_or(false);
         let write_format = buf.choose_write_format();
         // Seed the pre-roll ring into the recording, then flip is_recording while
         // still holding the buffer lock so the isochronous thread appends live
@@ -102,7 +104,8 @@ pub fn usb_start_recording(
         loc_accuracy,
         enable_recovery,
     };
-    // The .part file is written in the same format as a to-memory WAV.
+    // The .part file is written in the same format as a recording kept in
+    // memory.
     if let Some(writer) =
         recovery::start_writer(&app, &args, write_format, s.sample_rate, channels, "batcap")
     {
@@ -132,7 +135,7 @@ pub fn usb_stop_recording(
     let s = usb.as_ref().ok_or("USB stream not open")?;
     s.is_recording.store(false, Ordering::Relaxed);
     let still_streaming = s.is_streaming.load(Ordering::Relaxed);
-    let (num_samples, sample_rate, channels, shared_fd, preroll_seeded, write_format) = {
+    let (num_samples, sample_rate, channels, shared_fd, preroll_seeded, write_format, to_memory) = {
         let mut buf = s.buffer.lock().unwrap();
         buf.warn_if_write_format_dropped_bits("usb_stop_recording");
         (
@@ -142,6 +145,7 @@ pub fn usb_stop_recording(
             buf.shared_fd.take(),
             buf.preroll_seeded,
             buf.write_format,
+            buf.to_memory,
         )
     };
     let bits_per_sample = write_format.bits_per_sample();
@@ -152,7 +156,7 @@ pub fn usb_stop_recording(
     // Take the recovery writer out. Done under the writer lock so the emitter
     // can't race us and flush between here and the final tail drain below.
     let recovery_writer = s.recovery.writer.lock().ok().and_then(|mut g| g.take());
-    let streaming_mode = recovery_writer.is_some();
+    let plan = recording::stop_plan(recovery_writer.is_some(), to_memory);
 
     if num_samples == 0 {
         if let Some(writer) = recovery_writer {
@@ -184,6 +188,8 @@ pub fn usb_stop_recording(
             channels,
             has_memory_samples: false,
             file_size_bytes: 0,
+            mic: None,
+            preroll_frames: preroll_seeded,
         });
     }
 
@@ -221,10 +227,39 @@ pub fn usb_stop_recording(
         preroll_secs: (preroll_seeded > 0 && sample_rate > 0)
             .then(|| preroll_seeded as f64 / sample_rate as f64),
     };
+    let mic_fields = recording::guano_mic(&guano_params);
+
+    if plan == recording::StopPlan::KeepInMemory {
+        // "To memory": nothing is written. Any shared-storage fd is closed
+        // unwritten when `shared_fd` drops (the frontend asks for none).
+        let samples = recording::memory_samples(&s.buffer.lock().unwrap());
+        drop(usb);
+        let has_memory_samples = !samples.is_empty();
+        *app.state::<crate::RecordedMemoryMutex>()
+            .inner()
+            .lock()
+            .unwrap() = samples;
+        return Ok(RecordingResult {
+            filename: String::new(),
+            saved_path: String::new(),
+            sample_rate,
+            bits_per_sample,
+            is_float,
+            duration_secs,
+            num_samples,
+            channels,
+            has_memory_samples,
+            file_size_bytes: 0,
+            mic: Some(mic_fields),
+            preroll_frames: preroll_seeded,
+        });
+    }
+
     let guano =
         recording::build_tauri_guano(sample_rate, num_samples, &filename, &now, &guano_params);
     let guano_text = guano.to_text();
 
+    let streaming_mode = plan == recording::StopPlan::FinishStreamedFile;
     let (saved_path, file_size_bytes, has_memory_samples) = if streaming_mode {
         // Streaming-to-disk: partial file has every flushed sample. Append
         // the tail + GUANO, patch the header, then move to destination.
@@ -255,8 +290,9 @@ pub fn usb_stop_recording(
         };
         (saved_path, final_size, false)
     } else {
-        // To-memory mode: encode the accumulated samples; stash them
-        // for the WASM finalizer to pull as raw bytes (mic_take_recorded_samples).
+        // A "To file" recording that could not stream to disk: encode the
+        // accumulated samples; also stash them for the WASM finalizer to pull
+        // as raw bytes (mic_take_recorded_samples).
         let samples_f32 = usb_audio::get_usb_samples_f32(s);
         let mut wav_data = usb_audio::encode_usb_wav(s)?;
         // All USB-state reads are done; release the UsbStreamMutex before the
@@ -269,7 +305,7 @@ pub fn usb_stop_recording(
             recording::write_wav_to_fd(fd, &wav_data)?;
             "shared://recording".to_string()
         } else {
-            let dirs = crate::save_folder::memory_dirs(&app)?;
+            let dirs = crate::save_folder::app_data_dirs(&app)?;
             let full_path = crate::save_folder::write_in(&dirs, &filename, &wav_data)?;
             filename = crate::save_folder::file_name_of(&full_path, filename);
             full_path.to_string_lossy().to_string()
@@ -293,6 +329,8 @@ pub fn usb_stop_recording(
         channels,
         has_memory_samples,
         file_size_bytes,
+        mic: Some(mic_fields),
+        preroll_frames: preroll_seeded,
     })
 }
 

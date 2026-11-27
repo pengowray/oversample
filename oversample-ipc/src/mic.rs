@@ -136,16 +136,32 @@ pub struct MicInfo {
     pub manufacturer: Option<String>,
 }
 
+/// The mic fields of a recording's GUANO metadata, as the native side writes
+/// them into a recording it saves.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RecordingMic {
+    /// `Oversample|Mic|Interface`: "ALSA", "WASAPI", "USB", "USB (UAC2)", ...
+    pub interface: Option<String>,
+    /// `Oversample|Mic|Name`, also `Model` for a USB mic. "Internal" for a mic
+    /// that is not USB.
+    pub name: Option<String>,
+    /// `Make`, for a USB mic whose maker is known.
+    pub make: Option<String>,
+}
+
 /// Result of `mic_stop_recording` / `usb_stop_recording` (metadata only).
 ///
-/// To-memory recordings keep the captured audio on the native side; when
-/// `has_memory_samples` is set the frontend fetches it as raw f32 bytes via the
-/// `mic_take_recorded_samples` command (an ArrayBuffer) rather than receiving it
-/// inline as a JSON array of floats. Those samples are interleaved L/R when
-/// `channels` is 2.
+/// A "To memory" recording is not written to disk: `saved_path` and
+/// `filename` are empty, `has_memory_samples` is set, and the frontend fetches
+/// the audio as raw f32 bytes via the `mic_take_recorded_samples` command (an
+/// ArrayBuffer) rather than receiving it inline as a JSON array of floats.
+/// Those samples are interleaved L/R when `channels` is 2.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RecordingResult {
+    /// The saved file's name. Empty when nothing was saved.
     pub filename: String,
+    /// Where the file was saved: a path, or `shared://recording` for Android
+    /// shared storage. Empty when nothing was saved.
     pub saved_path: String,
     pub sample_rate: u32,
     pub bits_per_sample: u16,
@@ -157,7 +173,16 @@ pub struct RecordingResult {
     /// True when the native side has stashed to-memory samples for pickup via
     /// `mic_take_recorded_samples`.
     pub has_memory_samples: bool,
+    /// Size of the saved file. 0 when nothing was saved.
     pub file_size_bytes: usize,
+    /// The mic fields the native side puts in the GUANO metadata of a file it
+    /// saves, so a recording the frontend saves later gets the same ones.
+    #[serde(default)]
+    pub mic: Option<RecordingMic>,
+    /// Frames of pre-roll at the start of the recording (audio from before
+    /// Record was pressed).
+    #[serde(default)]
+    pub preroll_frames: usize,
 }
 
 /// Result of `mic_get_status`.
@@ -209,6 +234,10 @@ pub struct StartRecordingArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_fd: Option<i32>,
     pub enable_recovery: bool,
+    /// "To memory": the recording stays in memory and no file is written at
+    /// stop. The frontend sends `enable_recovery: false` with it.
+    #[serde(default)]
+    pub to_memory: bool,
     /// Per-device bit-depth override: force the recording to this effective depth
     /// (12/16/24/32) instead of the auto-detected one. `None` = Auto.
     #[serde(skip_serializing_if = "Option::is_none")]

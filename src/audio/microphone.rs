@@ -803,6 +803,12 @@ fn tauri_result_to_params(rec: crate::audio::mic_backend::TauriRecordingResult) 
         is_float: rec.is_float,
         saved_path: rec.saved_path,
         file_size: rec.file_size_bytes,
+        native: rec
+            .mic
+            .map(|mic| crate::audio::live_recording::NativeRecordingMeta {
+                mic,
+                preroll_frames: rec.preroll_frames,
+            }),
     }
 }
 
@@ -826,6 +832,7 @@ fn handle_stop_result(result: StopResult, state: &AppState) {
                     is_float,
                     saved_path: String::new(),
                     file_size: None,
+                    native: None,
                 },
                 *state,
             );
