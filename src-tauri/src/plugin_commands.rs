@@ -28,6 +28,7 @@ pub const PLUGIN_COMMANDS: &[(&str, &[&str])] = &[
             "listUsbDevices",
             "requestUsbPermission",
             "getUsbDeviceInfo",
+            "getUsbInputState",
             "openUsbDevice",
             "closeUsbDevice",
             "requestAudioPermission",

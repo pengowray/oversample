@@ -2157,6 +2157,76 @@ pub async fn query_usb_device_info(
     Some(dev)
 }
 
+/// Ask the connected USB device again for its channel names and, on a patched
+/// X8, its input report, and show them if they changed. They change when the
+/// user changes an input's source or phantom power on the device. Called when
+/// the mic menu opens its Channels row. Unlike `query_usb_device_info` this
+/// claims no interface, so it also runs while the device is streaming.
+///
+/// Nothing is asked of a device that gave neither names nor a report when it
+/// was plugged in, so a stock X8 and other devices never get these requests
+/// again. A reply with a different number of names, or without a report, is a
+/// failed read: what is shown stays.
+pub async fn refresh_usb_input_state(state: &AppState) {
+    let Some(device_name) = USB_DEVICE_INFO.with(|c| {
+        c.borrow()
+            .as_ref()
+            .filter(|d| !d.channel_names.is_empty() || d.x8_report.is_some())
+            .map(|d| d.device_name.clone())
+    }) else {
+        return;
+    };
+    let fresh = match tauri_invoke_typed_args::<_, oversample_ipc::plugins::UsbInputStateResult>(
+        "plugin:usb-audio|getUsbInputState",
+        &oversample_ipc::plugins::UsbDeviceNameArgs {
+            device_name: device_name.clone(),
+        },
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            state.log_debug("warn", format!("getUsbInputState failed: {e}"));
+            return;
+        }
+    };
+    // The device may have been unplugged, or another plugged in, meanwhile.
+    let changed = USB_DEVICE_INFO.with(|c| {
+        let mut c = c.borrow_mut();
+        let dev = c.as_mut().filter(|d| d.device_name == device_name)?;
+        let mut names = None;
+        if fresh.channel_names.len() == dev.channel_names.len()
+            && fresh.channel_names != dev.channel_names
+        {
+            dev.channel_names = fresh.channel_names.clone();
+            names = Some(fresh.channel_names);
+        }
+        let mut report = None;
+        if fresh.x8_report.is_some() && fresh.x8_report != dev.x8_report {
+            dev.x8_report = fresh.x8_report.clone();
+            report = fresh.x8_report;
+        }
+        Some((names, report))
+    });
+    let Some((names, report)) = changed else {
+        return;
+    };
+    if let Some(names) = names {
+        state.log_debug(
+            "info",
+            format!("USB channel names now: {}", names.join(", ")),
+        );
+        state.mic.usb_channel_names().set(names);
+    }
+    if let Some(Ok(r)) = report
+        .as_deref()
+        .map(oversample_core::audio::x8_report::parse_x8_report)
+    {
+        state.log_debug("info", format!("X8 input report now: {r:?}"));
+        state.mic.usb_x8_report().set(Some(r));
+    }
+}
+
 /// Forget the USB device's descriptors (it was unplugged).
 pub fn forget_usb_device_info(state: &AppState) {
     USB_DEVICE_INFO.with(|c| *c.borrow_mut() = None);

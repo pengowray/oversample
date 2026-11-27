@@ -27,7 +27,7 @@ pub struct ChannelChoice {
     pub name: String,
     /// Where the sound comes from, when the device says: "EXT MIC, 48 V".
     pub source: Option<String>,
-    /// "USB 5, 6", on a device with names.
+    /// "USB ch 5, 6", on a device with names.
     pub usb: Option<String>,
     /// Recorded as one channel.
     pub mono: bool,
@@ -58,7 +58,7 @@ pub fn channel_choices(
             Some(p) => (
                 p.name,
                 p.source,
-                Some(format!("USB {}", numbers.join(", "))),
+                Some(format!("USB ch {}", numbers.join(", "))),
             ),
             None if picked.len() == 1 => (format!("Channel {}", numbers[0]), None, None),
             None => (format!("Channels {}", numbers.join(" and ")), None, None),
@@ -100,6 +100,13 @@ pub fn WideChannelRow(
 ) -> impl IntoView {
     let state = expect_context::<AppState>();
     let open = RwSignal::new(false);
+
+    // The mic menu has just opened this row: ask the device again what its
+    // inputs are set to. When the answer differs this row is made again with
+    // the new names, and that row asks once more and gets the same answer.
+    wasm_bindgen_futures::spawn_local(async move {
+        crate::audio::mic_backend::refresh_usb_input_state(&state).await;
+    });
     let anchor = NodeRef::<leptos::html::Div>::new();
 
     // The pick as saved ("5,6", "5" or "avg"), or "1,2" when nothing usable
@@ -235,20 +242,20 @@ mod tests {
         assert_eq!(stereo.len(), 4);
         assert_eq!(
             row(&stereo[0]),
-            ("1,2", "Mix L and R", None, Some("USB 1, 2"))
+            ("1,2", "Mix L and R", None, Some("USB ch 1, 2"))
         );
         assert_eq!(
             row(&stereo[2]),
-            ("5,6", "Input 3 and 4", None, Some("USB 5, 6"))
+            ("5,6", "Input 3 and 4", None, Some("USB ch 5, 6"))
         );
         assert_eq!(stereo[2].button_text(), "Input 3 and 4 (stereo)");
         assert_eq!(mono.len(), 9);
         assert_eq!(
             row(&mono[0]),
-            ("avg", "Mix L and R averaged", None, Some("USB 1, 2"))
+            ("avg", "Mix L and R averaged", None, Some("USB ch 1, 2"))
         );
         assert_eq!(mono[0].button_text(), "Mix L and R averaged (mono)");
-        assert_eq!(row(&mono[2]), ("2", "Mix R", None, Some("USB 2")));
+        assert_eq!(row(&mono[2]), ("2", "Mix R", None, Some("USB ch 2")));
         assert_eq!(mono[2].button_text(), "Mix R (mono)");
     }
 
@@ -271,7 +278,7 @@ mod tests {
         let (stereo, mono) = channel_choices(8, Some(&x8), None);
         assert_eq!(
             row(&stereo[2]),
-            ("5,6", "Input 3 and 4", Some("EXT MIC"), Some("USB 5, 6"))
+            ("5,6", "Input 3 and 4", Some("EXT MIC"), Some("USB ch 5, 6"))
         );
         assert_eq!(
             row(&stereo[3]),
@@ -279,12 +286,12 @@ mod tests {
                 "7,8",
                 "Input 5 and 6",
                 Some("5: LINE IN; 6: EXT MIC"),
-                Some("USB 7, 8")
+                Some("USB ch 7, 8")
             )
         );
         assert_eq!(
             row(&mono[3]),
-            ("3", "Input 1", Some("INT MIC"), Some("USB 3"))
+            ("3", "Input 1", Some("INT MIC"), Some("USB ch 3"))
         );
 
         // An input report's sources are used in place of the names' own.

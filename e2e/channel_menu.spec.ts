@@ -55,19 +55,19 @@ test("a patched X8 lists each input with its source, phantom voltage and USB num
   await expect(menu).toBeVisible();
   await expect(menu.locator(".layer-panel-title")).toHaveText(["Stereo", "Mono"]);
   expect(await rows(page)).toEqual([
-    "Mix L and R | USB 1, 2",
-    "Input 1 and 2 | INT MIC | USB 3, 4",
-    "Input 3 and 4 | EXT MIC, 48 V | USB 5, 6",
-    "Input 5 and 6 | 5: LINE IN; 6: EXT MIC, 48 V | USB 7, 8",
-    "Mix L and R averaged | USB 1, 2",
-    "Mix L | USB 1",
-    "Mix R | USB 2",
-    "Input 1 | INT MIC | USB 3",
-    "Input 2 | INT MIC | USB 4",
-    "Input 3 | EXT MIC, 48 V | USB 5",
-    "Input 4 | EXT MIC, 48 V | USB 6",
-    "Input 5 | LINE IN | USB 7",
-    "Input 6 | EXT MIC, 48 V | USB 8",
+    "Mix L and R | USB ch 1, 2",
+    "Input 1 and 2 | INT MIC | USB ch 3, 4",
+    "Input 3 and 4 | EXT MIC, 48 V | USB ch 5, 6",
+    "Input 5 and 6 | 5: LINE IN; 6: EXT MIC, 48 V | USB ch 7, 8",
+    "Mix L and R averaged | USB ch 1, 2",
+    "Mix L | USB ch 1",
+    "Mix R | USB ch 2",
+    "Input 1 | INT MIC | USB ch 3",
+    "Input 2 | INT MIC | USB ch 4",
+    "Input 3 | EXT MIC, 48 V | USB ch 5",
+    "Input 4 | EXT MIC, 48 V | USB ch 6",
+    "Input 5 | LINE IN | USB ch 7",
+    "Input 6 | EXT MIC, 48 V | USB ch 8",
   ]);
 
   // Choosing a row closes the list, keeps the mic menu open and saves the

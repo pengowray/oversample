@@ -106,6 +106,11 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
     private var pendingAudioPermissionInvoke: Invoke? = null
     private var activeConnection: UsbDeviceConnection? = null
     private var activeDevice: UsbDevice? = null
+    // Where the last device asked by getUsbDeviceInfo keeps its channel names: the
+    // device, the first string index and the count. getUsbInputState reads them again.
+    private var channelNamesDevice: String? = null
+    private var channelNamesFirst: Int = 0
+    private var channelNamesCount: Int = 0
     private var webViewRef: android.webkit.WebView? = null
 
     companion object {
@@ -422,9 +427,17 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
             // Names of the channels of the widest input setting. When a read fails,
             // channelNames is empty and the call still succeeds.
             val channelNames = JSONArray()
+            channelNamesDevice = null
             try {
-                for (name in readChannelNames(connection, audioInfo.endpoints)) {
-                    channelNames.put(name)
+                val range = channelNamesRange(audioInfo.endpoints)
+                if (range != null) {
+                    val names = readChannelNames(connection, range.first, range.second)
+                    for (name in names) channelNames.put(name)
+                    if (names.isNotEmpty()) {
+                        channelNamesDevice = device.deviceName
+                        channelNamesFirst = range.first
+                        channelNamesCount = range.second
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Channel names not read: ${e.message}")
@@ -462,6 +475,65 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                 }
             }
             connection.close()
+        }
+    }
+
+    /**
+     * Read a device's channel names and, on a Portacapture X8, its input report again.
+     * They change when the user changes an input's source or phantom power on the
+     * device. Only control requests to the device are sent, and no interface is claimed,
+     * so this is safe while the device is streaming: the open stream's connection is
+     * used then. Call it only for a device that gave names or a report to
+     * getUsbDeviceInfo. channelNames is empty and x8Report absent when a read fails.
+     */
+    @Command
+    fun getUsbInputState(invoke: Invoke) {
+        val args = invoke.parseArgs(DeviceNameArgs::class.java)
+        val usbManager = activity.getSystemService(Context.USB_SERVICE) as UsbManager
+        val device = usbManager.deviceList[args.deviceName]
+
+        if (device == null) {
+            invoke.reject("Device not found: ${args.deviceName}")
+            return
+        }
+
+        if (!usbManager.hasPermission(device)) {
+            invoke.reject("No permission for device: ${args.deviceName}")
+            return
+        }
+
+        val streaming = activeConnection?.takeIf { activeDevice?.deviceName == device.deviceName }
+        val connection = streaming ?: usbManager.openDevice(device)
+        if (connection == null) {
+            invoke.reject("Failed to open device: ${args.deviceName}")
+            return
+        }
+
+        try {
+            val result = JSObject()
+            val channelNames = JSONArray()
+            if (channelNamesDevice == device.deviceName && channelNamesCount > 0) {
+                try {
+                    for (name in readChannelNames(connection, channelNamesFirst, channelNamesCount)) {
+                        channelNames.put(name)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Channel names not read: ${e.message}")
+                }
+            }
+            result.put("channelNames", channelNames)
+            if (device.vendorId == VENDOR_TASCAM && device.productId == PRODUCT_PORTACAPTURE_X8) {
+                try {
+                    readX8Report(connection)?.let { result.put("x8Report", it) }
+                } catch (e: Exception) {
+                    Log.w(TAG, "X8 input report not read: ${e.message}")
+                }
+            }
+            invoke.resolve(result)
+        } catch (e: Exception) {
+            invoke.reject("Error reading USB input state: ${e.message}")
+        } finally {
+            if (streaming == null) connection.close()
         }
     }
 
@@ -1246,13 +1318,9 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
      */
     private fun readChannelNames(
         connection: UsbDeviceConnection,
-        endpoints: List<AudioEndpointInfo>
+        first: Int,
+        widest: Int
     ): List<String> {
-        val inputs = endpoints.filter { (it.address and 0x80) != 0 }
-        val widest = inputs.maxOfOrNull { it.channels } ?: return emptyList()
-        val first = inputs.firstOrNull { it.channels == widest && it.channelNamesIndex != 0 }
-            ?.channelNamesIndex ?: return emptyList()
-        if (widest < 1 || widest > MAX_CHANNEL_NAMES || first + widest - 1 > 255) return emptyList()
         val names = mutableListOf<String>()
         for (i in 0 until widest) {
             val name = readStringDescriptor(connection, first + i) ?: return emptyList()
@@ -1260,6 +1328,19 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
         }
         Log.i(TAG, "Channel names from string $first: $names")
         return names
+    }
+
+    /**
+     * The first string index and the count of the channel names of the widest input
+     * setting, or null when that setting names none.
+     */
+    private fun channelNamesRange(endpoints: List<AudioEndpointInfo>): Pair<Int, Int>? {
+        val inputs = endpoints.filter { (it.address and 0x80) != 0 }
+        val widest = inputs.maxOfOrNull { it.channels } ?: return null
+        val first = inputs.firstOrNull { it.channels == widest && it.channelNamesIndex != 0 }
+            ?.channelNamesIndex ?: return null
+        if (widest < 1 || widest > MAX_CHANNEL_NAMES || first + widest - 1 > 255) return null
+        return Pair(first, widest)
     }
 
     /** One string descriptor in US English, or null when it can't be read or is blank. */

@@ -8,6 +8,7 @@
     "usb-audio:allow-listUsbDevices",
     "usb-audio:allow-requestUsbPermission",
     "usb-audio:allow-getUsbDeviceInfo",
+    "usb-audio:allow-getUsbInputState",
     "usb-audio:allow-openUsbDevice",
     "usb-audio:allow-closeUsbDevice",
     "usb-audio:allow-requestAudioPermission",

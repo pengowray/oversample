@@ -215,6 +215,18 @@ pub struct UsbDeviceInfoResult {
     pub x8_report: Option<Vec<u8>>,
 }
 
+/// `plugin:usb-audio|getUsbInputState` result: the channel names and the X8
+/// input report read again, as in [`UsbDeviceInfoResult`]. `channel_names` is
+/// empty and `x8_report` absent when a read failed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsbInputStateResult {
+    #[serde(default, deserialize_with = "or_default")]
+    pub channel_names: Vec<String>,
+    #[serde(default, deserialize_with = "or_default")]
+    pub x8_report: Option<Vec<u8>>,
+}
+
 /// Deserializes a field, or gives its default when the value has the wrong
 /// type (a null, or a number out of range), so that one bad optional field
 /// does not make the whole result fail to deserialize.

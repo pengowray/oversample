@@ -5964,6 +5964,8 @@ a.open-link-btn {
     border: none;
     border-radius: 4px;
     color: #999;
+    /* A button does not take the app's font by itself (it was Arial). */
+    font-family: inherit;
     font-size: 12px;
     cursor: pointer;
     white-space: nowrap;
