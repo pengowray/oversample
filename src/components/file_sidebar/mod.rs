@@ -4,6 +4,7 @@ pub(crate) mod export_section;
 pub(crate) mod file_badges;
 pub(crate) mod file_groups;
 pub(crate) mod files_panel;
+mod guano_labels;
 mod project_panel;
 pub(crate) use project_panel::{
     add_open_files_to_project, put_a2o_clip_in_project, save_project_async,
