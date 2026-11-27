@@ -11605,11 +11605,14 @@ body.hfr-nudge-on .hfr-switch {
     color: inherit;
     font-size: inherit;
 }
-/* One line where the mic menu can grow to fit it. On a phone the menu is as
-   wide as the screen allows, so there the text wraps. */
+/* One line up to 240px, and the mic menu grows to fit it. Longer text (a
+   device's own long channel names) wraps, or the mic menu would run past the
+   edge of the window. On a phone the menu is as wide as the screen allows, so
+   there the text wraps as it needs to. */
 @media (not (pointer: coarse)) and (min-width: 641px) {
     .channel-menu-btn-text {
-        white-space: nowrap;
+        width: max-content;
+        max-width: 240px;
     }
 }
 .layer-panel-slider-row .channel-menu-btn .channel-menu-btn-caret {
