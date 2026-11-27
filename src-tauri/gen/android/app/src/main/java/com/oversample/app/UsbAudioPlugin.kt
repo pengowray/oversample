@@ -1017,7 +1017,11 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                             bDescriptorSubtype == UAC_INPUT_TERMINAL && bLength >= 17) {
                             val bTerminalId = raw[offset + 3].toInt() and 0xFF
                             val bNrChannels = raw[offset + 8].toInt() and 0xFF
-                            val iChannelNames = raw[offset + 13].toInt() and 0xFF
+                            // bmChannelConfig (9 to 12) not 0 gives some channels standard
+                            // positions, and iChannelNames then names only the others, so
+                            // the strings would not line up with the channel numbers.
+                            val positions = (9..12).any { raw[offset + it].toInt() != 0 }
+                            val iChannelNames = if (positions) 0 else raw[offset + 13].toInt() and 0xFF
                             terminalChannelNames[bTerminalId] = Pair(iChannelNames, bNrChannels)
                         }
 
@@ -1104,7 +1108,10 @@ class UsbAudioPlugin(private val activity: Activity) : Plugin(activity) {
                             // iChannelNames at offset 15. When 0, the terminal it links to
                             // (bTerminalLink, offset 3) may name the channels, but only if it
                             // has as many channels as this setting.
-                            val asNames = if (bLength >= 16) raw[offset + 15].toInt() and 0xFF else 0
+                            // As for the terminal: no names when bmChannelConfig (11 to 14)
+                            // gives channels standard positions.
+                            val asNames = if (bLength >= 16 && (11..14).all { raw[offset + it].toInt() == 0 })
+                                raw[offset + 15].toInt() and 0xFF else 0
                             val linked = terminalChannelNames[raw[offset + 3].toInt() and 0xFF]
                             currentChannelNamesIndex = when {
                                 asNames != 0 -> asNames
