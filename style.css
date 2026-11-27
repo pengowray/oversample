@@ -11723,7 +11723,9 @@ body.hfr-nudge-on .hfr-switch {
 }
 .path-row-value {
     font-size: 11px;
-    color: #bbb;
+    /* The colour of the notes in the panel: a little brighter than the
+       values beside their labels, which are short. */
+    color: #999;
     line-height: 1.4;
     padding-top: 2px;
 }

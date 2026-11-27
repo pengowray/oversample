@@ -31,7 +31,7 @@ pub fn RecordingFolderSettings() -> impl IntoView {
         let note = if let Some(chosen) = &f.unusable_custom {
             Some(("drive-note drive-warning", unusable_note(chosen)))
         } else if f.music_missing && !f.is_custom {
-            Some(("drive-note", MUSIC_MISSING_NOTE.to_string()))
+            Some(("drive-note drive-warning", MUSIC_MISSING_NOTE.to_string()))
         } else {
             None
         }
