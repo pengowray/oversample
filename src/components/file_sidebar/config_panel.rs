@@ -330,8 +330,13 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                 </div>
             </div>
 
+            // Android app only. Every setting here needs the Android
+            // geolocation plugin (GeolocationPlugin.kt): the position put in
+            // recordings, the Wi-Fi network for privacy zones, and the phone
+            // model. The desktop app registers that plugin with no commands,
+            // so on Linux, Windows and macOS none of these did anything.
             {move || {
-                if state.is_tauri {
+                if state.is_tauri && crate::tauri_bridge::is_android() {
                     view! {
                         <div class="setting-group">
                             <div class="setting-group-title">"Location"</div>
