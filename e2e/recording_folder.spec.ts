@@ -150,8 +150,10 @@ async function openFile(page: Page) {
 /** At phone width the file sidebar covers the page: close it. */
 async function hideSidebar(page: Page) {
   if (page.viewportSize()!.width < 768) {
-    const hide = page.getByTitle("Hide sidebar");
-    if (await hide.count()) await hide.first().click();
+    // The sidebar can close by itself after a resize, so the button may go.
+    const hide = page.getByTitle("Hide sidebar").first();
+    if (await hide.isVisible()) await hide.click({ timeout: 5_000 }).catch(() => {});
+    await expect(page.locator(".sidebar:not(.right-sidebar):not(.collapsed)")).toHaveCount(0);
   }
 }
 
@@ -266,6 +268,26 @@ for (const [label, viewport] of [
       await shot(page, `record-menu-${label}.png`);
       await page.getByRole("button", { name: "To memory", exact: true }).click();
       await expect(line).toHaveCount(0);
+    });
+
+    test("the Record menu shows the default folder when the chosen one can't be used", async ({ page }) => {
+      await desktop(page, wav(48_000, 2), {
+        file: SHORT_FILE,
+        custom: LONG_FOLDER,
+        usable: false,
+        musicMissing: false,
+      });
+      await hideSidebar(page);
+      await page.getByTitle("Record settings").first().click();
+      await page.getByRole("button", { name: "To file", exact: true }).click();
+      const line = page.getByTestId("rec-folder-line");
+      await expect(line).toHaveClass(/rec-folder-warn/);
+      await expect(line.locator(".rec-folder-path")).toHaveText("~/Music/Oversample");
+      await expect(line).toHaveAttribute(
+        "title",
+        `${DEFAULT}\nCan't save to ${LONG_FOLDER}, so new recordings are saved in the default folder for now.`,
+      );
+      await shot(page, `record-menu-unusable-${label}.png`);
     });
 
     test("Settings says when there is no Music folder", async ({ page }) => {

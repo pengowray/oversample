@@ -11714,6 +11714,7 @@ body.hfr-nudge-on .hfr-switch {
 .path-row .copy-btn-spacious {
     display: inline-block;
     min-height: 24px;
+    width: 24px;
 }
 /* 24 px high, the smallest size that is easy to press. */
 .path-row .path-open-btn {
