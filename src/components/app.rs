@@ -175,6 +175,8 @@ pub fn App() -> impl IntoView {
         }
     }
 
+    crate::page_zoom::restore();
+
     // Startup: scan for orphaned crash-recovery recordings and finalize them.
     // Cheap no-op if the recovery dir is empty or missing.
     if state.is_tauri {
@@ -1121,6 +1123,10 @@ pub fn App() -> impl IntoView {
     let state_kb = state;
     let handler =
         Closure::<dyn Fn(web_sys::KeyboardEvent)>::new(move |ev: web_sys::KeyboardEvent| {
+            // Desktop app: Ctrl with = / - / 0 zooms the page, also from a text box.
+            if crate::page_zoom::handle_key(&ev) {
+                return;
+            }
             // Ignore if focus is on an input/select/textarea
             if let Some(target) = ev.target() {
                 if let Ok(el) = target.dyn_into::<web_sys::HtmlElement>() {

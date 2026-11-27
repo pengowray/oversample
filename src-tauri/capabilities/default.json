@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:webview:allow-set-webview-zoom",
     "usb-audio:allow-listUsbDevices",
     "usb-audio:allow-requestUsbPermission",
     "usb-audio:allow-getUsbDeviceInfo",
