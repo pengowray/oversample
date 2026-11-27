@@ -2,7 +2,7 @@
 
 Oversample is a bat call analysis tool. Open a recording (WAV, FLAC, OGG or MP3) to see its spectrogram and waveform, and listen to ultrasonic calls slowed down or shifted into the range of human hearing. It can also record from a microphone, including USB ultrasonic microphones.
 
-All decoding and analysis happens on your own device. Recordings are not uploaded.
+All decoding and analysis happens on your own device, and recordings are not uploaded. The one exception is optional: if you sign in to Google Drive, Oversample saves copies of your annotations and projects to your own Drive.
 
 ## Use it
 
