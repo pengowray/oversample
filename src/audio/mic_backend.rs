@@ -1613,10 +1613,9 @@ async fn open_cpal(state: &AppState) -> bool {
         info.device_name
     };
     let host_label: Option<String> = (!info.host_name.is_empty()).then_some(info.host_name);
-    let supported_rates = info.supported_sample_rates;
-    if !supported_rates.is_empty() {
-        state.mic.supported_rates().set(supported_rates);
-    }
+    // `info.supported_sample_rates` is not used for the Max sample rate list:
+    // on Android it lists rates AAudio converts to. The list takes
+    // `hardware_rates` from the device list (`query_mic_info`).
 
     state.mic.sample_rate().set(sample_rate);
     state.mic.bits_per_sample().set(bits_per_sample);

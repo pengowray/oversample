@@ -2351,8 +2351,11 @@ pub struct MicState {
     /// Maximum seconds of listen buffer to capture on long-press record.
     pub preroll_buffer_secs: u32,
     pub mode: MicMode,
-    /// Actual rates from cpal device query.
-    pub supported_rates: Vec<u32>,
+    /// The rates the chosen native mic's hardware records at, lowest first,
+    /// from the device list's `hardware_rates`. Empty when not known (no mic
+    /// queried yet, a host that lists converted rates, Direct USB, browser).
+    /// The Max sample rate list offers only these when there are any.
+    pub hardware_rates: Vec<u32>,
     /// File index of the currently-recording live file (None if not recording).
     pub live_file_idx: Option<usize>,
     /// Generation counter for the live processing loop (older loops self-exit).
@@ -3049,7 +3052,7 @@ impl AppState {
                 } else {
                     MicMode::Browser
                 },
-                supported_rates: Vec::new(),
+                hardware_rates: Vec::new(),
                 live_file_idx: None,
                 processing_gen: 0,
                 preroll_samples: 0,

@@ -83,6 +83,17 @@ pub fn sample_rate_khz(hz: u32) -> String {
     with_unit(&sample_rate_khz_value(hz))
 }
 
+/// A sample rate in the short form of the microphone lists (the Choose
+/// Microphone rows and the Max sample rate list): "44.1k", "48k", "384k".
+/// A rate under 1 kHz is written in Hz with no unit.
+pub fn sample_rate_short(hz: u32) -> String {
+    if hz >= 1000 {
+        format!("{}k", sample_rate_khz_value(hz))
+    } else {
+        hz.to_string()
+    }
+}
+
 /// `text` with the space between a number and its "kHz" or "Hz" changed to a
 /// no-break space, so the unit stays on its number's line when the text
 /// wraps: "set at 31,9 kHz" keeps "31,9 kHz" together.
@@ -128,6 +139,14 @@ fn unit_after(chars: &[char], from: usize) -> Option<Option<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_sample_rates() {
+        assert_eq!(sample_rate_short(44_100), "44.1k");
+        assert_eq!(sample_rate_short(48_000), "48k");
+        assert_eq!(sample_rate_short(384_000), "384k");
+        assert_eq!(sample_rate_short(800), "800");
+    }
 
     #[test]
     fn khz_values_round_and_drop_trailing_zeros() {

@@ -1,4 +1,3 @@
-use oversample_core::erased_sort::SortErased;
 use crate::state::store_fields::*;
 use crate::state::{
     AppState, MicAcquisitionState, MicBackend, MicDeviceInfo, MicPendingAction, MicStrategy,
@@ -6,6 +5,7 @@ use crate::state::{
 use crate::tauri_bridge::tauri_invoke_typed_no_args;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use oversample_core::erased_sort::SortErased;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
@@ -27,6 +27,8 @@ fn select_device(
     state.mic.strategy().set(MicStrategy::Selected);
     state.mic.selected_device().set(selected);
     state.mic.device_info().set(device_info);
+    // Known again once `query_mic_info` has listed the new device.
+    state.mic.hardware_rates().set(Vec::new());
     state.mic.show_chooser().set(false);
     state.mic.acquisition_state().set(MicAcquisitionState::Idle);
     crate::audio::microphone::stop_all(state);
@@ -62,7 +64,11 @@ struct CpalDevice {
     name: String,
     is_default: bool,
     rates_summary: String,
+    /// "24-bit" when the hardware's depth is known, otherwise the formats
+    /// the driver offers ("F32, I16, I24, I32").
     format: String,
+    /// The hardware's own bits per sample, when known.
+    hardware_bits: Option<u16>,
     rates: Vec<u32>,
     bit_depths: Vec<u16>,
 }
@@ -114,8 +120,9 @@ pub fn MicChooserModal() -> impl IntoView {
                     cpal_host_name.set(result.host_name);
                     let mut devs = Vec::new();
                     for dev in result.devices {
-                        // Collect the common rates each device's ranges support,
-                        // plus the distinct sample-format tags.
+                        // The hardware's own rates when known, otherwise the
+                        // common rates each device's ranges support. Plus the
+                        // distinct sample-format tags.
                         let mut rates = Vec::new();
                         let mut formats = std::collections::BTreeSet::new();
                         for range in &dev.sample_rate_ranges {
@@ -128,16 +135,13 @@ pub fn MicChooserModal() -> impl IntoView {
                                 }
                             }
                         }
+                        if !dev.hardware_rates.is_empty() {
+                            rates = dev.hardware_rates.clone();
+                        }
                         rates.sort_erased();
                         let rates_summary = rates
                             .iter()
-                            .map(|&r| {
-                                if r >= 1000 {
-                                    format!("{}k", r / 1000)
-                                } else {
-                                    format!("{}", r)
-                                }
-                            })
+                            .map(|&r| crate::format_units::sample_rate_short(r))
                             .collect::<Vec<_>>()
                             .join(", ");
                         // Derive bit depths from format strings before consuming formats
@@ -157,12 +161,24 @@ pub fn MicChooserModal() -> impl IntoView {
                                 }
                             })
                             .collect();
-                        let format = formats.into_iter().collect::<Vec<_>>().join(", ");
+                        let (format, hardware_bits, bit_depths) = match dev.hardware_depth {
+                            Some(d) => (
+                                format!("{}-bit{}", d.bits, if d.is_float { " float" } else { "" }),
+                                Some(d.bits),
+                                vec![d.bits],
+                            ),
+                            None => (
+                                formats.into_iter().collect::<Vec<_>>().join(", "),
+                                None,
+                                bit_depths,
+                            ),
+                        };
                         devs.push(CpalDevice {
                             name: dev.name,
                             is_default: dev.is_default,
                             rates_summary,
                             format,
+                            hardware_bits,
                             rates,
                             bit_depths,
                         });
@@ -244,7 +260,6 @@ pub fn MicChooserModal() -> impl IntoView {
                     select_device(&state, MicBackend::Cpal, None, None);
                     let pending = take_pending_action(&state);
                     spawn_local(async move {
-                        crate::audio::microphone::query_cpal_supported_rates(&state).await;
                         crate::audio::microphone::query_mic_info(&state).await;
                         if let Some(action) = pending {
                             dispatch_pending_action(&state, action).await;
@@ -373,6 +388,7 @@ pub fn MicChooserModal() -> impl IntoView {
                                 let is_default = dev.is_default;
                                 let click_rates = dev.rates.clone();
                                 let click_bit_depths = dev.bit_depths.clone();
+                                let hardware_bits = dev.hardware_bits;
                                 view! {
                                     <div
                                         class=move || {
@@ -391,7 +407,6 @@ pub fn MicChooserModal() -> impl IntoView {
                                             }));
                                             let pending = take_pending_action(&state);
                                             spawn_local(async move {
-                                                crate::audio::microphone::query_cpal_supported_rates(&state).await;
                                                 crate::audio::microphone::query_mic_info(&state).await;
                                                 if let Some(action) = pending {
                                                     dispatch_pending_action(&state, action).await;
@@ -425,10 +440,12 @@ pub fn MicChooserModal() -> impl IntoView {
                                             }}
                                             // Auto-detected effective bit depth, remembered per-device.
                                             // Shows when the device delivers fewer real bits than its
-                                            // container (e.g. a 24-bit interface in a 32-bit stream).
+                                            // container (e.g. a 24-bit interface in a 32-bit stream),
+                                            // unless it is the hardware depth already shown.
                                             {move || {
                                                 state.mic.bit_depths()
                                                     .with(|m| m.get(&dev_name_for_bits).copied())
+                                                    .filter(|&bits| Some(bits) != hardware_bits)
                                                     .map(|bits| format!(" \u{2022} appears {bits}-bit"))
                                                     .unwrap_or_default()
                                             }}
