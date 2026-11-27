@@ -44,6 +44,22 @@ pub fn stream_finalized_to_shared_fd(
     Err("shared_fd only supported on Android".into())
 }
 
+fn mic_info(m: &recording::MicState) -> MicInfo {
+    MicInfo {
+        device_name: m.device_name.clone(),
+        sample_rate: m.sample_rate,
+        bits_per_sample: m.format.bits_per_sample(),
+        is_float: m.format.is_float(),
+        format: format!("{:?}", m.format),
+        supported_sample_rates: m.supported_sample_rates.clone(),
+        host_name: cpal_host_name(),
+        channels: m.channels,
+        device_channels: m.device_channels,
+        is_usb: m.source.as_ref().is_some_and(|s| s.is_usb),
+        manufacturer: m.source.as_ref().and_then(|s| s.manufacturer.clone()),
+    }
+}
+
 #[tauri::command]
 pub fn mic_open(
     state: tauri::State<MicMutex>,
@@ -57,18 +73,7 @@ pub fn mic_open(
     let mut mic = state.lock().map_err(|e| e.to_string())?;
     if mic.is_some() {
         // Already open — return current info
-        let m = mic.as_ref().unwrap();
-        return Ok(MicInfo {
-            device_name: m.device_name.clone(),
-            sample_rate: m.sample_rate,
-            bits_per_sample: m.format.bits_per_sample(),
-            is_float: m.format.is_float(),
-            format: format!("{:?}", m.format),
-            supported_sample_rates: m.supported_sample_rates.clone(),
-            host_name: cpal_host_name(),
-            channels: m.channels,
-            device_channels: m.device_channels,
-        });
+        return Ok(mic_info(mic.as_ref().unwrap()));
     }
 
     let requested = max_sample_rate.unwrap_or(0);
@@ -80,17 +85,7 @@ pub fn mic_open(
         channel_pick.as_deref().unwrap_or(&[]),
         channel_pick_averaged.unwrap_or(false),
     )?;
-    let info = MicInfo {
-        device_name: m.device_name.clone(),
-        sample_rate: m.sample_rate,
-        bits_per_sample: m.format.bits_per_sample(),
-        is_float: m.format.is_float(),
-        format: format!("{:?}", m.format),
-        supported_sample_rates: m.supported_sample_rates.clone(),
-        host_name: cpal_host_name(),
-        channels: m.channels,
-        device_channels: m.device_channels,
-    };
+    let info = mic_info(&m);
 
     // Start the emitter thread for streaming audio chunks to the frontend
     // (also does best-effort disk flushing for crash-recovery).

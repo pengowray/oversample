@@ -1,3 +1,4 @@
+pub mod alsa_card;
 pub mod alsa_pcm;
 pub mod channel_labels;
 pub mod guano;

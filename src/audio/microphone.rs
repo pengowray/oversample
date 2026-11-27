@@ -168,17 +168,7 @@ pub async fn query_cpal_supported_rates(state: &AppState) {
         Some(name) => &d.name == name,
         None => d.is_default,
     }) {
-        let mut rates = std::collections::BTreeSet::new();
-        for range in &dev.sample_rate_ranges {
-            rates.insert(range.min);
-            rates.insert(range.max);
-            for &r in &[44100u32, 48000, 96000, 192000, 256000, 384000, 500000] {
-                if r >= range.min && r <= range.max {
-                    rates.insert(r);
-                }
-            }
-        }
-        let rates_vec: Vec<u32> = rates.into_iter().collect();
+        let rates_vec = oversample_ipc::mic::listed_rates(&dev.sample_rate_ranges);
         if !rates_vec.is_empty() {
             state.mic.supported_rates().set(rates_vec);
         }

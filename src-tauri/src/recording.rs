@@ -586,6 +586,9 @@ pub struct MicState {
     /// Channels in the device's widest input setting.
     pub device_channels: u16,
     pub device_name: String,
+    /// The device that records, when the system says what it is (Linux: a
+    /// USB card's name and maker, or the sound server's default source).
+    pub source: Option<crate::alsa_sources::SourceIdentity>,
     pub supported_sample_rates: Vec<u32>,
     /// Crash-recovery writer + shared state. Active between
     /// `mic_start_recording` and `mic_stop_recording` on Android.
@@ -612,23 +615,9 @@ fn detect_format(config: &cpal::SupportedStreamConfig) -> NativeSampleFormat {
     }
 }
 
-/// Collect distinct supported sample rates from a device's input configs.
-fn collect_supported_rates(device: &cpal::Device) -> Vec<u32> {
-    let mut rates = std::collections::BTreeSet::new();
-    if let Ok(configs) = device.supported_input_configs() {
-        for cfg in configs {
-            // Add the min and max of each range
-            rates.insert(cfg.min_sample_rate());
-            rates.insert(cfg.max_sample_rate());
-            // Also add common rates that fall within the range
-            for &r in &[44100, 48000, 96000, 192000, 256000, 384000, 500000] {
-                if r >= cfg.min_sample_rate() && r <= cfg.max_sample_rate() {
-                    rates.insert(r);
-                }
-            }
-        }
-    }
-    rates.into_iter().collect()
+/// The rates to list for a set of input settings (none below 1 kHz).
+fn collect_supported_rates(configs: &[cpal::SupportedStreamConfigRange]) -> Vec<u32> {
+    oversample_ipc::mic::listed_rates(&ranges_of(configs))
 }
 
 /// Try to find a supported config at the requested rate (or highest rate <= max).
@@ -678,40 +667,223 @@ fn negotiate_sample_rate_from(
     best.map(|(_, config)| config)
 }
 
-/// The input settings a device reports, as the device list sends them.
-fn input_ranges(device: &cpal::Device) -> Vec<SampleRateRange> {
-    let mut ranges = Vec::new();
-    if let Ok(configs) = device.supported_input_configs() {
-        for cfg in configs {
-            let fmt = match cfg.sample_format() {
-                cpal::SampleFormat::I16 => "I16",
-                cpal::SampleFormat::I24 => "I24",
-                cpal::SampleFormat::I32 => "I32",
-                cpal::SampleFormat::F32 => "F32",
-                _ => "Other",
-            };
-            ranges.push(SampleRateRange {
-                min: cfg.min_sample_rate(),
-                max: cfg.max_sample_rate(),
-                channels: cfg.channels(),
-                format: fmt.to_string(),
-            });
+fn format_tag(format: cpal::SampleFormat) -> &'static str {
+    match format {
+        cpal::SampleFormat::I16 => "I16",
+        cpal::SampleFormat::I24 => "I24",
+        cpal::SampleFormat::I32 => "I32",
+        cpal::SampleFormat::F32 => "F32",
+        _ => "Other",
+    }
+}
+
+/// Input settings as the device list sends them.
+fn ranges_of(configs: &[cpal::SupportedStreamConfigRange]) -> Vec<SampleRateRange> {
+    configs
+        .iter()
+        .map(|cfg| SampleRateRange {
+            min: cfg.min_sample_rate(),
+            max: cfg.max_sample_rate(),
+            channels: cfg.channels(),
+            format: format_tag(cfg.sample_format()).to_string(),
+        })
+        .collect()
+}
+
+/// The input settings a device reports.
+fn input_configs(device: &cpal::Device) -> Vec<cpal::SupportedStreamConfigRange> {
+    device
+        .supported_input_configs()
+        .map(|c| c.collect())
+        .unwrap_or_default()
+}
+
+/// The sample formats `open_mic` can open a stream in.
+fn openable(format: cpal::SampleFormat) -> bool {
+    use cpal::SampleFormat::{F32, I16, I24, I32};
+    matches!(format, I16 | I24 | I32 | F32)
+}
+
+/// Bits per sample of a format's container, and whether it is float.
+fn container_of(format: cpal::SampleFormat) -> Option<(u16, bool)> {
+    use cpal::SampleFormat::{F32, I16, I24, I32};
+    match format {
+        I16 => Some((16, false)),
+        I24 => Some((24, false)),
+        I32 => Some((32, false)),
+        F32 => Some((32, true)),
+        _ => None,
+    }
+}
+
+/// What an ALSA PCM records at without conversion, and the device behind it.
+#[derive(Clone, Default)]
+struct AlsaCaps {
+    /// cpal's settings for the PCM, cut down to the ones the hardware has.
+    configs: Vec<cpal::SupportedStreamConfigRange>,
+    /// The audio bits of those settings and whether they are float, when known.
+    real_bits: Option<(u16, bool)>,
+    identity: Option<crate::alsa_sources::SourceIdentity>,
+}
+
+/// The cpal settings that match one of `real`: the same channel count, with
+/// the rates cut down to the real ones. Every format `open_mic` can open is
+/// kept, since changing only the sample format adds no audio that was not
+/// recorded.
+fn match_real(
+    configs: &[cpal::SupportedStreamConfigRange],
+    real: &[oversample_core::audio::alsa_card::CaptureFormat],
+) -> Vec<cpal::SupportedStreamConfigRange> {
+    let mut out: Vec<cpal::SupportedStreamConfigRange> = Vec::new();
+    for c in configs.iter().filter(|c| openable(c.sample_format())) {
+        for r in real.iter().filter(|r| r.channels == c.channels()) {
+            for (lo, hi) in r
+                .rates
+                .spans_within(c.min_sample_rate(), c.max_sample_rate())
+            {
+                let m = cpal::SupportedStreamConfigRange::new(
+                    c.channels(),
+                    lo,
+                    hi,
+                    *c.buffer_size(),
+                    c.sample_format(),
+                );
+                if !out.contains(&m) {
+                    out.push(m);
+                }
+            }
         }
     }
-    ranges
+    out
+}
+
+/// cpal's default setting for a device as its only setting, for a PCM whose
+/// real settings are not known. cpal picks 48 kHz (or 44.1 kHz) stereo when
+/// the device offers it, not the top of a converted range.
+fn default_only(device: &cpal::Device) -> Vec<cpal::SupportedStreamConfigRange> {
+    device
+        .default_input_config()
+        .ok()
+        .map(|d| {
+            cpal::SupportedStreamConfigRange::new(
+                d.channels(),
+                d.sample_rate(),
+                d.sample_rate(),
+                *d.buffer_size(),
+                d.sample_format(),
+            )
+        })
+        .into_iter()
+        .collect()
+}
+
+/// The real settings of the ALSA PCM `pcm_id`, given what cpal reports for
+/// it (`configs`).
+///
+/// - `default`, `pipewire` and `pulse` record from the sound server's default
+///   source, so they get that source's own rate, depth and channels (from
+///   `pactl`).
+/// - A card's `hw:` PCM reports the hardware's settings, which are kept.
+/// - A card's other names (`plughw:`, `sysdefault:`, ...) convert, so they get
+///   the card's settings from `/proc/asound`: a USB card's stream file, or
+///   what the device runs at while the sound server has it open.
+/// - Other PCMs (a user's own `.asoundrc` device) keep what they report.
+///
+/// When the real settings are not known, the PCM gets cpal's default setting
+/// only.
+fn alsa_caps(
+    pcm_id: &str,
+    device: &cpal::Device,
+    configs: &[cpal::SupportedStreamConfigRange],
+    ctx: &mut crate::alsa_sources::AlsaContext,
+) -> AlsaCaps {
+    use oversample_core::audio::alsa_pcm::{classify, CardAlias, PcmKind};
+    let fallback = |identity| AlsaCaps {
+        configs: default_only(device),
+        real_bits: None,
+        identity,
+    };
+    let openable_only = |configs: &[cpal::SupportedStreamConfigRange]| {
+        configs
+            .iter()
+            .filter(|c| openable(c.sample_format()))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    match classify(pcm_id) {
+        PcmKind::Default | PcmKind::SoundServer(_) => {
+            let Some(source) = ctx.default_source() else {
+                return fallback(None);
+            };
+            let real = match_real(configs, std::slice::from_ref(&source.format));
+            if real.is_empty() {
+                return fallback(source.identity);
+            }
+            AlsaCaps {
+                configs: real,
+                real_bits: Some((source.format.bits, source.format.is_float)),
+                identity: source.identity,
+            }
+        }
+        PcmKind::Card { alias, card, dev } => {
+            let number = ctx.card_number(&card);
+            let identity = number.and_then(|n| ctx.usb_identity(n));
+            if alias == CardAlias::Hw && !configs.is_empty() {
+                return AlsaCaps {
+                    configs: openable_only(configs),
+                    real_bits: None,
+                    identity,
+                };
+            }
+            let formats = number
+                .map(|n| crate::alsa_sources::card_capture_formats(n, dev))
+                .unwrap_or_default();
+            let real = match_real(configs, &formats);
+            if real.is_empty() {
+                return fallback(identity);
+            }
+            let real_bits = formats
+                .iter()
+                .map(|f| (f.bits, f.is_float))
+                .max_by_key(|&(bits, _)| bits);
+            AlsaCaps {
+                configs: real,
+                real_bits,
+                identity,
+            }
+        }
+        _ => AlsaCaps {
+            configs: openable_only(configs),
+            real_bits: None,
+            identity: None,
+        },
+    }
 }
 
 fn is_alsa(host: &cpal::Host) -> bool {
     format!("{:?}", host.id()) == "Alsa"
 }
 
+/// One row of the ALSA microphone list.
+struct AlsaRow {
+    info: DeviceInfo,
+    device: cpal::Device,
+    /// ALSA's description, such as "UA-22, USB Audio": the row's name before
+    /// USB cards were named after the product, so a name saved then still
+    /// finds the row.
+    alsa_name: String,
+    caps: AlsaCaps,
+}
+
 /// The ALSA input list as [`oversample_core::audio::alsa_pcm::arrange`] orders
 /// it: `default`, one entry per card device, running sound servers, then other
 /// PCMs with input settings. Plugins and a card's other PCM names are left out,
 /// and plugins are not opened. Each row keeps its cpal device, so a row is
-/// opened by the PCM it was listed as.
-fn alsa_input_devices(host: &cpal::Host) -> Vec<(DeviceInfo, cpal::Device)> {
+/// opened by the PCM it was listed as, and lists only the settings the
+/// hardware has (see [`alsa_caps`]).
+fn alsa_input_devices(host: &cpal::Host) -> Vec<AlsaRow> {
     use oversample_core::audio::alsa_pcm;
+    let mut ctx = crate::alsa_sources::AlsaContext::new();
     let devices: Vec<cpal::Device> = host
         .input_devices()
         .map(|d| d.collect())
@@ -720,7 +892,7 @@ fn alsa_input_devices(host: &cpal::Host) -> Vec<(DeviceInfo, cpal::Device)> {
         .iter()
         .map(|d| d.id().map(|id| id.id().to_string()).unwrap_or_default())
         .collect();
-    let names: Vec<String> = devices
+    let alsa_names: Vec<String> = devices
         .iter()
         .map(|d| {
             d.description()
@@ -728,12 +900,13 @@ fn alsa_input_devices(host: &cpal::Host) -> Vec<(DeviceInfo, cpal::Device)> {
                 .unwrap_or_default()
         })
         .collect();
-    let ranges: Vec<Vec<SampleRateRange>> = devices
+    let names: Vec<String> = alsa_names.clone();
+    let configs: Vec<Vec<cpal::SupportedStreamConfigRange>> = devices
         .iter()
         .zip(&ids)
         .map(|(d, id)| {
             if alsa_pcm::worth_probing(&alsa_pcm::classify(id)) {
-                input_ranges(d)
+                input_configs(d)
             } else {
                 Vec::new()
             }
@@ -743,18 +916,34 @@ fn alsa_input_devices(host: &cpal::Host) -> Vec<(DeviceInfo, cpal::Device)> {
         .map(|i| alsa_pcm::PcmEntry {
             pcm_id: &ids[i],
             name: &names[i],
-            has_input: !ranges[i].is_empty(),
+            has_input: !configs[i].is_empty(),
         })
         .collect();
     alsa_pcm::arrange(&entries)
         .into_iter()
         .map(|l| {
+            let i = l.index;
+            let caps = alsa_caps(&ids[i], &devices[i], &configs[i], &mut ctx);
+            let server = matches!(
+                alsa_pcm::classify(&ids[i]),
+                alsa_pcm::PcmKind::Default | alsa_pcm::PcmKind::SoundServer(_)
+            );
             let info = DeviceInfo {
                 name: l.name,
                 is_default: l.is_default,
-                sample_rate_ranges: ranges[l.index].clone(),
+                sample_rate_ranges: ranges_of(&caps.configs),
+                is_usb: caps.identity.as_ref().is_some_and(|s| s.is_usb),
+                manufacturer: caps.identity.as_ref().and_then(|s| s.manufacturer.clone()),
+                source_name: server
+                    .then(|| caps.identity.as_ref().map(|s| s.name.clone()))
+                    .flatten(),
             };
-            (info, devices[l.index].clone())
+            AlsaRow {
+                info,
+                device: devices[i].clone(),
+                alsa_name: alsa_names[i].clone(),
+                caps,
+            }
         })
         .collect()
 }
@@ -765,7 +954,7 @@ pub fn list_input_devices() -> Vec<DeviceInfo> {
     if is_alsa(&host) {
         return alsa_input_devices(&host)
             .into_iter()
-            .map(|(info, _)| info)
+            .map(|row| row.info)
             .collect();
     }
     let default_name = host
@@ -781,7 +970,7 @@ pub fn list_input_devices() -> Vec<DeviceInfo> {
                 .map(|d| d.name().to_string())
                 .unwrap_or_else(|_| "Unknown".into());
             let is_default = name == default_name;
-            let ranges = input_ranges(&device);
+            let ranges = ranges_of(&input_configs(&device));
             // Deduplicate: merge ranges into existing entry with the same name
             // (Android's Oboe backend often reports the same device multiple times)
             if let Some(existing) = devices.iter_mut().find(|d| d.name == name) {
@@ -802,6 +991,9 @@ pub fn list_input_devices() -> Vec<DeviceInfo> {
                     name,
                     is_default,
                     sample_rate_ranges: ranges,
+                    is_usb: false,
+                    manufacturer: None,
+                    source_name: None,
                 });
             }
         }
@@ -821,6 +1013,53 @@ fn format_depth_rank(format: cpal::SampleFormat) -> u8 {
         I16 => 1,
         _ => 0,
     }
+}
+
+/// [`format_depth_rank`], except that when the hardware's depth is known
+/// (`real_bits`: bits and whether float), a container of exactly that depth
+/// ranks first, so a 24-bit interface opens as I24 rather than I32.
+fn format_rank(format: cpal::SampleFormat, real_bits: Option<(u16, bool)>) -> u8 {
+    if real_bits.is_some() && container_of(format) == real_bits {
+        5
+    } else {
+        format_depth_rank(format)
+    }
+}
+
+/// Auto rate: the setting with the highest rate, then the best format by
+/// `rank`, then the fewest channels.
+fn highest_rate_config(
+    configs: &[cpal::SupportedStreamConfigRange],
+    rank: &dyn Fn(cpal::SampleFormat) -> u8,
+) -> Option<cpal::SupportedStreamConfig> {
+    configs
+        .iter()
+        .max_by_key(|c| {
+            (
+                c.max_sample_rate(),
+                rank(c.sample_format()),
+                std::cmp::Reverse(c.channels()),
+            )
+        })
+        .map(|c| c.clone().with_sample_rate(c.max_sample_rate()))
+}
+
+/// On ALSA, the setting with the lowest real rate (deepest format first), for
+/// a maximum rate below every rate the hardware has.
+fn lowest_real_config(
+    caps: Option<&AlsaCaps>,
+    rank: &dyn Fn(cpal::SampleFormat) -> u8,
+) -> Option<cpal::SupportedStreamConfig> {
+    caps?
+        .configs
+        .iter()
+        .min_by_key(|c| {
+            (
+                c.min_sample_rate(),
+                std::cmp::Reverse(rank(c.sample_format())),
+            )
+        })
+        .map(|c| c.clone().with_sample_rate(c.min_sample_rate()))
 }
 
 /// The cpal sample formats to look for, best first, for a user's max bit depth.
@@ -852,32 +1091,31 @@ pub fn open_mic(
     pick_averaged: bool,
 ) -> Result<MicState, String> {
     let host = cpal::default_host();
+    let alsa = is_alsa(&host);
     // On ALSA several PCMs share a description, so a name from the device
-    // list is looked up in that same list, which knows the PCM it stands for.
-    // Building the list opens each PCM (about 0.4 s), so it is only done when
-    // the name is not one PCM's description.
+    // list is looked up in that same list, which knows the PCM it stands for
+    // and the settings its hardware has. Building the list opens each PCM
+    // (about 0.4 s).
     let mut listed_name = None;
+    let mut caps: Option<AlsaCaps> = None;
     let device = if let Some(name) = device_name {
-        let shared_name = || {
-            host.input_devices().map_or(true, |devs| {
-                devs.filter(|d| d.description().map_or(false, |x| x.name() == name))
-                    .count()
-                    != 1
-            })
-        };
-        let alsa_found = if is_alsa(&host) && shared_name() {
+        let alsa_found = if alsa {
             alsa_input_devices(&host)
                 .into_iter()
-                .find(|(info, _)| info.name == name)
-                .map(|(info, d)| {
-                    listed_name = Some(info.name);
-                    d
+                .find(|row| row.info.name == name || row.alsa_name == name)
+                .map(|row| {
+                    listed_name = Some(row.info.name);
+                    caps = Some(row.caps);
+                    row.device
                 })
         } else {
             None
         };
         // Try to find the requested device by name
         let found = alsa_found.or_else(|| {
+            if alsa {
+                return None;
+            }
             host.input_devices().ok().and_then(|mut devs| {
                 devs.find(|d| {
                     d.description()
@@ -903,17 +1141,32 @@ pub fn open_mic(
             .ok_or_else(|| "No microphone found. Check your audio settings.".to_string())?
     };
 
+    // On ALSA the default device (`default`) records from the sound server's
+    // default source, so it gets that source's settings.
+    if alsa && caps.is_none() {
+        let id = device
+            .id()
+            .map(|id| id.id().to_string())
+            .unwrap_or_default();
+        let mut ctx = crate::alsa_sources::AlsaContext::new();
+        caps = Some(alsa_caps(&id, &device, &input_configs(&device), &mut ctx));
+    }
     let device_name = listed_name.unwrap_or_else(|| {
         device
             .description()
             .map(|d| d.name().to_string())
             .unwrap_or_else(|_| "Unknown".into())
     });
-    let supported_rates = collect_supported_rates(&device);
-    let device_channels = device
-        .supported_input_configs()
-        .map(|cs| cs.map(|c| c.channels()).max().unwrap_or(0))
-        .unwrap_or(0);
+    // The settings to choose from: on ALSA only the ones the hardware has,
+    // elsewhere everything the device reports.
+    let all_configs: Vec<cpal::SupportedStreamConfigRange> = match &caps {
+        Some(c) => c.configs.clone(),
+        None => input_configs(&device),
+    };
+    let real_bits = caps.as_ref().and_then(|c| c.real_bits);
+    let rank = |f: cpal::SampleFormat| format_rank(f, real_bits);
+    let supported_rates = collect_supported_rates(&all_configs);
+    let device_channels = all_configs.iter().map(|c| c.channels()).max().unwrap_or(0);
     // A device with more than 2 channels opens a setting with enough channels
     // for the pick, whatever the Mono/Stereo setting.
     let wide = device_channels > 2;
@@ -926,7 +1179,11 @@ pub fn open_mic(
 
     let pref_fmts = preferred_formats_for_bit_depth(max_bit_depth);
 
-    let config = if requested_max_rate == 0
+    // On ALSA, Auto takes the highest real rate from `all_configs` below: the
+    // device default is cpal's guess (48 kHz when offered), which would record
+    // a 384 kHz bat microphone at 48 kHz.
+    let config = if caps.is_none()
+        && requested_max_rate == 0
         && pref_fmts.is_empty()
         && requested_channels == 0
         && !wide
@@ -945,12 +1202,7 @@ pub fn open_mic(
         );
         default_cfg
     } else {
-        // At least one preference set — negotiate from supported configs
-        let all_configs: Vec<_> = device
-            .supported_input_configs()
-            .map_err(|e| format!("Failed to enumerate mic configs: {}", e))?
-            .collect();
-
+        // At least one preference set (or ALSA) — negotiate from the configs.
         // Filter by preferred format if set
         // Keep the configs of the first preferred format the device offers.
         let preferred = pref_fmts.iter().find_map(|&fmt| {
@@ -1010,28 +1262,16 @@ pub fn open_mic(
         // With depth on Auto, try the deepest format first: the rate search
         // takes the first config that has the rate, and hosts list I16 first
         // (AAudio lists I16 before F32 at every rate). Bit-depth detection
-        // writes a 16-bit device's audio as 16-bit anyway.
+        // writes a 16-bit device's audio as 16-bit anyway. When the hardware's
+        // depth is known, a container of exactly that depth comes first.
         let mut chan_filtered = chan_filtered;
-        chan_filtered.sort_by_key(|c| std::cmp::Reverse(format_depth_rank(c.sample_format())));
+        chan_filtered.sort_by_key(|c| std::cmp::Reverse(rank(c.sample_format())));
 
         // Now negotiate sample rate from the filtered configs
         let negotiated = if requested_max_rate > 0 {
             negotiate_sample_rate_from(&chan_filtered, requested_max_rate)
         } else {
-            // Auto rate: pick the config with the highest max rate
-            chan_filtered
-                .iter()
-                .max_by_key(|c| {
-                    (
-                        c.max_sample_rate(),
-                        format_depth_rank(c.sample_format()),
-                        std::cmp::Reverse(c.channels()),
-                    )
-                })
-                .map(|c| {
-                    let rate = c.max_sample_rate();
-                    c.clone().with_sample_rate(rate)
-                })
+            highest_rate_config(&chan_filtered, &rank)
         };
 
         match negotiated {
@@ -1043,12 +1283,26 @@ pub fn open_mic(
                 );
                 cfg
             }
-            None => {
-                eprintln!("Mic config negotiation: no matching config, using device default");
-                device
-                    .default_input_config()
-                    .map_err(|e| format!("Failed to get mic config: {}", e))?
-            }
+            None => match lowest_real_config(caps.as_ref(), &rank) {
+                // No real rate at or below the requested maximum: the lowest
+                // real one, rather than a converted rate.
+                Some(cfg) => {
+                    eprintln!(
+                        "Mic config negotiation: no real rate up to {}Hz, using the lowest: {}Hz {:?} {}ch",
+                        requested_max_rate,
+                        cfg.sample_rate(),
+                        cfg.sample_format(),
+                        cfg.channels()
+                    );
+                    cfg
+                }
+                None => {
+                    eprintln!("Mic config negotiation: no matching config, using device default");
+                    device
+                        .default_input_config()
+                        .map_err(|e| format!("Failed to get mic config: {}", e))?
+                }
+            },
         }
     };
 
@@ -1182,6 +1436,7 @@ pub fn open_mic(
         channels: stored_channels as u16,
         device_channels,
         device_name,
+        source: caps.and_then(|c| c.identity),
         supported_sample_rates: supported_rates,
         recovery: crate::recovery::RecoveryHandle::default(),
     })
@@ -1397,31 +1652,215 @@ mod tests {
         let devices = list_input_devices();
         let took = start.elapsed();
         for d in &devices {
-            let rates: Vec<String> = d
-                .sample_rate_ranges
+            let ranges = &d.sample_rate_ranges;
+            let mut spans: Vec<(u32, u32)> = ranges.iter().map(|r| (r.min, r.max)).collect();
+            spans.sort_unstable();
+            spans.dedup();
+            let spans: Vec<String> = spans
                 .iter()
-                .take(3)
-                .map(|r| format!("{}-{} x{} {}", r.min, r.max, r.channels, r.format))
+                .map(|&(a, b)| {
+                    if a == b {
+                        a.to_string()
+                    } else {
+                        format!("{a}-{b}")
+                    }
+                })
                 .collect();
+            let mut formats: Vec<&str> = ranges.iter().map(|r| r.format.as_str()).collect();
+            formats.sort_unstable();
+            formats.dedup();
+            let mut channels: Vec<u16> = ranges.iter().map(|r| r.channels).collect();
+            channels.sort_unstable();
+            channels.dedup();
             println!(
-                "{}{} | {} settings | {}",
+                "{}{} | {} settings | rates {} | formats {} | channels {:?}",
                 d.name,
                 if d.is_default { " [default]" } else { "" },
-                d.sample_rate_ranges.len(),
-                rates.join(", ")
+                ranges.len(),
+                spans.join(", "),
+                formats.join(", "),
+                channels
             );
         }
         println!("{} devices in {:?}", devices.len(), took);
         let host = cpal::default_host();
         if is_alsa(&host) {
-            for (info, device) in alsa_input_devices(&host) {
+            for row in alsa_input_devices(&host) {
                 println!(
-                    "{} opens {:?}",
-                    info.name,
-                    device.id().map(|id| id.id().to_string())
+                    "{} opens {:?} (ALSA name {:?}; usb={} maker={:?} source={:?}; rates {:?})",
+                    row.info.name,
+                    row.device.id().map(|id| id.id().to_string()),
+                    row.alsa_name,
+                    row.info.is_usb,
+                    row.info.manufacturer,
+                    row.info.source_name,
+                    oversample_ipc::mic::listed_rates(&row.info.sample_rate_ranges),
                 );
             }
         }
+    }
+
+    /// Opens "System default" with every setting on Auto and Channels on Mono
+    /// (as the app does), records about one second, prints what was opened and
+    /// what each sound card's capture device is running at, then closes it.
+    /// Uses the real microphone, so it only runs when asked for:
+    /// `cargo test -p oversample-desktop capture_system_default -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn capture_system_default() {
+        let m = open_mic(0, None, 0, 1, &[], false).expect("open System default");
+        println!(
+            "opened: name={:?} sr={} fmt={:?} channels stored={} device_channels={} supported_rates={:?}",
+            m.device_name, m.sample_rate, m.format, m.channels, m.device_channels,
+            m.supported_sample_rates
+        );
+        m.is_recording.store(true, Ordering::Relaxed);
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        if let Ok(cards) = std::fs::read_dir("/proc/asound") {
+            let mut paths: Vec<_> = cards
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with("card"))
+                })
+                .collect();
+            paths.sort();
+            for card in paths {
+                for pcm in std::fs::read_dir(&card).into_iter().flatten().flatten() {
+                    let name = pcm.file_name().to_string_lossy().to_string();
+                    if name.starts_with("pcm") && name.ends_with('c') {
+                        let hw = std::fs::read_to_string(pcm.path().join("sub0/hw_params"))
+                            .unwrap_or_default();
+                        println!(
+                            "{}/{}: {}",
+                            card.display(),
+                            name,
+                            hw.lines()
+                                .filter(|l| !l.starts_with("period") && !l.starts_with("buffer"))
+                                .collect::<Vec<_>>()
+                                .join("; ")
+                        );
+                    }
+                }
+            }
+        }
+        m.is_recording.store(false, Ordering::Relaxed);
+        let mut buf = m.buffer.lock().unwrap();
+        let frames = buf.total_samples;
+        let detected = buf.detected_bits();
+        let write = buf.choose_write_format();
+        drop(buf);
+        println!(
+            "recorded {frames} frames ({:.2} s); bits in use {:?}; would write {:?}",
+            frames as f64 / m.sample_rate.max(1) as f64,
+            detected,
+            write
+        );
+        drop(m);
+    }
+
+    fn range(
+        channels: u16,
+        min: u32,
+        max: u32,
+        format: cpal::SampleFormat,
+    ) -> cpal::SupportedStreamConfigRange {
+        cpal::SupportedStreamConfigRange::new(
+            channels,
+            min,
+            max,
+            cpal::SupportedBufferSize::Unknown,
+            format,
+        )
+    }
+
+    /// What a converting PCM (plughw:, or PipeWire's `default`) reports: any
+    /// rate from `min`, 1 to 64 channels, several formats.
+    fn converted(min: u32) -> Vec<cpal::SupportedStreamConfigRange> {
+        use cpal::SampleFormat::{F32, I16, I24, I32, U8};
+        (1..=64)
+            .flat_map(|ch| [U8, I16, I24, I32, F32].map(|f| range(ch, min, 384_000, f)))
+            .collect()
+    }
+
+    fn real(
+        rates: oversample_core::audio::alsa_card::Rates,
+        channels: u16,
+        bits: u16,
+    ) -> oversample_core::audio::alsa_card::CaptureFormat {
+        oversample_core::audio::alsa_card::CaptureFormat {
+            rates,
+            channels,
+            bits,
+            is_float: false,
+        }
+    }
+
+    #[test]
+    fn a_converted_pcm_offers_only_the_hardwares_settings() {
+        use oversample_core::audio::alsa_card::Rates;
+        let ua22 = real(Rates::List(vec![48_000]), 2, 24);
+        let configs = match_real(&converted(1), &[ua22]);
+        assert!(configs.iter().all(|c| c.channels() == 2
+            && c.min_sample_rate() == 48_000
+            && c.max_sample_rate() == 48_000));
+        assert!(configs.iter().all(|c| openable(c.sample_format())));
+        assert_eq!(collect_supported_rates(&configs), vec![48_000]);
+        assert_eq!(configs.iter().map(|c| c.channels()).max(), Some(2));
+
+        // Auto: 48 kHz, in a 24-bit container.
+        let rank = |f| format_rank(f, Some((24, false)));
+        let auto = highest_rate_config(&configs, &rank).unwrap();
+        assert_eq!(auto.sample_rate(), 48_000);
+        assert_eq!(auto.channels(), 2);
+        assert_eq!(auto.sample_format(), cpal::SampleFormat::I24);
+        // A maximum below 48 kHz gets 48 kHz, not a converted rate.
+        assert!(negotiate_sample_rate_from(&configs, 44_100).is_none());
+        let caps = AlsaCaps {
+            configs: configs.clone(),
+            real_bits: Some((24, false)),
+            identity: None,
+        };
+        assert_eq!(
+            lowest_real_config(Some(&caps), &rank).map(|c| c.sample_rate()),
+            Some(48_000)
+        );
+    }
+
+    #[test]
+    fn auto_records_a_bat_mic_at_its_highest_real_rate() {
+        use oversample_core::audio::alsa_card::Rates;
+        let bat = real(Rates::List(vec![384_000]), 1, 16);
+        let configs = match_real(&converted(4_000), &[bat]);
+        let rank = |f| format_rank(f, Some((16, false)));
+        let auto = highest_rate_config(&configs, &rank).unwrap();
+        assert_eq!(
+            (auto.sample_rate(), auto.channels(), auto.sample_format()),
+            (384_000, 1, cpal::SampleFormat::I16)
+        );
+        // A continuous range is cut to its overlap.
+        let webcam = real(
+            Rates::Range {
+                min: 8_000,
+                max: 48_000,
+            },
+            1,
+            16,
+        );
+        let configs = match_real(&converted(1), &[webcam]);
+        assert_eq!(
+            collect_supported_rates(&configs),
+            vec![8_000, 44_100, 48_000]
+        );
+    }
+
+    #[test]
+    fn rate_lists_never_show_1_hz() {
+        assert_eq!(
+            collect_supported_rates(&converted(1)),
+            vec![44_100, 48_000, 96_000, 192_000, 256_000, 384_000]
+        );
     }
 
     /// L = 100, 101, ... and R = 200, 201, ...
