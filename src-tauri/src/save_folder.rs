@@ -146,6 +146,20 @@ pub fn looks_usable(dir: &Path) -> bool {
     false
 }
 
+impl Places {
+    /// The same places without the chosen folder when it is not an existing
+    /// folder. A chosen folder is never created: when it is on a drive that
+    /// is not plugged in, creating it would put recordings on the wrong disk
+    /// (and the mount folder above it often looks writable, so
+    /// [`looks_usable`] can't tell).
+    pub fn without_missing_custom(&self, is_dir: impl Fn(&Path) -> bool) -> Places {
+        Places {
+            custom: self.custom.clone().filter(|c| is_dir(c)),
+            ..self.clone()
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct Config {
     folder: Option<PathBuf>,
@@ -318,6 +332,7 @@ pub fn places(app: &tauri::AppHandle) -> Result<Places, String> {
 /// The folders to save a recording in, in the order to try them.
 pub fn dirs(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
     Ok(places(app)?
+        .without_missing_custom(Path::is_dir)
         .candidates()
         .into_iter()
         .map(|(p, _)| p)
@@ -337,7 +352,20 @@ pub fn memory_dirs(app: &tauri::AppHandle) -> Result<Vec<PathBuf>, String> {
 pub fn describe(app: &tauri::AppHandle) -> Result<RecordingFolder, String> {
     use tauri::Manager;
     let home = app.path().home_dir().ok();
-    Ok(places(app)?.describe(looks_usable, home.as_deref(), !cfg!(windows)))
+    let places = places(app)?;
+    Ok(places.describe(
+        shown_usable(places.custom.clone()),
+        home.as_deref(),
+        !cfg!(windows),
+    ))
+}
+
+/// Whether the settings show a folder as usable: the chosen folder
+/// `custom` must exist (it is never created, see
+/// [`Places::without_missing_custom`]); the others need only
+/// [`looks_usable`].
+pub fn shown_usable(custom: Option<PathBuf>) -> impl Fn(&Path) -> bool {
+    move |p: &Path| (custom.as_deref() != Some(p) || p.is_dir()) && looks_usable(p)
 }
 
 #[cfg(test)]
@@ -479,6 +507,44 @@ mod tests {
             free_name(Path::new("/d"), "noext", exists),
             PathBuf::from("/d/noext (2)")
         );
+    }
+
+    /// A chosen folder on a drive that is not plugged in: its parent exists
+    /// and is writable, but the folder is not made and not used.
+    #[test]
+    fn a_missing_chosen_folder_is_shown_unusable_and_skipped() {
+        let root = temp("missing-custom");
+        let chosen = root.join("gone/bats");
+        let p = Places {
+            custom: Some(chosen.clone()),
+            music: Some(root.join("Music")),
+            app_data: root.join("app"),
+        };
+        let shown = p.describe(shown_usable(p.custom.clone()), None, true);
+        assert_eq!(
+            shown.unusable_custom.as_deref(),
+            Some(chosen.to_string_lossy().as_ref())
+        );
+        assert_eq!(shown.path, root.join("Music/Oversample").to_string_lossy());
+        let dirs: Vec<_> = p
+            .without_missing_custom(Path::is_dir)
+            .candidates()
+            .into_iter()
+            .map(|(d, _)| d)
+            .collect();
+        assert_eq!(dirs[0], root.join("Music/Oversample"));
+        assert!(!dirs.contains(&chosen));
+
+        // Once it is there again, it is used.
+        std::fs::create_dir_all(&chosen).unwrap();
+        let shown = p.describe(shown_usable(p.custom.clone()), None, true);
+        assert_eq!(shown.unusable_custom, None);
+        assert_eq!(shown.path, chosen.to_string_lossy());
+        assert_eq!(
+            p.without_missing_custom(Path::is_dir).candidates()[0].0,
+            chosen
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
