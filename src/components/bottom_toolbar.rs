@@ -1190,17 +1190,20 @@ fn MaxSampleRateSelect() -> impl IntoView {
         let (rates, shown) = match known_mic_rates(&state) {
             Some(rates) if rates.len() == 1 => {
                 let rate = rates[0];
+                // The tooltip is on a wrapper: some browsers (WebKitGTK, the
+                // Linux desktop app's) show none on a disabled control.
+                // The dimming tells it apart from the lists beside it.
                 return view! {
-                    <select style=style disabled=true
-                        title=format!(
-                            "This microphone has only one sample rate: {}",
-                            crate::format_units::sample_rate_khz(rate)
-                        )
-                    >
-                        <option value=rate.to_string() selected=true>
-                            {crate::format_units::sample_rate_short(rate)}
-                        </option>
-                    </select>
+                    <span title=format!(
+                        "This microphone has only one sample rate: {}",
+                        crate::format_units::sample_rate_khz(rate)
+                    )>
+                        <select style=format!("{style} opacity: 0.6;") disabled=true>
+                            <option value=rate.to_string() selected=true>
+                                {crate::format_units::sample_rate_short(rate)}
+                            </option>
+                        </select>
+                    </span>
                 }
                 .into_any();
             }
@@ -1208,7 +1211,16 @@ fn MaxSampleRateSelect() -> impl IntoView {
                 let shown = oversample_ipc::mic::rate_used(&rates, saved).unwrap_or(0);
                 (rates, shown)
             }
-            None => (DEFAULT_MAX_RATES.to_vec(), saved),
+            None => {
+                // A rate chosen from an earlier mic's list stays listed, so
+                // the list shows the maximum the next mic is opened with.
+                let mut rates = DEFAULT_MAX_RATES.to_vec();
+                if saved != 0 && !rates.contains(&saved) {
+                    rates.push(saved);
+                    rates.sort_unstable();
+                }
+                (rates, saved)
+            }
         };
         view! {
             <select style=style on:change=on_change>

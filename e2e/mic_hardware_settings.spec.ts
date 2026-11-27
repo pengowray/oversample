@@ -214,7 +214,11 @@ for (const width of [1440, 375]) {
       await openMicMenu(page);
       await expect.poll(() => optionLabels(page)).toEqual(["48k"]);
       await expect(rateSelect(page)).toBeDisabled();
-      await expect(rateSelect(page)).toHaveAttribute("title", "This microphone has only one sample rate: 48 kHz");
+      // The tooltip is on the wrapper, since a disabled control may show none.
+      await expect(rateSelect(page).locator("xpath=..")).toHaveAttribute(
+        "title",
+        "This microphone has only one sample rate: 48\u00a0kHz",
+      );
       await shot(page, `rates-one-${width}.png`);
     });
 
@@ -223,6 +227,22 @@ for (const width of [1440, 375]) {
       await choose(page, "Old Backend Mic");
       await openMicMenu(page);
       await expect.poll(() => optionLabels(page)).toEqual(["Auto", "44.1k", "48k", "96k", "192k", "256k", "384k", "500k"]);
+    });
+
+    test("a rate from an earlier mic's list stays shown in the full list", async ({ page }) => {
+      const devices = withDefault("HD-Audio Generic, ALCS1200A Analog").map((d) =>
+        d.name === "Float Interface" ? { ...d, hardware_rates: [88200, 96000, 192000] } : d,
+      );
+      await desktop(page, devices);
+      await choose(page, "Float Interface");
+      await openMicMenu(page);
+      await rateSelect(page).selectOption("88200");
+      await choose(page, "Old Backend Mic");
+      await openMicMenu(page);
+      await expect
+        .poll(() => optionLabels(page))
+        .toEqual(["Auto", "44.1k", "48k", "88.2k", "96k", "192k", "256k", "384k", "500k"]);
+      await expect(rateSelect(page)).toHaveValue("88200");
     });
   });
 }
