@@ -9,6 +9,7 @@ pub mod bar_pan;
 pub mod bat_book_strip;
 pub mod bottom_toolbar;
 pub mod channel_delay_row;
+pub mod channel_menu;
 pub mod chromagram_view;
 pub mod combo_button;
 pub mod debug_panel;

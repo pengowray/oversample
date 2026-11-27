@@ -17,6 +17,7 @@
 
 use crate::audio::source::ChannelView;
 use crate::audio::{microphone, playback};
+use crate::components::channel_menu::WideChannelRow;
 use crate::components::combo_button::ComboButton;
 use crate::components::icons::Icon;
 use crate::components::layer_panel::{layer_opt_class, toggle_panel};
@@ -1028,7 +1029,8 @@ pub fn BottomToolbar() -> impl IntoView {
                                                 // Read here so another device with the same channel
                                                 // count gets its own channel names.
                                                 let labels = wide_picker_labels(&state, n);
-                                                view! { <WideChannelRow channels=n labels=labels /> }.into_any()
+                                                let sources = wide_picker_sources(&state, n);
+                                                view! { <WideChannelRow channels=n labels=labels sources=sources /> }.into_any()
                                             }
                                             None => view! {
                                         <div class="layer-panel-slider-row het-text-row">
@@ -1147,7 +1149,7 @@ pub fn BottomToolbar() -> impl IntoView {
 
 /// Restart live listening (not a recording) so a new channel setting applies
 /// straight away.
-fn restart_listening(state: AppState) {
+pub(super) fn restart_listening(state: AppState) {
     if state.mic.listening().get_untracked() && !state.mic.recording().get_untracked() {
         wasm_bindgen_futures::spawn_local(async move {
             crate::audio::microphone::toggle_listen(&state).await;
@@ -1185,175 +1187,15 @@ fn wide_picker_labels(state: &AppState, channels: u32) -> Option<ChannelLabels> 
     )
 }
 
-/// The text of one Channels option for 0-based channels: "5 and 6 (stereo)",
-/// or on a device with named channels "Input 3 and 4 (stereo), USB channels 5
-/// and 6". A native `<select>` can't style part of an option, so the numbers
-/// follow the name as plain text.
-fn channel_option_text(labels: Option<&ChannelLabels>, picked: &[u32], mode: &str) -> String {
-    let numbers = match picked {
-        [a, b] => format!("{} and {}", a + 1, b + 1),
-        [a] => format!("{}", a + 1),
-        _ => String::new(),
-    };
-    // "averaged" goes outside the brackets: "1 and 2 averaged (mono)".
-    let (averaged, mode) = match mode.strip_prefix("averaged, ") {
-        Some(rest) => (" averaged", rest),
-        None => ("", mode),
-    };
-    let plural = if picked.len() == 1 { "" } else { "s" };
-    match labels.and_then(|l| l.pick(picked)) {
-        Some(name) => format!("{name}{averaged} ({mode}), USB channel{plural} {numbers}"),
-        None if picked.len() == 1 && mode == "mono" => format!("{numbers} only (mono)"),
-        None => format!("{numbers}{averaged} ({mode})"),
+/// What each channel of the mic's device carries, when a patched X8 sent its
+/// input report (raw USB only, all 8 channels).
+fn wide_picker_sources(state: &AppState, channels: u32) -> Option<Vec<Option<String>>> {
+    use crate::state::MicBackend;
+    if channels != 8 || !matches!(state.mic.backend().get(), Some(MicBackend::RawUsb) | None) {
+        return None;
     }
-}
-
-/// The Channels row for a device with more than 2 channels: each pair
-/// (1 and 2, 3 and 4, ...) in stereo, channels 1 and 2 averaged into one, or
-/// one channel in mono. A device with channel names (`wide_picker_labels`)
-/// shows them with the numbers after them; any other device shows numbers
-/// only. With nothing saved, channels 1 and 2 in stereo.
-#[component]
-fn WideChannelRow(channels: u32, labels: Option<ChannelLabels>) -> impl IntoView {
-    let state = expect_context::<AppState>();
-    // The option value: the pick as saved ("5,6", "5" or "avg"), or "1,2"
-    // when nothing usable is saved.
-    let current = move || {
-        let device = state.mic.device_name().get();
-        let pick = state
-            .mic
-            .channel_picks()
-            .with(|p| crate::state::channel_pick_for(p, device.as_deref()));
-        if !pick.channels.is_empty() && pick.channels.iter().all(|&c| c < channels) {
-            crate::state::format_channel_pick(&pick)
-        } else {
-            "1,2".to_string()
-        }
-    };
-    let on_change = move |ev: leptos::ev::Event| {
-        let val = leptos::prelude::event_target_value(&ev);
-        let Some(device) = state.mic.device_name().get_untracked() else {
-            return;
-        };
-        crate::state::set_channel_pick(&state, &device, crate::state::parse_channel_pick(&val));
-        restart_listening(state);
-    };
-    let labels = labels.as_ref();
-    let first_pair = channel_option_text(labels, &[0, 1], "stereo");
-    let first_pair_averaged = channel_option_text(labels, &[0, 1], "averaged, mono");
-    let pairs: Vec<(u32, String)> = (3..channels)
-        .step_by(2)
-        .map(|a| (a, channel_option_text(labels, &[a - 1, a], "stereo")))
-        .collect();
-    let singles: Vec<(u32, String)> = (1..=channels)
-        .map(|a| (a, channel_option_text(labels, &[a - 1], "mono")))
-        .collect();
-    view! {
-        <div class="layer-panel-slider-row het-text-row">
-            <label style="font-size: 11px;" title="Channels used for listening and recording. The live spectrogram shows left and right averaged.">"Channels"</label>
-            <select style="font-size: 11px; background: #333; color: #ccc; border: 1px solid #555; padding: 1px 2px; max-width: 150px;"
-                on:change=on_change
-                prop:value=current
-            >
-                <option value="1,2" selected=move || current() == "1,2">{first_pair}</option>
-                <option value="avg" selected=move || current() == "avg">{first_pair_averaged}</option>
-                {(!pairs.is_empty()).then(|| view! {
-                    <optgroup label="Other stereo pairs (left, right)">
-                        {pairs.into_iter().map(|(a, text)| {
-                            let value = format!("{},{}", a, a + 1);
-                            let v = value.clone();
-                            view! {
-                                <option value=value selected=move || current() == v>
-                                    {text}
-                                </option>
-                            }
-                        }).collect::<Vec<_>>()}
-                    </optgroup>
-                })}
-                <optgroup label="Single channels (mono)">
-                    {singles.into_iter().map(|(a, text)| {
-                        let value = a.to_string();
-                        let v = value.clone();
-                        view! {
-                            <option value=value selected=move || current() == v>
-                                {text}
-                            </option>
-                        }
-                    }).collect::<Vec<_>>()}
-                </optgroup>
-            </select>
-        </div>
-    }
-}
-
-#[cfg(test)]
-mod channel_option_tests {
-    use super::channel_option_text;
-    use oversample_core::audio::channel_labels::{channel_labels, device_channel_labels};
-
-    #[test]
-    fn a_known_device_shows_its_channel_names_then_the_numbers() {
-        let x8 = channel_labels("Portacapture X8", 8);
-        let x8 = x8.as_ref();
-        assert_eq!(
-            channel_option_text(x8, &[4, 5], "stereo"),
-            "Input 3 and 4 (stereo), USB channels 5 and 6"
-        );
-        assert_eq!(
-            channel_option_text(x8, &[0, 1], "averaged, mono"),
-            "Mix L and R averaged (mono), USB channels 1 and 2"
-        );
-        assert_eq!(
-            channel_option_text(x8, &[1], "mono"),
-            "Mix R (mono), USB channel 2"
-        );
-    }
-
-    #[test]
-    fn a_device_s_own_names_are_used_over_the_built_in_ones() {
-        let names: Vec<String> = [
-            "Mix L",
-            "Mix R",
-            "Input 1: INT MIC",
-            "Input 2: INT MIC",
-            "Input 3: EXT MIC",
-            "Input 4: EXT MIC",
-            "Input 5: LINE IN",
-            "Input 6: EXT MIC",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-        let x8 = device_channel_labels(&names, "Portacapture X8", 8);
-        let x8 = x8.as_ref();
-        assert_eq!(
-            channel_option_text(x8, &[4, 5], "stereo"),
-            "Input 3 and 4: EXT MIC (stereo), USB channels 5 and 6"
-        );
-        assert_eq!(
-            channel_option_text(x8, &[6, 7], "stereo"),
-            "Input 5: LINE IN and Input 6: EXT MIC (stereo), USB channels 7 and 8"
-        );
-        assert_eq!(
-            channel_option_text(x8, &[0, 1], "averaged, mono"),
-            "Mix L and R averaged (mono), USB channels 1 and 2"
-        );
-        assert_eq!(
-            channel_option_text(x8, &[2], "mono"),
-            "Input 1: INT MIC (mono), USB channel 3"
-        );
-    }
-
-    #[test]
-    fn any_other_device_shows_numbers_only() {
-        assert_eq!(
-            channel_option_text(None, &[4, 5], "stereo"),
-            "5 and 6 (stereo)"
-        );
-        assert_eq!(channel_option_text(None, &[6], "mono"), "7 only (mono)");
-        assert_eq!(
-            channel_option_text(None, &[0, 1], "averaged, mono"),
-            "1 and 2 averaged (mono)"
-        );
-    }
+    state
+        .mic
+        .usb_x8_report()
+        .with(|r| r.as_ref().map(|r| r.channel_sources()))
 }

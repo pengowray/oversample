@@ -124,6 +124,26 @@ impl X8Report {
         (1..=6).contains(&track) && self.tracks_on & (1 << (track - 1)) != 0
     }
 
+    /// What each of the X8's 8 USB channels carries, for the Channels list:
+    /// nothing for the mix (channels 1 and 2), then each input's source, with
+    /// the phantom voltage when phantom power is switched on for that input
+    /// ("EXT MIC, 48 V").
+    pub fn channel_sources(&self) -> Vec<Option<String>> {
+        let volts = if self.phantom_24v { "24 V" } else { "48 V" };
+        let input = |i: usize| -> Option<String> {
+            let source = self.sources[i].name();
+            // Phantom power is for inputs 3 to 6.
+            let phantom = i >= 2 && self.phantom[i - 2];
+            match (source, phantom) {
+                (Some(s), true) => Some(format!("{s}, {volts}")),
+                (Some(s), false) => Some(s.to_string()),
+                (None, true) => Some(volts.to_string()),
+                (None, false) => None,
+            }
+        };
+        [None, None].into_iter().chain((0..6).map(input)).collect()
+    }
+
     /// The source of INPUT `input` (1 to 6).
     pub fn source(&self, input: u8) -> Option<X8InputSource> {
         self.sources.get((input as usize).checked_sub(1)?).copied()
@@ -218,6 +238,28 @@ mod tests {
         }
         assert!(r.track_on(1) && r.track_on(4) && !r.track_on(5));
         assert_eq!(r.mic_trim_db, [Some(0), Some(2)]);
+    }
+
+    #[test]
+    fn usb_channels_get_their_input_s_source_and_phantom_voltage() {
+        let mut b = sample();
+        b[9] = 0; // INPUT 2: source not known
+        b[17] = 1; // phantom on for INPUT 6
+        let s = parse_x8_report(&b).unwrap().channel_sources();
+        let want = [
+            None,
+            None,
+            Some("INT MIC"),
+            None,
+            Some("EXT MIC, 48 V"),
+            Some("LINE IN"),
+            Some("EXT IN"),
+            Some("EXT IN, 48 V"),
+        ];
+        assert_eq!(s, want.map(|w| w.map(String::from)));
+        b[6] |= 0x02;
+        let s = parse_x8_report(&b).unwrap().channel_sources();
+        assert_eq!(s[4].as_deref(), Some("EXT MIC, 24 V"));
     }
 
     #[test]

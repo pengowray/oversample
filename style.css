@@ -11561,3 +11561,105 @@ body.hfr-nudge-on .hfr-switch {
         width: 110px;
     }
 }
+
+/* ── Channels list of the mic menu (src/components/channel_menu.rs) ────────
+ * The button looks like the menu's other value boxes. A row of the list is
+ * the name, then in lighter text where the sound comes from, with the USB
+ * channel numbers at the right. Long names wrap, so a row never runs past the
+ * edge of a narrow screen.
+ */
+.channel-menu-anchor {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+}
+.channel-menu-btn {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    max-width: 100%;
+    padding: 2px 5px;
+    background: #333;
+    color: #ccc;
+    border: 1px solid #555;
+    border-radius: 2px;
+    font-family: inherit;
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+}
+/* Space above "Mono", so it reads as the heading of the rows under it. */
+.channel-menu [role="listbox"] + .layer-panel-title {
+    margin-top: 8px;
+}
+.channel-menu-btn:hover,
+.channel-menu-btn.open {
+    border-color: #888;
+    color: #eee;
+}
+/* The spans undo `.layer-panel-slider-row span`, which is for the value at
+   the right of a slider (42px wide, right-aligned, grey). */
+.layer-panel-slider-row .channel-menu-btn span {
+    min-width: 0;
+    text-align: left;
+    color: inherit;
+    font-size: inherit;
+}
+/* One line where the mic menu can grow to fit it. On a phone the menu is as
+   wide as the screen allows, so there the text wraps. */
+@media (not (pointer: coarse)) and (min-width: 641px) {
+    .channel-menu-btn-text {
+        white-space: nowrap;
+    }
+}
+.layer-panel-slider-row .channel-menu-btn .channel-menu-btn-caret {
+    flex: none;
+    /* #aaa on the button's #333 is 5.4:1 (#999 was 4.4:1). */
+    color: #aaa;
+}
+.layer-panel-opt.channel-opt {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    white-space: normal;
+}
+.channel-opt-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 8px;
+}
+/* #808080 on the panel's #101010 is 4.8:1, above the 4.5:1 minimum. The
+   source and the USB numbers stay regular weight and grey on the selected
+   row, as .preset-sub does. */
+.channel-opt-source,
+.channel-opt-usb {
+    font-size: 11px;
+    font-weight: 400;
+    color: #808080;
+}
+.layer-panel-opt.channel-opt:hover .channel-opt-source,
+.layer-panel-opt.channel-opt:hover .channel-opt-usb,
+.layer-panel-opt.channel-opt.sel .channel-opt-source,
+.layer-panel-opt.channel-opt.sel .channel-opt-usb {
+    color: #8a8a8a;
+}
+.channel-opt-usb {
+    flex: none;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+@media (pointer: coarse), (max-width: 640px) {
+    .channel-menu-btn {
+        font-size: 13px;
+        min-height: 32px;
+        padding: 4px 8px;
+        align-items: center;
+    }
+    .channel-opt-source,
+    .channel-opt-usb {
+        font-size: 12px;
+    }
+}

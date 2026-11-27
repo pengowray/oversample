@@ -62,6 +62,72 @@ impl ChannelLabels {
             _ => None,
         }
     }
+
+    /// The name for a pick with its source apart, for a list that shows the
+    /// source in lighter text: "Input 3: EXT MIC" gives the name "Input 3"
+    /// and the source "EXT MIC".
+    ///
+    /// `sources`, when given, has one entry for each channel and is used in
+    /// place of the text after ": " (a patched X8's input report says more
+    /// than its channel names do).
+    pub fn pick_parts(
+        &self,
+        picked: &[u32],
+        sources: Option<&[Option<String>]>,
+    ) -> Option<PickParts> {
+        let part = |c: u32| -> Option<(&str, Option<String>)> {
+            let full = self.channel(c)?;
+            let (name, after) = match full.split_once(": ") {
+                Some((name, after)) => (name, Some(after.to_string())),
+                None => (full, None),
+            };
+            let source = match sources {
+                Some(s) => s.get(c as usize).cloned().flatten(),
+                None => after,
+            };
+            Some((name, source))
+        };
+        match picked {
+            [a] => {
+                let (name, source) = part(*a)?;
+                Some(PickParts {
+                    name: name.to_string(),
+                    source,
+                })
+            }
+            [a, b] if a % 2 == 0 && *b == a + 1 => {
+                let ((left, left_source), (right, right_source)) = (part(*a)?, part(*b)?);
+                let source = match (left_source, right_source) {
+                    (None, None) => None,
+                    (l, r) if l == r => l,
+                    // Each input's source after the last word of its name:
+                    // "5: LINE IN; 6: EXT MIC".
+                    (l, r) => Some(
+                        [(left, l), (right, r)]
+                            .into_iter()
+                            .filter_map(|(name, source)| {
+                                let short = name.rsplit(' ').next().unwrap_or(name);
+                                Some(format!("{short}: {}", source?))
+                            })
+                            .collect::<Vec<_>>()
+                            .join("; "),
+                    ),
+                };
+                Some(PickParts {
+                    name: pair_name(left, right),
+                    source,
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+/// A pick's name, and where its sound comes from when the device says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PickParts {
+    pub name: String,
+    pub source: Option<String>,
 }
 
 /// One name for two channels. When the two names differ only in their last
@@ -213,6 +279,43 @@ mod tests {
             Some("Input 5: LINE IN and Input 6: EXT MIC")
         );
         assert_eq!(x8.pick(&[6]).as_deref(), Some("Input 5: LINE IN"));
+    }
+
+    #[test]
+    fn a_pick_s_name_and_source_come_apart() {
+        let x8 = device_channel_labels(&x8_reported(), "Portacapture X8", 8).unwrap();
+        let parts = |picked: &[u32]| {
+            let p = x8.pick_parts(picked, None).unwrap();
+            (p.name, p.source)
+        };
+        assert_eq!(parts(&[0, 1]), ("Mix L and R".into(), None));
+        assert_eq!(
+            parts(&[4, 5]),
+            ("Input 3 and 4".into(), Some("EXT MIC".into()))
+        );
+        assert_eq!(parts(&[6]), ("Input 5".into(), Some("LINE IN".into())));
+        // The two inputs of a pair take different sources.
+        assert_eq!(
+            parts(&[6, 7]),
+            (
+                "Input 5 and 6".into(),
+                Some("5: LINE IN; 6: EXT MIC".into())
+            )
+        );
+        assert_eq!(x8.pick_parts(&[1, 2], None), None);
+
+        // Sources from an input report are used in place of the names' own.
+        let mut sources: Vec<Option<String>> = vec![None; 8];
+        sources[4] = Some("EXT MIC, 48 V".into());
+        sources[5] = Some("EXT MIC".into());
+        let p = x8.pick_parts(&[4, 5], Some(&sources)).unwrap();
+        assert_eq!(p.source.as_deref(), Some("3: EXT MIC, 48 V; 4: EXT MIC"));
+        assert_eq!(x8.pick_parts(&[2, 3], Some(&sources)).unwrap().source, None);
+
+        // Built-in names have no sources.
+        let x6 = channel_labels("Portacapture X6", 6).unwrap();
+        let p = x6.pick_parts(&[2, 3], None).unwrap();
+        assert_eq!((p.name.as_str(), p.source), ("Input 1 and 2", None));
     }
 
     #[test]

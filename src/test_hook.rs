@@ -12,7 +12,10 @@
 //! `window.__oversample_read_rms` ([`install_read_rms`]), which reads the
 //! current file's samples. It changes no state the app shows, but reading a
 //! streamed file loads the chunks it reads into that file's chunk cache, as
-//! playback would.
+//! playback would. And it installs `window.__oversample_fake_wide_mic`
+//! ([`install_fake_wide_mic`]), which makes the mic menu show its Channels row
+//! as for a USB device with more than 2 channels. That one does change mic
+//! state; nothing in the app calls it.
 
 use crate::state::store_fields::*;
 use crate::state::AppState;
@@ -39,6 +42,7 @@ pub fn install(state: AppState) {
         return;
     };
     install_read_rms(state, &window);
+    install_fake_wide_mic(state, &window);
 
     let cb = Closure::wrap(Box::new(move || -> JsValue {
         use crate::canvas::live_waterfall as wf;
@@ -433,4 +437,34 @@ fn install_read_rms(state: AppState, window: &web_sys::Window) {
         cb.as_ref().unchecked_ref(),
     );
     cb.forget(); // keep the closure alive for the page lifetime
+}
+
+/// Install `window.__oversample_fake_wide_mic(name, channels, names, report)`:
+/// the mic becomes a raw USB device called `name` with `channels` channels,
+/// the channel names in the array `names` (may be empty) and the X8 input
+/// report in the byte array `report` (or null). For the e2e specs of the
+/// Channels list, which no browser can show otherwise. No audio is opened.
+fn install_fake_wide_mic(state: AppState, window: &web_sys::Window) {
+    let cb = Closure::wrap(Box::new(
+        move |name: String, channels: u32, names: js_sys::Array, report: JsValue| {
+            let names: Vec<String> = names.iter().filter_map(|n| n.as_string()).collect();
+            let report = report
+                .dyn_ref::<js_sys::Array>()
+                .map(|a| a.iter().map(|b| b.as_f64().unwrap_or(0.0) as u8).collect())
+                .and_then(|bytes: Vec<u8>| {
+                    oversample_core::audio::x8_report::parse_x8_report(&bytes).ok()
+                });
+            state.mic.backend().set(Some(crate::state::MicBackend::RawUsb));
+            state.mic.device_name().set(Some(name));
+            state.mic.usb_device_channels().set(channels);
+            state.mic.usb_channel_names().set(names);
+            state.mic.usb_x8_report().set(report);
+        },
+    ) as Box<dyn Fn(String, u32, js_sys::Array, JsValue)>);
+    let _ = js_sys::Reflect::set(
+        window,
+        &JsValue::from_str("__oversample_fake_wide_mic"),
+        cb.as_ref(),
+    );
+    cb.forget();
 }
