@@ -42,7 +42,10 @@ impl ChannelLabels {
 /// TASCAM Portacapture X8 (USB 0644:8074), firmware V2.03: the stereo mix,
 /// then INPUT 1 to 6 taken before the faders. From the audio descriptors and
 /// the audio routine, as recorded in the X8 firmware project's HOMEBREW.md
-/// ("What the X8 presents over USB"). The 2-channel settings send the mix.
+/// ("What the X8 presents over USB"). The 2-channel settings send the mix,
+/// except at 192 kHz on patch builds B263 to B275, which sent INPUT 3 and 4.
+/// Whether MANUAL's INPUT SELECT changes what channels 3 to 8 carry is not
+/// known.
 const PORTACAPTURE_X8: ChannelLabels = ChannelLabels {
     channels: &[
         "Mix L", "Mix R", "Input 1", "Input 2", "Input 3", "Input 4", "Input 5", "Input 6",
@@ -55,16 +58,28 @@ const PORTACAPTURE_X8: ChannelLabels = ChannelLabels {
     ],
 };
 
-/// Each known device: a part of its name in lower case, and its channels.
-const DEVICES: &[(&str, &ChannelLabels)] = &[("portacapture x8", &PORTACAPTURE_X8)];
+/// Each known device: its names in lower case, and its channels. A name with
+/// a space matches anywhere in the device's name; a name without one must be
+/// the whole name.
+///
+/// The X8's USB product name has not been read from a unit. Its firmware has
+/// "Portacapture X8", "TASCAM Portacapture X8" and "X8" as text, so all three
+/// are accepted.
+const DEVICES: &[(&[&str], &ChannelLabels)] = &[(&["portacapture x8", "x8"], &PORTACAPTURE_X8)];
 
 /// The channel names for a device, found by its name (the USB product name,
 /// or the name the operating system gives it) and its channel count.
 pub fn channel_labels(device_name: &str, channels: u32) -> Option<&'static ChannelLabels> {
-    let name = device_name.to_lowercase();
+    let name = device_name.trim().to_lowercase();
     DEVICES
         .iter()
-        .find(|(part, labels)| name.contains(part) && labels.channels.len() == channels as usize)
+        .find(|(names, labels)| {
+            labels.channels.len() == channels as usize
+                && names.iter().any(|n| match n.contains(' ') {
+                    true => name.contains(n),
+                    false => name == *n,
+                })
+        })
         .map(|(_, labels)| *labels)
 }
 
@@ -87,15 +102,19 @@ mod tests {
 
     #[test]
     fn every_device_has_a_pair_name_for_each_two_channels() {
-        for (part, labels) in DEVICES {
-            assert_eq!(labels.pairs.len(), labels.channels.len() / 2, "{part}");
-            assert_eq!(*part, part.to_lowercase());
+        for (names, labels) in DEVICES {
+            assert_eq!(labels.pairs.len(), labels.channels.len() / 2, "{names:?}");
+            for name in *names {
+                assert_eq!(*name, name.to_lowercase());
+            }
         }
     }
 
     #[test]
     fn found_by_name_and_channel_count() {
         assert!(channel_labels("Portacapture X8, USB Audio", 8).is_some());
+        assert!(channel_labels("X8", 8).is_some());
+        assert!(channel_labels("Mixer X8 Pro", 8).is_none());
         // The same device opened through a 2-channel setting only.
         assert!(channel_labels("Portacapture X8", 2).is_none());
         assert!(channel_labels("Some 8 channel interface", 8).is_none());
