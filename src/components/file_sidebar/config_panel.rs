@@ -111,6 +111,36 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         }
                     />
                 </div>
+                // Both "Suggest" settings are in Playback, one under the
+                // other: both cards show above Play while a recording plays.
+                // Keep this one out of Bats, where it sat under "This
+                // recording only" and looked like part of it. The label
+                // wraps (see .setting-label.wraps) so the box can stay at
+                // the right edge in a narrow sidebar.
+                <div class="setting-row">
+                    <label class="setting-label wraps" for="hfr-nudge-enabled">
+                        {crate::components::hfr_tour::NUDGE_SETTING}
+                    </label>
+                    <input
+                        id="hfr-nudge-enabled"
+                        type="checkbox"
+                        class="setting-checkbox"
+                        prop:checked=move || state.dialogs.hfr_nudge_enabled().get()
+                        on:change=move |ev| {
+                            let on = event_target_checked(&ev);
+                            state.dialogs.hfr_nudge_enabled().set(on);
+                            crate::settings::set_bool(crate::settings::keys::HFR_NUDGE_ENABLED, on);
+                        }
+                    />
+                </div>
+                <div class="setting-row">
+                    <button
+                        class="setting-button"
+                        disabled=move || !crate::components::hfr_tour::tour_available(state)
+                        title=move || crate::components::hfr_tour::tour_unavailable_reason(state).unwrap_or("")
+                        on:click=move |_| crate::components::hfr_tour::start_tour(state)
+                    >{crate::components::hfr_tour::TOUR_NAME}</button>
+                </div>
             </div>
 
             <div class="setting-group">
@@ -187,32 +217,6 @@ pub(super) fn ConfigPanel() -> impl IntoView {
                         })}
                     }
                 })}
-                // The label wraps (see .setting-label.wraps) so the box can
-                // stay at the right edge in a narrow sidebar.
-                <div class="setting-row">
-                    <label class="setting-label wraps" for="hfr-nudge-enabled">
-                        {crate::components::hfr_tour::NUDGE_SETTING}
-                    </label>
-                    <input
-                        id="hfr-nudge-enabled"
-                        type="checkbox"
-                        class="setting-checkbox"
-                        prop:checked=move || state.dialogs.hfr_nudge_enabled().get()
-                        on:change=move |ev| {
-                            let on = event_target_checked(&ev);
-                            state.dialogs.hfr_nudge_enabled().set(on);
-                            crate::settings::set_bool(crate::settings::keys::HFR_NUDGE_ENABLED, on);
-                        }
-                    />
-                </div>
-                <div class="setting-row">
-                    <button
-                        class="setting-button"
-                        disabled=move || !crate::components::hfr_tour::tour_available(state)
-                        title=move || crate::components::hfr_tour::tour_unavailable_reason(state).unwrap_or("")
-                        on:click=move |_| crate::components::hfr_tour::start_tour(state)
-                    >{crate::components::hfr_tour::TOUR_NAME}</button>
-                </div>
             </div>
 
             <div class="setting-group">

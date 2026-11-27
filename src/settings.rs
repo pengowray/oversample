@@ -19,7 +19,7 @@ pub mod keys {
     /// "true" after the notice about a hidden capture notification was closed.
     pub const NOTIF_HIDDEN_NOTICE_DISMISSED: &str = "oversample_notif_hidden_notice_dismissed";
     /// "false" after "Don't show again" on the card that suggests HFR when an
-    /// ultrasonic recording plays at 1:1. Settings > Bats turns it back on.
+    /// ultrasonic recording plays at 1:1. Settings > Playback turns it back on.
     pub const HFR_NUDGE_ENABLED: &str = "oversample_hfr_nudge_enabled";
     /// "false" after "Don't show again" on the card that suggests Gain when
     /// playback is very quiet. Settings > Playback turns it back on.

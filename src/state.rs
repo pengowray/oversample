@@ -2615,7 +2615,7 @@ pub struct DialogsState {
     pub hfr_nudge: bool,
     /// The card has been shown this session (it shows at most once).
     pub hfr_nudge_shown: bool,
-    /// Persisted: the card may show (Settings > Bats). "Don't show again"
+    /// Persisted: the card may show (Settings > Playback). "Don't show again"
     /// turns it off.
     pub hfr_nudge_enabled: bool,
     /// The "quiet playback" card above the Play button is showing

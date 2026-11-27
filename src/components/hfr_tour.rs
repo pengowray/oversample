@@ -10,7 +10,7 @@
 //     js/hfr-tour.js.
 //   • The card shows above Play when an ultrasonic recording starts playing
 //     1:1 with HFR off, at most once per session. It offers HFR or the
-//     tutorial; "Don't show again" clears a setting in Settings > Bats.
+//     tutorial; "Don't show again" clears a setting in Settings > Playback.
 //     "Turn on HFR" leaves the card up for NUDGE_ON_MS as "HFR is on", with
 //     the tutorial button. That card moves to just under the HFR switch,
 //     filled blue, and the button gets a blue ring (body.hfr-nudge-on).
@@ -18,7 +18,7 @@
 //     while sound plays and was easy to miss.
 //
 // Entry points for the tutorial: the card, the Band presets menu beside HFR,
-// and Settings > Bats.
+// and Settings > Playback.
 
 use crate::components::play_card::{PlayCard, PlayCardBody};
 use crate::components::popup::{Align, PopupPanel, Side};
@@ -71,9 +71,9 @@ const NUDGE_ON_TEXT_UNDER_BTN: &str = "HFR is on. To turn it off, press the HFR 
 const NUDGE_ON_MS: i32 = 10_000;
 const NUDGE_HFR: &str = "Turn on HFR";
 const NUDGE_NEVER: &str = "Don't show again";
-const NUDGE_NEVER_TIP: &str = "Turn back on in Settings > Bats";
+const NUDGE_NEVER_TIP: &str = "Turn back on in Settings > Playback";
 
-/// Settings > Bats checkbox that allows the card.
+/// Settings > Playback checkbox that allows the card.
 pub const NUDGE_SETTING: &str = "Suggest HFR when playing or listening\u{a0}1:1";
 
 // ── Steps ───────────────────────────────────────────────────────────────
@@ -547,7 +547,11 @@ pub fn HfrNudge() -> impl IntoView {
         let idx = state.library.current_index().get();
         let hfr = state.viewmode.hfr_enabled().get();
         let to_live = idx.is_some() && idx == state.mic.live_file_idx().get_untracked();
-        let hfr_changed_card = if hfr_on_state.get_untracked() { !hfr } else { hfr };
+        let hfr_changed_card = if hfr_on_state.get_untracked() {
+            !hfr
+        } else {
+            hfr
+        };
         if hfr_changed_card || (prev_idx.is_some_and(|p| p != idx) && !to_live) {
             hide_nudge(state);
         }
