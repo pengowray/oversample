@@ -1,3 +1,4 @@
+pub mod channel_labels;
 pub mod guano;
 pub mod guano_edit;
 pub mod live_schedule;

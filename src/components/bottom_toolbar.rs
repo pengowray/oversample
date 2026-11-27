@@ -15,7 +15,6 @@
 // Hearing-DSP controls (HFR, Band, EQ, Notch, Gain) live in `HearingBar`.
 // Visualization controls (View, Anno, Book, Tool) live in `ViewBar`.
 
-use oversample_core::erased_sort::SortErased;
 use crate::audio::source::ChannelView;
 use crate::audio::{microphone, playback};
 use crate::components::combo_button::ComboButton;
@@ -29,6 +28,7 @@ use crate::state::{
     AppState, Bar, ChannelMode, LayerPanel, MicStrategy, PlayStartMode, PlaybackMode, RecordMode,
 };
 use leptos::prelude::*;
+use oversample_core::erased_sort::SortErased;
 use wasm_bindgen::prelude::*;
 
 #[component]
@@ -1023,7 +1023,12 @@ pub fn BottomToolbar() -> impl IntoView {
                                             </select>
                                         </div>
                                         {move || match wide_picker_channels(&state) {
-                                            Some(n) => view! { <WideChannelRow channels=n /> }.into_any(),
+                                            Some(n) => {
+                                                // Read here so another device with the same channel
+                                                // count gets its own channel names.
+                                                let device = state.mic.device_name().get();
+                                                view! { <WideChannelRow channels=n device=device /> }.into_any()
+                                            }
                                             None => view! {
                                         <div class="layer-panel-slider-row het-text-row">
                                             <label style="font-size: 11px;" title="Mono averages left and right into one channel. Stereo keeps them separate. A one-channel mic is mono either way. On a 2-channel interface with one mic plugged in, use Mono. The live spectrogram shows left and right averaged.">"Channels"</label>
@@ -1162,12 +1167,40 @@ fn wide_picker_channels(state: &AppState) -> Option<u32> {
     (n > 2).then_some(n)
 }
 
+/// The text of one Channels option for 0-based channels: "5 and 6 (stereo)",
+/// or on a device with named channels "Input 3 and 4 (stereo), USB channels 5
+/// and 6". A native `<select>` can't style part of an option, so the numbers
+/// follow the name as plain text.
+fn channel_option_text(
+    labels: Option<&oversample_core::audio::channel_labels::ChannelLabels>,
+    picked: &[u32],
+    mode: &str,
+) -> String {
+    let numbers = match picked {
+        [a, b] => format!("{} and {}", a + 1, b + 1),
+        [a] => format!("{}", a + 1),
+        _ => String::new(),
+    };
+    // "averaged" goes outside the brackets: "1 and 2 averaged (mono)".
+    let (averaged, mode) = match mode.strip_prefix("averaged, ") {
+        Some(rest) => (" averaged", rest),
+        None => ("", mode),
+    };
+    let plural = if picked.len() == 1 { "" } else { "s" };
+    match labels.and_then(|l| l.pick(picked)) {
+        Some(name) => format!("{name}{averaged} ({mode}), USB channel{plural} {numbers}"),
+        None if picked.len() == 1 && mode == "mono" => format!("{numbers} only (mono)"),
+        None => format!("{numbers}{averaged} ({mode})"),
+    }
+}
+
 /// The Channels row for a device with more than 2 channels: each pair
 /// (1 and 2, 3 and 4, ...) in stereo, channels 1 and 2 averaged into one, or
-/// one channel in mono. The device names its channels only by number. With
-/// nothing saved, channels 1 and 2 in stereo.
+/// one channel in mono. A known device (`channel_labels`) shows its own
+/// channel names with the numbers after them; any other device shows numbers
+/// only. With nothing saved, channels 1 and 2 in stereo.
 #[component]
-fn WideChannelRow(channels: u32) -> impl IntoView {
+fn WideChannelRow(channels: u32, device: Option<String>) -> impl IntoView {
     let state = expect_context::<AppState>();
     // The option value: the pick as saved ("5,6", "5" or "avg"), or "1,2"
     // when nothing usable is saved.
@@ -1191,6 +1224,8 @@ fn WideChannelRow(channels: u32) -> impl IntoView {
         crate::state::set_channel_pick(&state, &device, crate::state::parse_channel_pick(&val));
         restart_listening(state);
     };
+    let labels = device
+        .and_then(|name| oversample_core::audio::channel_labels::channel_labels(&name, channels));
     let pairs: Vec<u32> = (3..channels).step_by(2).collect();
     let singles: Vec<u32> = (1..=channels).collect();
     view! {
@@ -1200,8 +1235,8 @@ fn WideChannelRow(channels: u32) -> impl IntoView {
                 on:change=on_change
                 prop:value=current
             >
-                <option value="1,2" selected=move || current() == "1,2">"1 and 2 (stereo)"</option>
-                <option value="avg" selected=move || current() == "avg">"1 and 2 averaged (mono)"</option>
+                <option value="1,2" selected=move || current() == "1,2">{channel_option_text(labels, &[0, 1], "stereo")}</option>
+                <option value="avg" selected=move || current() == "avg">{channel_option_text(labels, &[0, 1], "averaged, mono")}</option>
                 {(!pairs.is_empty()).then(|| view! {
                     <optgroup label="Other stereo pairs (left, right)">
                         {pairs.into_iter().map(|a| {
@@ -1209,7 +1244,7 @@ fn WideChannelRow(channels: u32) -> impl IntoView {
                             let v = value.clone();
                             view! {
                                 <option value=value selected=move || current() == v>
-                                    {format!("{} and {} (stereo)", a, a + 1)}
+                                    {channel_option_text(labels, &[a - 1, a], "stereo")}
                                 </option>
                             }
                         }).collect::<Vec<_>>()}
@@ -1221,12 +1256,48 @@ fn WideChannelRow(channels: u32) -> impl IntoView {
                         let v = value.clone();
                         view! {
                             <option value=value selected=move || current() == v>
-                                {format!("{} only (mono)", a)}
+                                {channel_option_text(labels, &[a - 1], "mono")}
                             </option>
                         }
                     }).collect::<Vec<_>>()}
                 </optgroup>
             </select>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod channel_option_tests {
+    use super::channel_option_text;
+    use oversample_core::audio::channel_labels::channel_labels;
+
+    #[test]
+    fn a_known_device_shows_its_channel_names_then_the_numbers() {
+        let x8 = channel_labels("Portacapture X8", 8);
+        assert_eq!(
+            channel_option_text(x8, &[4, 5], "stereo"),
+            "Input 3 and 4 (stereo), USB channels 5 and 6"
+        );
+        assert_eq!(
+            channel_option_text(x8, &[0, 1], "averaged, mono"),
+            "Mix L and R averaged (mono), USB channels 1 and 2"
+        );
+        assert_eq!(
+            channel_option_text(x8, &[1], "mono"),
+            "Mix R (mono), USB channel 2"
+        );
+    }
+
+    #[test]
+    fn any_other_device_shows_numbers_only() {
+        assert_eq!(
+            channel_option_text(None, &[4, 5], "stereo"),
+            "5 and 6 (stereo)"
+        );
+        assert_eq!(channel_option_text(None, &[6], "mono"), "7 only (mono)");
+        assert_eq!(
+            channel_option_text(None, &[0, 1], "averaged, mono"),
+            "1 and 2 averaged (mono)"
+        );
     }
 }

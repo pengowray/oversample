@@ -16,6 +16,7 @@ use crate::tauri_bridge::{
     tauri_invoke_args, tauri_invoke_no_args, tauri_invoke_typed_args, tauri_invoke_typed_no_args,
 };
 use leptos::prelude::*;
+use oversample_core::audio::channel_labels::{channel_labels, ChannelLabels};
 use oversample_core::audio::live_schedule::{plan_live_schedule, DEFAULT_MAX_LOOKAHEAD_SECS};
 use oversample_core::audio::stereo::{interleave_stereo, mix_stereo, split_stereo};
 use std::cell::RefCell;
@@ -1595,6 +1596,7 @@ async fn open_cpal(state: &AppState) -> bool {
                 info.device_channels as u32,
                 None,
                 false,
+                channel_labels(&info.device_name, info.device_channels as u32),
             )));
         }
     } else if channels == 2 && info.channels != 2 {
@@ -1826,6 +1828,7 @@ async fn open_usb(state: &AppState) -> bool {
             p.device_channels,
             Some(p.rate),
             saved_pick.averaged,
+            channel_labels(&info.product_name, p.device_channels),
         )));
     }
     let (channels, stereo) = usb_stream_channels(
@@ -2040,12 +2043,17 @@ fn usb_stream_channels(
     }
 }
 
-/// "Channels 5 and 6" or "Channel 5" for 0-based channels.
-fn channel_names(picked: &[u32]) -> String {
-    match picked {
-        [a, b] => format!("Channels {} and {}", a + 1, b + 1),
-        [a] => format!("Channel {}", a + 1),
-        _ => String::new(),
+/// "Channels 5 and 6" or "Channel 5" for 0-based channels. On a device with
+/// named channels: "Input 3 and 4 (USB channels 5 and 6)".
+fn channel_names(picked: &[u32], labels: Option<&ChannelLabels>) -> String {
+    let numbers = match picked {
+        [a, b] => format!("hannels {} and {}", a + 1, b + 1),
+        [a] => format!("hannel {}", a + 1),
+        _ => return String::new(),
+    };
+    match labels.and_then(|l| l.pick(picked)) {
+        Some(name) => format!("{name} (USB c{numbers})"),
+        None => format!("C{numbers}"),
     }
 }
 
@@ -2053,17 +2061,23 @@ fn channel_names(picked: &[u32]) -> String {
 /// channels 1 and 2 are used instead. The saved pick is kept for next time.
 /// The pick names a channel past `device_channels`, or else it is not
 /// available at `rate` (USB devices, whose wider settings may lack a rate).
+/// `labels` are the device's channel names, when it is a known device.
 fn channel_fallback_message(
     saved: &[u32],
     device_channels: u32,
     rate: Option<u32>,
     averaged: bool,
+    labels: Option<&ChannelLabels>,
 ) -> String {
-    let saved_names = channel_names(saved);
+    let saved_names = channel_names(saved, labels);
+    let first_pair = match labels.and_then(|l| l.pair(0, 1)) {
+        Some(name) => name.to_string(),
+        None => "channels 1 and 2".to_string(),
+    };
     let used = if averaged {
-        "Using channels 1 and 2 averaged (mono)."
+        format!("Using {first_pair} averaged (mono).")
     } else {
-        "Using channels 1 and 2 (stereo)."
+        format!("Using {first_pair} (stereo).")
     };
     match rate {
         Some(rate) if saved.iter().all(|&c| c < device_channels) => format!(
@@ -2302,12 +2316,17 @@ mod usb_channel_tests {
     #[test]
     fn the_fallback_message_says_why_the_pick_is_not_used() {
         assert_eq!(
-            channel_fallback_message(&[4, 5], 4, None, false),
+            channel_fallback_message(&[4, 5], 4, None, false, None),
             "Channels 5 and 6 not available: this device has 4 channels. Using channels 1 and 2 (stereo)."
         );
         assert_eq!(
-            channel_fallback_message(&[6], 8, Some(384_000), false),
+            channel_fallback_message(&[6], 8, Some(384_000), false, None),
             "Channel 7 not available at 384\u{a0}kHz on this device. Using channels 1 and 2 (stereo)."
+        );
+        let x8 = super::channel_labels("Portacapture X8", 8);
+        assert_eq!(
+            channel_fallback_message(&[4, 5], 8, Some(384_000), false, x8),
+            "Input 3 and 4 (USB channels 5 and 6) not available at 384\u{a0}kHz on this device. Using Mix L and R (stereo)."
         );
     }
 
