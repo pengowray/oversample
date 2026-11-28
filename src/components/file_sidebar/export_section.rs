@@ -471,7 +471,7 @@ pub fn ExportPanel() -> impl IntoView {
                 </div>
 
                 {move || too_long().map(|t| view! {
-                    <div class="export-detail export-too-long">{export::too_long_text(t)}</div>
+                    <div class="export-detail export-too-long">{export::too_long_text(&state, t, state.export.format().get())}</div>
                 })}
 
                 // What the export will save

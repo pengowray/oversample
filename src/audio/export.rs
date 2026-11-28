@@ -1021,14 +1021,31 @@ pub(crate) fn export_too_long(
     too_long(frames as u64, views.len(), output_rate)
 }
 
-/// The message for an export that is too long, shown under the Export button
-/// and as the error if the export is started anyway.
-pub(crate) fn too_long_text(t: TooLong) -> String {
+/// The message for an export in `format` that is too long, shown under the
+/// Export button and as the error if the export is started anyway. It names
+/// what the export is made of, the same way [`export_jobs`] picks it.
+pub(crate) fn too_long_text(state: &AppState, t: TooLong, format: ExportFormat) -> String {
     use crate::format_time::format_duration_compact as dur;
+    let regions = match format {
+        ExportFormat::Wav => get_selected_regions(state).len(),
+        // A video is of the first region only.
+        ExportFormat::Mp4 => get_selected_regions(state).len().min(1),
+    };
+    let (what, advice) = match regions {
+        0 if state.interaction.selection().get_untracked().is_some() => {
+            ("the selection is".to_string(), "Select a shorter part.")
+        }
+        0 => ("the whole file is".to_string(), "Select a shorter part."),
+        1 => ("the region is".to_string(), "Select a shorter part."),
+        n => (
+            format!("the {n} regions total"),
+            "Select fewer or shorter regions.",
+        ),
+    };
     format!(
-        "Too long to export: {}. The longest export of this file is {}. Select a shorter part.",
+        "Too long to export: {what} {}. The limit for this file is {}. {advice}",
         dur(t.secs),
-        dur(t.max_secs)
+        dur(t.max_secs),
     )
 }
 
@@ -1050,7 +1067,7 @@ pub(crate) fn show_export_failed(state: &AppState, msg: &str) {
 /// The message for audio that could not be read during an export.
 pub(crate) fn not_loaded_text(at_secs: f64) -> String {
     format!(
-        "couldn't read the file's audio at {}",
+        "couldn't read the audio at {} into the file",
         crate::format_time::format_duration_compact(at_secs)
     )
 }
@@ -1067,7 +1084,7 @@ pub fn export_selected(state: &AppState) {
         return;
     }
     if let Some(t) = export_too_long(&state, &file, ExportFormat::Wav) {
-        show_export_failed(&state, &too_long_text(t));
+        show_export_failed(&state, &too_long_text(&state, t, ExportFormat::Wav));
         return;
     }
     let views = export_channel_views(

@@ -100,7 +100,11 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let source = &file.audio.source;
 
     if let Some(t) = export_too_long(state, &file, crate::state::ExportFormat::Mp4) {
-        return Err(JsValue::from_str(&too_long_text(t)));
+        return Err(JsValue::from_str(&too_long_text(
+            state,
+            t,
+            crate::state::ExportFormat::Mp4,
+        )));
     }
 
     // Determine time range (same logic as WAV export)

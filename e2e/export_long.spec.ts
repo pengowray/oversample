@@ -147,8 +147,8 @@ test.describe("export from a long recording", () => {
     await expect(exportButton(page)).toHaveText("Export whole file (.wav)");
     await expect(exportButton(page)).toBeDisabled();
     const reason = page.locator(".export-too-long");
-    await expect(reason).toContainText("Too long to export: 12m10s.");
-    await expect(reason).toContainText("The longest export of this file is 11m39s.");
+    await expect(reason).toContainText("Too long to export: the whole file is 12m10s.");
+    await expect(reason).toContainText("The limit for this file is 11m39s. Select a shorter part.");
     await page.screenshot({ path: "test-results/export-too-long.png" });
 
     const sel = await selectFarFromStart(page);

@@ -4838,6 +4838,19 @@ impl AppState {
 
 #[cfg(test)]
 mod usb_channel_setting_tests {
+    #[test]
+    fn video_annotations_choice_filters_by_tag() {
+        use super::VideoAnnotations;
+        let tags = vec!["call".to_string(), "species=Myotis".to_string()];
+        assert!(!VideoAnnotations::None.shows(&tags));
+        assert!(VideoAnnotations::All.shows(&[]));
+        assert!(VideoAnnotations::Tag("call".into()).shows(&tags));
+        assert!(VideoAnnotations::Tag("species=Myotis".into()).shows(&tags));
+        // The whole stored tag has to match, not part of it.
+        assert!(!VideoAnnotations::Tag("species".into()).shows(&tags));
+        assert!(!VideoAnnotations::Tag("call".into()).shows(&[]));
+    }
+
     use super::{channel_pick_for, format_channel_pick, parse_channel_pick, ChannelPick};
 
     fn pick(channels: &[u32], averaged: bool) -> ChannelPick {
