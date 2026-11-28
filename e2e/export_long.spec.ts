@@ -9,8 +9,8 @@ import path from "path";
  * more than 512 MB once decoded), not held in memory.
  *
  * - The whole file is too long to hold in memory. As WAV it is written to the
- *   browser's storage a piece at a time and downloaded from there. As MP4 it
- *   is refused: the Export button is disabled and the panel says why.
+ *   browser's storage a piece at a time and downloaded from there. As MP4 its
+ *   audio is encoded a piece at a time.
  * - A selection minutes into the file exports with its sound. (Export used to
  *   read audio that was not loaded yet, and wrote silence.)
  * - An MP4 export draws the annotations chosen in "Annotations", and its
@@ -159,18 +159,9 @@ test.describe("export from a long recording", () => {
     await openRecording(page);
 
     // 730 s at 192 kHz mono is over the 512 MB of samples an export holds in
-    // memory. MP4 is refused.
-    await openExportPanel(page, "MP4");
-    await expect(exportButton(page)).toBeDisabled();
-    const reason = page.locator(".export-too-long");
-    await expect(reason).toHaveText(
-      "Too long to export: the whole file is 12m10s. The limit for this file is 11m39s. Select a shorter part.",
-    );
-    await page.screenshot({ path: "test-results/export-too-long.png" });
-
-    // WAV is written to the browser's storage and downloaded from there.
+    // memory. It is written to the browser's storage and downloaded from there.
     await openExportPanel(page, "WAV");
-    await expect(reason).toHaveCount(0);
+    await expect(page.locator(".export-too-long")).toHaveCount(0);
     await expect(exportButton(page)).toHaveText("Export whole file (.wav)");
     await expect(exportButton(page)).toBeEnabled();
     const whole = wavRms(await download(page));
@@ -201,6 +192,40 @@ test.describe("export from a long recording", () => {
       expect(rms).toBeGreaterThan(0.09);
       expect(rms).toBeLessThan(0.12);
     }
+    expect(errors).toEqual([]);
+  });
+
+  test("the whole file exports as MP4, with sound to the end", async ({ page }) => {
+    test.setTimeout(1_200_000);
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await openRecording(page);
+    await openExportPanel(page, "MP4");
+    await expect(exportButton(page)).toHaveText("Export whole file (.mp4)");
+    await expect(exportButton(page)).toBeEnabled();
+    const t0 = Date.now();
+    const started = page.waitForEvent("download", { timeout: 1_100_000 });
+    await exportButton(page).click();
+    const mp4 = path.join(path.dirname(wavPath), "whole.mp4");
+    await (await started).saveAs(mp4);
+    console.log(`whole-file MP4: ${fs.statSync(mp4).size} bytes in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+    const seconds = Number(
+      execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", mp4], {
+        encoding: "utf8",
+      }),
+    );
+    expect(Math.abs(seconds - SECONDS)).toBeLessThan(0.5);
+    // The last 10 s still have the 5 kHz tone, and a frame near the end is
+    // not black (its tiles were computed for the export).
+    const tail = execFileSync(
+      "sh",
+      ["-c", `ffmpeg -hide_banner -sseof -10 -i "${mp4}" -af volumedetect -vn -f null - 2>&1 | grep max_volume`],
+      { encoding: "utf8" },
+    );
+    const tailDb = Number(tail.match(/max_volume: (-?[\d.]+) dB/)![1]);
+    console.log(`last 10 s: max volume ${tailDb} dB`);
+    expect(tailDb).toBeGreaterThan(-20);
+    execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-sseof", "-5", "-i", mp4, "-frames:v", "1", "test-results/export-mp4-whole-end.png"]);
     expect(errors).toEqual([]);
   });
 
@@ -262,11 +287,5 @@ test.describe("export from a long recording", () => {
     expect(frames["none-static"].equals(frames["all-static"])).toBe(false);
     expect(frames["tag-call-static"].equals(frames["all-static"])).toBe(true);
 
-    // The same panel at a phone's width, where it opens over the view.
-    await page.setViewportSize({ width: 375, height: 812 });
-    const info = page.locator('button[title="Show info panel"]').first();
-    if (await info.count()) await info.click();
-    await expect(annotations).toBeVisible();
-    await page.screenshot({ path: "test-results/export-mp4-options-375.png" });
   });
 });

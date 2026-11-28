@@ -109,41 +109,88 @@ pub async fn save_to_shared_storage(
 /// Write all of `data` to an open file, then close it. A failed write
 /// discards the file.
 async fn write_and_close(id: u32, data: &[u8]) -> Result<(), String> {
-    #[derive(Serialize)]
-    struct Close {
-        id: u32,
-        size: u64,
+    let mut save = OpenSave {
+        id,
+        path: String::new(),
+        written: 0,
+    };
+    if let Err(e) = save.write(data).await {
+        save.discard().await;
+        return Err(e);
     }
-    #[derive(Serialize)]
-    struct Id {
-        id: u32,
+    save.close().await.map(|_| ())
+}
+
+/// A file that is open for writing a part at a time, for something too
+/// large to hold whole. [`OpenSave::close`] keeps it and
+/// [`OpenSave::discard`] deletes it.
+pub struct OpenSave {
+    id: u32,
+    path: String,
+    written: u64,
+}
+
+#[derive(Serialize)]
+struct SaveId {
+    id: u32,
+}
+
+impl OpenSave {
+    /// Desktop: ask where to save with a "Save As" dialog. `Ok(None)` when
+    /// the user cancels.
+    pub async fn with_dialog(filename: &str) -> Result<Option<OpenSave>, String> {
+        let opened: Option<OpenedSave> =
+            tauri_invoke_typed_args("save_open_dialog", &Filename { filename }).await?;
+        Ok(opened.map(|o| OpenSave {
+            id: o.id,
+            path: o.path,
+            written: 0,
+        }))
     }
-    let step = raw_part_limit() as usize;
-    for (i, part) in data.chunks(step).enumerate() {
-        let res = tauri_invoke_raw(
-            "save_write",
-            &js_sys::Uint8Array::from(part),
-            &[
-                ("x-save-id", id.to_string()),
-                ("x-save-offset", (i * step).to_string()),
-            ],
+
+    /// Adds `data` to the end of the file.
+    pub async fn write(&mut self, data: &[u8]) -> Result<(), String> {
+        for part in data.chunks(raw_part_limit() as usize) {
+            tauri_invoke_raw(
+                "save_write",
+                &js_sys::Uint8Array::from(part),
+                &[
+                    ("x-save-id", self.id.to_string()),
+                    ("x-save-offset", self.written.to_string()),
+                ],
+            )
+            .await?;
+            self.written += part.len() as u64;
+        }
+        Ok(())
+    }
+
+    /// Closes the file and returns its path. A failed close deletes it.
+    pub async fn close(self) -> Result<String, String> {
+        #[derive(Serialize)]
+        struct Close {
+            id: u32,
+            size: u64,
+        }
+        let closed = tauri_invoke_args(
+            "save_close",
+            &Close {
+                id: self.id,
+                size: self.written,
+            },
         )
         .await;
-        if let Err(e) = res {
-            let _ = tauri_invoke_args("save_discard", &Id { id }).await;
-            return Err(e);
+        match closed {
+            Ok(()) => Ok(self.path),
+            Err(e) => {
+                let _ = tauri_invoke_args("save_discard", &SaveId { id: self.id }).await;
+                Err(e)
+            }
         }
     }
-    let closed = tauri_invoke_args(
-        "save_close",
-        &Close {
-            id,
-            size: data.len() as u64,
-        },
-    )
-    .await;
-    if closed.is_err() {
-        let _ = tauri_invoke_args("save_discard", &Id { id }).await;
+
+    /// Stops writing and deletes the file.
+    pub async fn discard(self) {
+        let _ = tauri_invoke_args("save_discard", &SaveId { id: self.id }).await;
     }
-    closed
 }

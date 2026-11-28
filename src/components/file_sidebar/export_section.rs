@@ -89,7 +89,7 @@ pub fn ExportPanel() -> impl IntoView {
 
     let export_disabled = move || {
         export::get_export_info(&state).is_none()
-            || state.export.video_progress().get().is_some()
+            || state.export.progress().get().is_some()
             || too_long().is_some()
     };
 
@@ -504,8 +504,8 @@ pub fn ExportPanel() -> impl IntoView {
 
                 // Progress bar and status text
                 {move || {
-                    let progress = state.export.video_progress().get();
-                    let status = state.export.video_status().get();
+                    let progress = state.export.progress().get();
+                    let status = state.export.status().get();
 
                     if progress.is_some() || status.is_some() {
                         let status_text = status.unwrap_or_else(|| "Exporting...".to_string());
@@ -531,7 +531,7 @@ pub fn ExportPanel() -> impl IntoView {
                                             class="sidebar-btn"
                                             style="margin-top: 4px;"
                                             on:click=move |_| {
-                                                state.export.video_cancel().set(true);
+                                                state.export.cancel().set(true);
                                             }
                                         >
                                             "Cancel"

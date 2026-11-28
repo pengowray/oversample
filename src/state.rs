@@ -2249,12 +2249,12 @@ pub struct ExportState {
     pub wav_depth: WavExportDepth,
     /// Scale each exported file so its processed peak is -3 dBFS.
     pub normalize: bool,
-    /// Video export progress (0.0 to 1.0), None = not exporting.
-    pub video_progress: Option<f64>,
-    /// Video export status message.
-    pub video_status: Option<String>,
-    /// Set to true to request cancellation of an in-progress video export.
-    pub video_cancel: bool,
+    /// Progress of the WAV or MP4 export that is running (0.0 to 1.0), None = not exporting.
+    pub progress: Option<f64>,
+    /// The running export's status line, or its error for 10 s after it failed.
+    pub status: Option<String>,
+    /// Set to true to ask the running export to stop.
+    pub cancel: bool,
     pub video_resolution: VideoResolution,
     pub video_codec: VideoCodec,
     /// Selected audio codec for video export.
@@ -3478,9 +3478,9 @@ impl AppState {
                     crate::settings::keys::EXPORT_NORMALIZE,
                     false,
                 ),
-                video_progress: None,
-                video_status: None,
-                video_cancel: false,
+                progress: None,
+                status: None,
+                cancel: false,
                 video_resolution: VideoResolution::default(),
                 video_codec: VideoCodec::default(),
                 video_audio_codec: AudioCodecOption::default(),

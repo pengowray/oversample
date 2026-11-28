@@ -159,20 +159,6 @@ impl Writer {
             .map_err(|e| js_err("write", e))
     }
 
-    /// Writes `data` over the start of the file, for a header whose sizes
-    /// are known only once the rest is written. Later [`Writer::write`]
-    /// calls would carry on after it, so this is the last write.
-    pub async fn write_at_start(&self, data: &js_sys::Object) -> Result<(), String> {
-        let sought = self
-            .stream
-            .seek_with_u32(0)
-            .map_err(|e| js_err("write", e))?;
-        JsFuture::from(sought)
-            .await
-            .map_err(|e| js_err("write", e))?;
-        self.write(data).await
-    }
-
     /// Closes the file and returns it for reading, with where it is stored.
     pub async fn finish(self) -> Result<(web_sys::File, StoredFile), String> {
         let stream: &WritableStream = self.stream.unchecked_ref();

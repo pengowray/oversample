@@ -1109,18 +1109,23 @@ pub(crate) fn export_too_long(
     file: &LoadedFile,
     format: ExportFormat,
 ) -> Option<TooLong> {
-    if format == ExportFormat::Wav && writes_long_exports_to_file(state) {
+    // A video's audio is encoded a piece at a time, so it has no limit.
+    if format == ExportFormat::Mp4 || writes_long_exports_to_file(state) {
         return None;
     }
     over_memory_limit(state, file, format)
 }
 
 /// True where a WAV export too long for memory is written to a file a piece
-/// at a time instead: in a browser with storage it can write to that way
-/// (`crate::opfs_audio`). The Tauri apps save through a dialog or the media
-/// store, which take the whole file at once.
+/// at a time instead: the desktop app (through its "Save As" dialog), and a
+/// browser with storage it can write to that way (`crate::opfs_audio`). The
+/// Android app saves through the media store, which this does not do yet.
 fn writes_long_exports_to_file(state: &AppState) -> bool {
-    !state.is_tauri && crate::opfs_audio::supported()
+    if state.is_tauri {
+        !state.is_mobile_platform
+    } else {
+        crate::opfs_audio::supported()
+    }
 }
 
 /// `Some` when the export that `format` would make of `file` right now is
@@ -1176,12 +1181,12 @@ pub(crate) fn show_export_failed(state: &AppState, msg: &str) {
     let state = *state;
     let text = format!("Export failed: {msg}");
     log::error!("{text}");
-    state.export.video_progress().set(None);
-    state.export.video_status().set(Some(text.clone()));
+    state.export.progress().set(None);
+    state.export.status().set(Some(text.clone()));
     leptos::task::spawn_local(async move {
         crate::web_util::sleep_ms(10_000).await;
-        if state.export.video_status().get_untracked().as_ref() == Some(&text) {
-            state.export.video_status().set(None);
+        if state.export.status().get_untracked().as_ref() == Some(&text) {
+            state.export.status().set(None);
         }
     });
 }
@@ -1202,7 +1207,7 @@ pub fn export_selected(state: &AppState) {
         Some(f) => f,
         None => return,
     };
-    if state.export.video_progress().get_untracked().is_some() {
+    if state.export.progress().get_untracked().is_some() {
         return;
     }
     if let Some(t) = export_too_long(&state, &file, ExportFormat::Wav) {
@@ -1223,11 +1228,11 @@ pub fn export_selected(state: &AppState) {
     let jobs = export_jobs(&state, &file);
     let to_file = over_memory_limit(&state, &file, ExportFormat::Wav).is_some();
 
-    state.export.video_cancel().set(false);
-    state.export.video_progress().set(Some(0.0));
+    state.export.cancel().set(false);
+    state.export.progress().set(Some(0.0));
     state
         .export
-        .video_status()
+        .status()
         .set(Some("Processing audio...".to_string()));
 
     leptos::task::spawn_local(async move {
@@ -1251,20 +1256,20 @@ pub fn export_selected(state: &AppState) {
                 &job.params,
                 |done| {
                     let progress = (i as f64 + done) / n_jobs;
-                    state.export.video_progress().set(Some(progress));
-                    state.export.video_status().set(Some(format!(
+                    state.export.progress().set(Some(progress));
+                    state.export.status().set(Some(format!(
                         "Processing audio... {}%",
                         (progress * 100.0) as u32
                     )));
-                    !state.export.video_cancel().get_untracked()
+                    !state.export.cancel().get_untracked()
                 },
             )
             .await;
             let channels = match processed {
                 Ok(channels) => channels,
                 Err(RegionError::Cancelled) => {
-                    state.export.video_progress().set(None);
-                    state.export.video_status().set(None);
+                    state.export.progress().set(None);
+                    state.export.status().set(None);
                     return;
                 }
                 Err(RegionError::NotLoaded { at_secs }) => {
@@ -1284,8 +1289,8 @@ pub fn export_selected(state: &AppState) {
             );
             exports.push((wav_file_name(&file, &views, job), wav_data));
         }
-        state.export.video_progress().set(None);
-        state.export.video_status().set(None);
+        state.export.progress().set(None);
+        state.export.status().set(None);
         save_exports(&state, exports, false);
     });
 }
@@ -1308,9 +1313,75 @@ fn region_error(e: RegionError) -> FileExportError {
     }
 }
 
+/// The file a long export is written to, a piece at a time.
+enum ExportSink {
+    /// A file in the browser's storage, downloaded once it is whole.
+    Browser(crate::opfs_audio::Writer),
+    /// Desktop app: the file the user picked in the "Save As" dialog.
+    Native(crate::native_save::OpenSave),
+}
+
+/// A long export's finished file.
+enum ExportedFile {
+    Browser(web_sys::File, crate::opfs_audio::StoredFile),
+    /// The path it was saved to.
+    Native(String),
+}
+
+impl ExportSink {
+    /// Opens the file for `name`, which needs `bytes` of room. `Err(None)`
+    /// when the user cancels the "Save As" dialog.
+    async fn open(state: &AppState, name: &str, bytes: u64) -> Result<Self, FileExportError> {
+        if state.is_tauri {
+            return match crate::native_save::OpenSave::with_dialog(name).await {
+                Ok(Some(save)) => Ok(ExportSink::Native(save)),
+                Ok(None) => Err(None),
+                Err(e) => Err(Some(e)),
+            };
+        }
+        if let Some(free) = crate::opfs_audio::free_bytes().await {
+            if free < bytes {
+                return Err(Some(no_space_text(bytes, free)));
+            }
+        }
+        crate::opfs_audio::Writer::create(name)
+            .await
+            .map(ExportSink::Browser)
+            .map_err(Some)
+    }
+
+    async fn write(&mut self, bytes: &[u8]) -> Result<(), FileExportError> {
+        match self {
+            ExportSink::Browser(writer) => writer.write(&js_sys::Uint8Array::from(bytes)).await,
+            ExportSink::Native(save) => save.write(bytes).await,
+        }
+        .map_err(Some)
+    }
+
+    async fn finish(self) -> Result<ExportedFile, FileExportError> {
+        match self {
+            ExportSink::Browser(writer) => writer
+                .finish()
+                .await
+                .map(|(file, stored)| ExportedFile::Browser(file, stored)),
+            ExportSink::Native(save) => save.close().await.map(ExportedFile::Native),
+        }
+        .map_err(Some)
+    }
+
+    async fn discard(self) {
+        match self {
+            ExportSink::Browser(writer) => writer.discard().await,
+            ExportSink::Native(save) => save.discard().await,
+        }
+    }
+}
+
 /// [`export_selected`] for an export too long to hold in memory: each job is
-/// written to a file in the browser's storage a piece at a time, and the
-/// browser then downloads the files.
+/// written to a file a piece at a time. In the browser the file is in the
+/// browser's storage and is downloaded once it is whole. In the desktop app
+/// it is the file the user picks in a "Save As" dialog, asked before the
+/// job's audio is processed.
 async fn export_to_files(
     state: AppState,
     file: &LoadedFile,
@@ -1324,49 +1395,64 @@ async fn export_to_files(
         crate::opfs_audio::delete(&stored).await;
     }
     let n_jobs = jobs.len() as f64;
-    let mut written: Vec<(String, web_sys::File)> = Vec::new();
+    let mut downloads: Vec<(String, web_sys::File)> = Vec::new();
+    let mut saved: Vec<String> = Vec::new();
     for (i, job) in jobs.iter().enumerate() {
         let name = wav_file_name(file, views, job);
-        let result =
-            export_job_to_file(file, views, job, bits, is_float, normalize, &name, |done| {
+        let result = export_job_to_file(
+            &state,
+            file,
+            views,
+            job,
+            bits,
+            is_float,
+            normalize,
+            &name,
+            |done| {
                 let progress = (i as f64 + done) / n_jobs;
-                state.export.video_progress().set(Some(progress));
-                state.export.video_status().set(Some(format!(
+                state.export.progress().set(Some(progress));
+                state.export.status().set(Some(format!(
                     "Processing audio... {}%",
                     (progress * 100.0) as u32
                 )));
-                !state.export.video_cancel().get_untracked()
-            })
-            .await;
+                !state.export.cancel().get_untracked()
+            },
+        )
+        .await;
         match result {
-            Ok((out, stored)) => {
+            Ok(ExportedFile::Browser(out, stored)) => {
                 STORED_EXPORTS.with(|s| s.borrow_mut().push(stored));
-                written.push((name, out));
+                downloads.push((name, out));
             }
-            Err(None) => {
-                state.export.video_progress().set(None);
-                state.export.video_status().set(None);
-                return;
-            }
+            Ok(ExportedFile::Native(path)) => saved.push(path),
+            // A cancel, or a "Save As" dialog that was closed: the files
+            // written so far are kept.
+            Err(None) => break,
             Err(Some(message)) => {
                 show_export_failed(&state, &message);
                 return;
             }
         }
     }
-    state.export.video_progress().set(None);
-    state.export.video_status().set(None);
-    for (name, out) in &written {
+    state.export.progress().set(None);
+    state.export.status().set(None);
+    for (name, out) in &downloads {
         trigger_blob_download(out, name);
+    }
+    match saved.as_slice() {
+        [] => {}
+        [path] => state.show_info_toast(format!("Exported: {}", short_path(path))),
+        paths => state.show_info_toast(format!("Exported {}/{} files", paths.len(), jobs.len())),
     }
 }
 
-/// Processes one job and writes it as a WAV with GUANO metadata to a new
-/// file in the browser's storage. With `normalize` the job is processed
-/// twice: once for its peak, once to write it. `on_progress` gets the part
-/// done, 0 to 1, and returns false to cancel.
+/// Processes one job and writes it as a WAV with GUANO metadata to a file.
+/// With `normalize` the job is processed twice: once for its peak, once to
+/// write it. `on_progress` gets the part done, 0 to 1, and returns false to
+/// cancel.
 #[allow(clippy::too_many_arguments)]
 async fn export_job_to_file(
+    state: &AppState,
     file: &LoadedFile,
     views: &[ChannelView],
     job: &ExportJob,
@@ -1375,8 +1461,8 @@ async fn export_job_to_file(
     normalize: bool,
     name: &str,
     mut on_progress: impl FnMut(f64) -> bool,
-) -> Result<(web_sys::File, crate::opfs_audio::StoredFile), FileExportError> {
-    use crate::audio::wav::{WavWriteFormat, WRITE_HEADER_LEN};
+) -> Result<ExportedFile, FileExportError> {
+    use crate::audio::wav::{header_bytes, WavWriteFormat};
     let source = file.audio.source.as_ref();
     let rate = file.audio.sample_rate;
     let region = || RegionProcessor::new(source, views, rate, job.start, job.end, &job.params);
@@ -1386,83 +1472,11 @@ async fn export_job_to_file(
         bits,
         is_float,
     );
-
-    let needed = WRITE_HEADER_LEN as u64
-        + region().frames() as u64 * u64::from(fmt.block_align())
-        + 64 * 1024;
-    if let Some(free) = crate::opfs_audio::free_bytes().await {
-        if free < needed {
-            return Err(Some(no_space_text(needed, free)));
-        }
-    }
-
-    let passes = if normalize { 2.0 } else { 1.0 };
-    let mut factor = 1.0f32;
-    if normalize {
-        let mut measured = region();
-        let mut peak = 0.0f32;
-        while let Some(piece) = measured.next_piece().await.map_err(region_error)? {
-            peak = piece.iter().flatten().fold(peak, |p, s| p.max(s.abs()));
-            if !on_progress(measured.progress() / passes) {
-                return Err(None);
-            }
-            crate::canvas::tile_cache::yield_to_browser().await;
-        }
-        if peak > 0.0 {
-            factor = 10f64.powf(NORMALIZE_DBFS / 20.0) as f32 / peak;
-        }
-    }
-
-    let writer = crate::opfs_audio::Writer::create(name)
-        .await
-        .map_err(Some)?;
-    let wrote = write_job(&writer, region(), &fmt, factor, file, job, |done| {
-        on_progress((passes - 1.0 + done) / passes)
-    })
-    .await;
-    match wrote {
-        Ok(()) => writer.finish().await.map_err(Some),
-        Err(e) => {
-            writer.discard().await;
-            Err(e)
-        }
-    }
-}
-
-/// Writes `region`'s audio, scaled by `factor`, as a WAV in `fmt` with
-/// GUANO metadata. The header goes in last, when the sizes are known.
-async fn write_job(
-    writer: &crate::opfs_audio::Writer,
-    mut region: RegionProcessor<'_>,
-    fmt: &crate::audio::wav::WavWriteFormat,
-    factor: f32,
-    file: &LoadedFile,
-    job: &ExportJob,
-    mut on_progress: impl FnMut(f64) -> bool,
-) -> Result<(), FileExportError> {
-    use crate::audio::wav::{encode_f32_samples, header_bytes, WRITE_HEADER_LEN};
-    let put = |bytes: Vec<u8>| async move {
-        writer
-            .write(&js_sys::Uint8Array::from(bytes.as_slice()))
-            .await
-            .map_err(Some)
-    };
-    put(vec![0u8; WRITE_HEADER_LEN]).await?;
-    let mut frames = 0usize;
-    let mut data_bytes = 0u64;
-    while let Some(mut piece) = region.next_piece().await.map_err(region_error)? {
-        if factor != 1.0 {
-            apply_gain_linear(&mut piece, factor);
-        }
-        frames += piece.first().map_or(0, Vec::len);
-        let bytes = encode_f32_samples(&interleave(piece), fmt);
-        data_bytes += bytes.len() as u64;
-        put(bytes).await?;
-        if !on_progress(region.progress()) {
-            return Err(None);
-        }
-        crate::canvas::tile_cache::yield_to_browser().await;
-    }
+    // Every mode gives one output sample for each source sample, so the
+    // file's sizes are known before any audio is processed and its header
+    // can be written first.
+    let frames = region().frames();
+    let data_bytes = frames as u64 * u64::from(fmt.block_align());
     let guano = build_export_guano(
         fmt.sample_rate,
         frames,
@@ -1471,14 +1485,81 @@ async fn write_job(
         file.audio.metadata.guano.as_ref(),
     );
     let after = chunks_after_data(data_bytes, &guano.to_text());
-    let after_len = after.len() as u64;
-    put(after).await?;
-    writer
-        .write_at_start(&js_sys::Uint8Array::from(
-            header_bytes(fmt, data_bytes, after_len).as_slice(),
-        ))
-        .await
-        .map_err(Some)
+    let header = header_bytes(&fmt, data_bytes, after.len() as u64);
+
+    // Asked first, so the desktop app's dialog comes straight after the click.
+    let mut sink = ExportSink::open(
+        state,
+        name,
+        header.len() as u64 + data_bytes + after.len() as u64,
+    )
+    .await?;
+
+    let wrote = async {
+        let passes = if normalize { 2.0 } else { 1.0 };
+        let mut factor = 1.0f32;
+        if normalize {
+            let mut measured = region();
+            let mut peak = 0.0f32;
+            while let Some(piece) = measured.next_piece().await.map_err(region_error)? {
+                peak = piece.iter().flatten().fold(peak, |p, s| p.max(s.abs()));
+                if !on_progress(measured.progress() / passes) {
+                    return Err(None);
+                }
+                crate::canvas::tile_cache::yield_to_browser().await;
+            }
+            if peak > 0.0 {
+                factor = 10f64.powf(NORMALIZE_DBFS / 20.0) as f32 / peak;
+            }
+        }
+        sink.write(&header).await?;
+        write_samples(&mut sink, region(), &fmt, frames, factor, |done| {
+            on_progress((passes - 1.0 + done) / passes)
+        })
+        .await?;
+        sink.write(&after).await
+    }
+    .await;
+    match wrote {
+        Ok(()) => sink.finish().await,
+        Err(e) => {
+            sink.discard().await;
+            Err(e)
+        }
+    }
+}
+
+/// Writes `region`'s audio, scaled by `factor`, as exactly `frames` frames
+/// of `fmt` samples, the number the file's header says: audio past that is
+/// left out, and silence makes up any shortfall.
+async fn write_samples(
+    sink: &mut ExportSink,
+    mut region: RegionProcessor<'_>,
+    fmt: &crate::audio::wav::WavWriteFormat,
+    frames: usize,
+    factor: f32,
+    mut on_progress: impl FnMut(f64) -> bool,
+) -> Result<(), FileExportError> {
+    use crate::audio::wav::encode_f32_samples;
+    let mut left = frames;
+    while let Some(mut piece) = region.next_piece().await.map_err(region_error)? {
+        if factor != 1.0 {
+            apply_gain_linear(&mut piece, factor);
+        }
+        piece.iter_mut().for_each(|ch| ch.truncate(left));
+        left -= piece.first().map_or(0, Vec::len);
+        sink.write(&encode_f32_samples(&interleave(piece), fmt))
+            .await?;
+        if !on_progress(region.progress()) {
+            return Err(None);
+        }
+        crate::canvas::tile_cache::yield_to_browser().await;
+    }
+    if left > 0 {
+        let silence = vec![0.0f32; left * usize::from(fmt.channels)];
+        sink.write(&encode_f32_samples(&silence, fmt)).await?;
+    }
+    Ok(())
 }
 
 /// What follows `data_bytes` of samples in an exported WAV: the data
