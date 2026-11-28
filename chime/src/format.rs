@@ -150,20 +150,56 @@ pub const REMOTE_VERSION: u8 = 1;
 /// check that [`remote_check`] makes from the code.
 pub const REMOTE_VERSION_CODED: u8 = 2;
 
+/// The layouts that also give the accuracy of the chime's location, from X8 patch build B293.
+/// Byte 4 has one of these in its high 4 bits and an accuracy step in its low 4 bits (see
+/// [`ACCURACY_STEPS_M`]); byte 5 is as in version 2. With [`REMOTE_ACCURATE_CODED`], bytes 6 and 7
+/// are the check, which covers byte 4 in place of the version. With [`REMOTE_ACCURATE`], for a
+/// phone page that has no code, they are 0.
+pub const REMOTE_ACCURATE_CODED: u8 = 0x30;
+pub const REMOTE_ACCURATE: u8 = 0x40;
+
+/// The accuracy steps, in metres: step 1 is a location accuracy of up to 3 m, step 14 of up to
+/// 10 km. Step 15 is an accuracy over 10 km ([`ACCURACY_OVER`]), and step 0 one that is not
+/// known. The accuracy is the radius that 68% of readings are within, which GUANO's
+/// `Loc Accuracy` field holds.
+pub const ACCURACY_STEPS_M: [u16; 14] = [
+    3, 5, 7, 10, 15, 20, 30, 50, 100, 200, 500, 1000, 3000, 10000,
+];
+
+/// What [`RemoteMessage::accuracy_m`] gives for step 15: an accuracy over the last of
+/// [`ACCURACY_STEPS_M`].
+pub const ACCURACY_OVER: u16 = u16::MAX;
+
+/// The step for an accuracy in metres: the first one that is not under it, or 15 for an
+/// accuracy over 10 km. 0 for an accuracy under 0, or not a number.
+pub fn accuracy_step(metres: f32) -> u8 {
+    if !(metres >= 0.0) {
+        return 0;
+    }
+    match ACCURACY_STEPS_M
+        .iter()
+        .position(|&step| metres <= step as f32)
+    {
+        Some(i) => i as u8 + 1,
+        None => 15,
+    }
+}
+
 /// The number of digits in the code that the receiver shows and the phone page is given.
 pub const REMOTE_CODE_DIGITS: usize = 6;
 
-/// The check in bytes 6 and 7 of a version 2 deployment ID: the low 16 bits of a SipHash-2-4
+/// The check in bytes 6 and 7 of a deployment ID that has one: the low 16 bits of a SipHash-2-4
 /// hash, low byte first. The key is 16 bytes: the code's 6 ASCII digits, then 10 zero bytes. The
-/// message is 12 bytes: [`REMOTE_MAGIC`], [`REMOTE_VERSION_CODED`], byte 5 of the deployment ID,
-/// then the chime's Unix time (4 bytes) and UTC offset in minutes (2 bytes), both little-endian
-/// as in the payload.
+/// message is 12 bytes: [`REMOTE_MAGIC`], bytes 4 and 5 of the deployment ID (byte 4 is
+/// [`REMOTE_VERSION_CODED`] in version 2), then the chime's Unix time (4 bytes) and UTC offset in
+/// minutes (2 bytes), both little-endian as in the payload.
 ///
 /// The time is in the message, so a recording of a chime has the wrong check when it is sent
 /// again with another time. The check has 16 bits, so one guess in 65,536 is right, and a
 /// recording of a few commands is enough to find the code by trying all 1,000,000 codes.
 pub fn remote_check(
     code: &[u8; REMOTE_CODE_DIGITS],
+    version_byte: u8,
     command_byte: u8,
     unix_time: u32,
     timezone_minutes: i16,
@@ -176,7 +212,7 @@ pub fn remote_check(
     let [z0, z1] = timezone_minutes.to_le_bytes();
     let [m0, m1, m2, m3] = REMOTE_MAGIC;
     let words = [
-        u64::from_le_bytes([m0, m1, m2, m3, REMOTE_VERSION_CODED, command_byte, t0, t1]),
+        u64::from_le_bytes([m0, m1, m2, m3, version_byte, command_byte, t0, t1]),
         u64::from_le_bytes([t2, t3, z0, z1, 0, 0, 0, 12]),
     ];
     let [check_0, check_1, ..] = siphash_2_4(key, &words).to_le_bytes();
@@ -224,9 +260,10 @@ fn siphash_2_4(key: [u64; 2], words: &[u64]) -> u64 {
 /// A phone remote message: a deployment ID that starts with [`REMOTE_MAGIC`]. It may hold a
 /// version or command that this crate does not know, which the receiver reports as unknown.
 ///
-/// The fields are named for version 1. In a version 2 message `command` is byte 5, which has the
+/// The fields are named for version 1. In the later layouts `command` is byte 5, which has the
 /// command and the argument, and `argument` is the check: see [`RemoteMessage::coded`] and
-/// [`RemoteMessage::check`].
+/// [`RemoteMessage::check`]. In the layouts with an accuracy, `version` is byte 4, which also
+/// has the accuracy step: see [`RemoteMessage::accuracy_m`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RemoteMessage {
     pub version: u8,
@@ -263,28 +300,57 @@ impl RemoteMessage {
         RemoteCommand::from_code(self.command, self.argument)
     }
 
-    /// The command of a version 2 message, if this crate knows the command and its argument. The
-    /// check is not looked at: see [`RemoteMessage::check_matches`].
+    /// The high 4 bits of byte 4 in a layout with an accuracy, and 0 in versions 1 and 2.
+    const fn accurate_layout(self) -> u8 {
+        let layout = self.version & 0xf0;
+        if layout == REMOTE_ACCURATE_CODED || layout == REMOTE_ACCURATE {
+            layout
+        } else {
+            0
+        }
+    }
+
+    /// The command of a version 2 message, or of one with an accuracy, if this crate knows the
+    /// command and its argument. The check is not looked at: see
+    /// [`RemoteMessage::check_matches`].
     pub fn coded(self) -> Option<RemoteCommand> {
-        if self.version != REMOTE_VERSION_CODED {
+        if self.version != REMOTE_VERSION_CODED && self.accurate_layout() == 0 {
             return None;
         }
         RemoteCommand::from_code(self.command >> 4, (self.command & 0x0f).into())
     }
 
-    /// The command of a version 1 or version 2 message that this crate knows, whatever the
-    /// check of a version 2 message is.
+    /// The command of a message that this crate knows, in any layout, whatever its check is.
     pub fn command(self) -> Option<RemoteCommand> {
         self.known().or(self.coded())
     }
 
-    /// The check in a version 2 message, as bytes 6 and 7 of the deployment ID.
+    /// The check in a message that has one, as bytes 6 and 7 of the deployment ID.
     pub fn check(self) -> Option<[u8; 2]> {
-        (self.version == REMOTE_VERSION_CODED).then(|| self.argument.to_le_bytes())
+        (self.version == REMOTE_VERSION_CODED || self.accurate_layout() == REMOTE_ACCURATE_CODED)
+            .then(|| self.argument.to_le_bytes())
     }
 
-    /// Whether this is a version 2 message whose check is the one that `code` gives for the
-    /// chime's time and UTC offset. The command may be one this crate does not know.
+    /// The accuracy of the chime's location in metres, as the largest value of its step in
+    /// [`ACCURACY_STEPS_M`], or [`ACCURACY_OVER`] for an accuracy over the last step. None in
+    /// versions 1 and 2, and for an accuracy that is not known.
+    pub fn accuracy_m(self) -> Option<u16> {
+        if self.accurate_layout() == 0 {
+            return None;
+        }
+        match (self.version & 0x0f) as usize {
+            0 => None,
+            step => Some(
+                ACCURACY_STEPS_M
+                    .get(step - 1)
+                    .copied()
+                    .unwrap_or(ACCURACY_OVER),
+            ),
+        }
+    }
+
+    /// Whether this message has a check and it is the one that `code` gives for the chime's
+    /// time and UTC offset. The command may be one this crate does not know.
     pub fn check_matches(
         self,
         code: &[u8; REMOTE_CODE_DIGITS],
@@ -294,6 +360,7 @@ impl RemoteMessage {
         self.check()
             == Some(remote_check(
                 code,
+                self.version,
                 self.command,
                 unix_time,
                 timezone_minutes,
@@ -404,8 +471,37 @@ impl RemoteCommand {
     ) -> [u8; DEPLOYMENT_ID_BYTES] {
         let [m0, m1, m2, m3] = REMOTE_MAGIC;
         let byte = self.coded_byte();
-        let [c0, c1] = remote_check(code, byte, unix_time, timezone_minutes);
+        let [c0, c1] = remote_check(
+            code,
+            REMOTE_VERSION_CODED,
+            byte,
+            unix_time,
+            timezone_minutes,
+        );
         [m0, m1, m2, m3, REMOTE_VERSION_CODED, byte, c0, c1]
+    }
+
+    /// The whole deployment ID that also gives the location's accuracy as `step` (from
+    /// [`accuracy_step`]), for a chime that carries `unix_time` and `timezone_minutes`: with the
+    /// check that `code` gives, or with no check when `code` is None.
+    pub fn accurate_deployment_id(
+        self,
+        code: Option<&[u8; REMOTE_CODE_DIGITS]>,
+        step: u8,
+        unix_time: u32,
+        timezone_minutes: i16,
+    ) -> [u8; DEPLOYMENT_ID_BYTES] {
+        let [m0, m1, m2, m3] = REMOTE_MAGIC;
+        let byte = self.coded_byte();
+        let step = step & 0x0f;
+        match code {
+            Some(code) => {
+                let version = REMOTE_ACCURATE_CODED | step;
+                let [c0, c1] = remote_check(code, version, byte, unix_time, timezone_minutes);
+                [m0, m1, m2, m3, version, byte, c0, c1]
+            }
+            None => [m0, m1, m2, m3, REMOTE_ACCURATE | step, byte, 0, 0],
+        }
     }
 }
 
@@ -515,7 +611,7 @@ impl TimeMessage {
         self.remote()?.known()
     }
 
-    /// Whether the deployment ID is a version 2 phone remote message whose check is the one that
+    /// Whether the deployment ID is a phone remote message with a check, and it is the one that
     /// `code` gives for this chime's time and UTC offset.
     pub fn remote_check_matches(&self, code: &[u8; REMOTE_CODE_DIGITS]) -> bool {
         self.remote()
@@ -1159,6 +1255,108 @@ mod tests {
             let other = RemoteMessage::from_deployment_id(&other).unwrap();
             assert!(!other.check_matches(b"012345", 1_794_700_800, 0));
         }
+    }
+
+    #[test]
+    fn accuracy_steps_take_the_first_step_that_is_not_under_the_accuracy() {
+        for (metres, step) in [
+            (0.0, 1),
+            (3.0, 1),
+            (3.01, 2),
+            (8.4, 4),
+            (10.0, 4),
+            (50.0, 8),
+            (50.1, 9),
+            (10_000.0, 14),
+            (10_000.1, 15),
+            (f32::INFINITY, 15),
+            (-1.0, 0),
+            (f32::NAN, 0),
+        ] {
+            assert_eq!(accuracy_step(metres), step, "{metres} m");
+        }
+    }
+
+    /// The rows of docs/PHONE_REMOTE.md in the oversample-tascam-firmware repository, which the
+    /// phone page's tests also use.
+    #[test]
+    fn accurate_remote_commands_match_the_test_vectors() {
+        type Vector = (
+            Option<&'static [u8; 6]>,
+            u8,
+            u32,
+            i16,
+            RemoteCommand,
+            [u8; 8],
+        );
+        let vectors: [Vector; 3] = [
+            (
+                Some(b"493817"),
+                4,
+                1_794_700_800,
+                600,
+                RemoteCommand::Start,
+                [0x42, 0x41, 0x54, 0x58, 0x34, 0x10, 0xf2, 0xc8],
+            ),
+            (
+                Some(b"493817"),
+                0,
+                1_794_700_801,
+                -300,
+                RemoteCommand::Listen(ListeningMode::Thru),
+                [0x42, 0x41, 0x54, 0x58, 0x30, 0x46, 0x25, 0x7f],
+            ),
+            (
+                None,
+                15,
+                1_794_700_800,
+                600,
+                RemoteCommand::Stop,
+                [0x42, 0x41, 0x54, 0x58, 0x4f, 0x20, 0, 0],
+            ),
+        ];
+        for (code, step, unix_time, timezone_minutes, command, id) in vectors {
+            let made = command.accurate_deployment_id(code, step, unix_time, timezone_minutes);
+            let message = RemoteMessage::from_deployment_id(&made).unwrap();
+            assert_eq!(message.command(), Some(command));
+            assert_eq!(message.known(), None);
+            let metres = match step {
+                0 => None,
+                15 => Some(ACCURACY_OVER),
+                _ => Some(ACCURACY_STEPS_M[step as usize - 1]),
+            };
+            assert_eq!(message.accuracy_m(), metres);
+            match code {
+                Some(code) => {
+                    assert!(message.check_matches(code, unix_time, timezone_minutes));
+                    assert!(!message.check_matches(b"493818", unix_time, timezone_minutes));
+                    assert!(!message.check_matches(code, unix_time + 1, timezone_minutes));
+                    // The check covers the accuracy step.
+                    let other = RemoteMessage {
+                        version: message.version ^ 1,
+                        ..message
+                    };
+                    assert!(!other.check_matches(code, unix_time, timezone_minutes));
+                }
+                None => {
+                    assert_eq!(message.check(), None);
+                    assert!(!message.check_matches(b"000000", unix_time, timezone_minutes));
+                }
+            }
+            assert_eq!(made, id);
+        }
+        // Versions 1 and 2 give no accuracy, and another high 4 bits in byte 4 is unknown.
+        assert_eq!(RemoteCommand::Stop.message().accuracy_m(), None);
+        let version_2 = RemoteCommand::Stop.coded_deployment_id(b"493817", 0, 0);
+        assert_eq!(
+            RemoteMessage::from_deployment_id(&version_2)
+                .unwrap()
+                .accuracy_m(),
+            None
+        );
+        let unknown = RemoteMessage::from_deployment_id(b"BATX\x54\x20\0\0").unwrap();
+        assert_eq!(unknown.command(), None);
+        assert_eq!(unknown.accuracy_m(), None);
     }
 
     #[test]
