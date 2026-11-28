@@ -1117,15 +1117,11 @@ pub(crate) fn export_too_long(
 }
 
 /// True where a WAV export too long for memory is written to a file a piece
-/// at a time instead: the desktop app (through its "Save As" dialog), and a
-/// browser with storage it can write to that way (`crate::opfs_audio`). The
-/// Android app saves through the media store, which this does not do yet.
+/// at a time instead: the desktop app (through its "Save As" dialog), the
+/// Android app (shared storage), and a browser with storage it can write to
+/// that way (`crate::opfs_audio`).
 fn writes_long_exports_to_file(state: &AppState) -> bool {
-    if state.is_tauri {
-        !state.is_mobile_platform
-    } else {
-        crate::opfs_audio::supported()
-    }
+    state.is_tauri || crate::opfs_audio::supported()
 }
 
 /// `Some` when the export that `format` would make of `file` right now is
@@ -1318,6 +1314,7 @@ enum ExportSink {
     /// A file in the browser's storage, downloaded once it is whole.
     Browser(crate::opfs_audio::Writer),
     /// Desktop app: the file the user picked in the "Save As" dialog.
+    /// Android app: a new file in the shared `Recordings/Oversample/exports`.
     Native(crate::native_save::OpenSave),
 }
 
@@ -1330,10 +1327,22 @@ enum ExportedFile {
 
 impl ExportSink {
     /// Opens the file for `name`, which needs `bytes` of room. `Err(None)`
-    /// when the user cancels the "Save As" dialog.
+    /// when the user cancels the "Save As" dialog, or when Android has just
+    /// asked for the storage permission and the export has to be started
+    /// again.
     async fn open(state: &AppState, name: &str, bytes: u64) -> Result<Self, FileExportError> {
         if state.is_tauri {
-            return match crate::native_save::OpenSave::with_dialog(name).await {
+            let opened = if state.is_mobile_platform {
+                crate::native_save::OpenSave::in_shared_storage(
+                    name,
+                    "Recordings/Oversample/exports",
+                    "audio/wav",
+                )
+                .await
+            } else {
+                crate::native_save::OpenSave::with_dialog(name).await
+            };
+            return match opened {
                 Ok(Some(save)) => Ok(ExportSink::Native(save)),
                 Ok(None) => Err(None),
                 Err(e) => Err(Some(e)),

@@ -66,44 +66,15 @@ pub async fn save_to_shared_storage(
     relative_path: &str,
     mime_type: &str,
 ) -> Result<SharedSave, String> {
-    let entry: CreateExportEntryResult = tauri_invoke_typed_args(
-        "plugin:media-store|createExportEntry",
-        &CreateExportEntryArgs {
-            filename: filename.to_string(),
-            mime_type: mime_type.to_string(),
-            relative_path: relative_path.to_string(),
-        },
-    )
-    .await?;
-    let Some(fd) = entry.fd else {
+    let Some(mut save) = OpenSave::in_shared_storage(filename, relative_path, mime_type).await?
+    else {
         return Ok(SharedSave::NeedsRetry);
     };
-    let entry_args = ExportEntryArgs {
-        uri: entry.uri.clone(),
-        mime_type: mime_type.to_string(),
-    };
-    #[derive(Serialize)]
-    struct Fd {
-        fd: i32,
+    if let Err(e) = save.write(data).await {
+        save.discard().await;
+        return Err(e);
     }
-    let written = match tauri_invoke_typed_args::<_, u32>("save_adopt_fd", &Fd { fd }).await {
-        Ok(id) => write_and_close(id, data).await,
-        Err(e) => Err(e),
-    };
-    match written {
-        Ok(()) => {
-            tauri_invoke_args("plugin:media-store|finishExportEntry", &entry_args).await?;
-            Ok(SharedSave::Saved(entry.path))
-        }
-        Err(e) => {
-            if let Err(e2) =
-                tauri_invoke_args("plugin:media-store|cancelExportEntry", &entry_args).await
-            {
-                log::warn!("cancelExportEntry failed: {e2}");
-            }
-            Err(e)
-        }
-    }
+    save.close().await.map(SharedSave::Saved)
 }
 
 /// Write all of `data` to an open file, then close it. A failed write
@@ -113,6 +84,7 @@ async fn write_and_close(id: u32, data: &[u8]) -> Result<(), String> {
         id,
         path: String::new(),
         written: 0,
+        entry: None,
     };
     if let Err(e) = save.write(data).await {
         save.discard().await;
@@ -128,6 +100,9 @@ pub struct OpenSave {
     id: u32,
     path: String,
     written: u64,
+    /// Android: the shared-storage entry the file belongs to. It is made
+    /// visible when the file is closed and deleted when it is discarded.
+    entry: Option<ExportEntryArgs>,
 }
 
 #[derive(Serialize)]
@@ -145,7 +120,51 @@ impl OpenSave {
             id: o.id,
             path: o.path,
             written: 0,
+            entry: None,
         }))
+    }
+
+    /// Android: start `filename` in the shared folder `relative_path` (e.g.
+    /// `Recordings/Oversample/exports`). The MIME type picks the MediaStore
+    /// collection. `Ok(None)` when Android just asked for the storage
+    /// permission, so the user has to try again.
+    pub async fn in_shared_storage(
+        filename: &str,
+        relative_path: &str,
+        mime_type: &str,
+    ) -> Result<Option<OpenSave>, String> {
+        let entry: CreateExportEntryResult = tauri_invoke_typed_args(
+            "plugin:media-store|createExportEntry",
+            &CreateExportEntryArgs {
+                filename: filename.to_string(),
+                mime_type: mime_type.to_string(),
+                relative_path: relative_path.to_string(),
+            },
+        )
+        .await?;
+        let Some(fd) = entry.fd else {
+            return Ok(None);
+        };
+        let entry_args = ExportEntryArgs {
+            uri: entry.uri.clone(),
+            mime_type: mime_type.to_string(),
+        };
+        #[derive(Serialize)]
+        struct Fd {
+            fd: i32,
+        }
+        match tauri_invoke_typed_args::<_, u32>("save_adopt_fd", &Fd { fd }).await {
+            Ok(id) => Ok(Some(OpenSave {
+                id,
+                path: entry.path,
+                written: 0,
+                entry: Some(entry_args),
+            })),
+            Err(e) => {
+                cancel_entry(&entry_args).await;
+                Err(e)
+            }
+        }
     }
 
     /// Adds `data` to the end of the file.
@@ -180,10 +199,16 @@ impl OpenSave {
             },
         )
         .await;
+        let closed = match (closed, &self.entry) {
+            (Ok(()), Some(entry)) => {
+                tauri_invoke_args("plugin:media-store|finishExportEntry", entry).await
+            }
+            (closed, _) => closed,
+        };
         match closed {
             Ok(()) => Ok(self.path),
             Err(e) => {
-                let _ = tauri_invoke_args("save_discard", &SaveId { id: self.id }).await;
+                self.discard().await;
                 Err(e)
             }
         }
@@ -192,5 +217,14 @@ impl OpenSave {
     /// Stops writing and deletes the file.
     pub async fn discard(self) {
         let _ = tauri_invoke_args("save_discard", &SaveId { id: self.id }).await;
+        if let Some(entry) = &self.entry {
+            cancel_entry(entry).await;
+        }
+    }
+}
+
+async fn cancel_entry(entry: &ExportEntryArgs) {
+    if let Err(e) = tauri_invoke_args("plugin:media-store|cancelExportEntry", entry).await {
+        log::warn!("cancelExportEntry failed: {e}");
     }
 }

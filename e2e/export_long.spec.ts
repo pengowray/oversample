@@ -289,3 +289,119 @@ test.describe("export from a long recording", () => {
 
   });
 });
+
+/**
+ * The desktop app's side of a long WAV export. The page runs as if inside
+ * the desktop app: `__TAURI_INTERNALS__` is a stand-in that answers the save
+ * commands (`src-tauri/src/cmd_save.rs`) the way the app does, checks that
+ * each part starts where the last one ended, and keeps what it was sent.
+ */
+type SaveStub = {
+  dialogAnswer: "save" | "cancel";
+  dialogs: string[];
+  parts: number;
+  bytes: number;
+  head: number[];
+  closedSize: number | null;
+  discarded: number;
+  errors: string[];
+};
+const saveStub = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __saveStub: SaveStub }).__saveStub);
+
+async function asDesktopApp(page: Page, dialogAnswer: "save" | "cancel") {
+  await page.addInitScript((answer) => {
+    const st = {
+      dialogAnswer: answer,
+      dialogs: [] as string[],
+      parts: 0,
+      bytes: 0,
+      head: [] as number[],
+      closedSize: null as number | null,
+      discarded: 0,
+      errors: [] as string[],
+    };
+    (window as unknown as { __saveStub: typeof st }).__saveStub = st;
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      transformCallback: () => 0,
+      metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+      invoke: (cmd: string, args: unknown, options?: { headers?: Record<string, string> }) => {
+        switch (cmd) {
+          case "save_open_dialog": {
+            const { filename } = args as { filename: string };
+            st.dialogs.push(filename);
+            return Promise.resolve(st.dialogAnswer === "save" ? { id: 7, path: `/home/me/${filename}` } : null);
+          }
+          case "save_write": {
+            const body = args as Uint8Array;
+            const offset = Number(options?.headers?.["x-save-offset"]);
+            if (options?.headers?.["x-save-id"] !== "7") st.errors.push("wrong id");
+            if (offset !== st.bytes) {
+              st.errors.push(`expected offset ${st.bytes}, got ${offset}`);
+              return Promise.reject(`expected offset ${st.bytes}, got ${offset}`);
+            }
+            if (body.length > 8 * 1024 * 1024) st.errors.push(`part of ${body.length} bytes`);
+            if (st.head.length < 80) st.head.push(...Array.from(body.slice(0, 80 - st.head.length)));
+            st.parts++;
+            st.bytes += body.length;
+            return Promise.resolve(null);
+          }
+          case "save_close": {
+            const { size } = args as { size: number };
+            st.closedSize = size;
+            return size === st.bytes ? Promise.resolve(null) : Promise.reject("size mismatch");
+          }
+          case "save_discard":
+            st.discarded++;
+            return Promise.resolve(null);
+          default:
+            return Promise.resolve(null);
+        }
+      },
+    };
+  }, dialogAnswer);
+}
+
+test.describe("long WAV export in the desktop app", () => {
+  test.setTimeout(300_000);
+
+  test("asks where to save, then writes the file in parts", async ({ page }) => {
+    await asDesktopApp(page, "save");
+    await openRecording(page);
+    await openExportPanel(page, "WAV");
+    await expect(page.locator(".export-too-long")).toHaveCount(0);
+    await expect(exportButton(page)).toBeEnabled();
+    await exportButton(page).click();
+    await expect.poll(async () => (await saveStub(page)).closedSize, { timeout: 240_000 }).not.toBeNull();
+    const st = await saveStub(page);
+    expect(st.errors).toEqual([]);
+    expect(st.dialogs).toEqual(["export-long_export.wav"]);
+    expect(st.discarded).toBe(0);
+    expect(st.closedSize).toBe(st.bytes);
+    // An 80-byte header, 730 s of 16-bit mono samples, then the GUANO chunk.
+    const dataBytes = RATE * 2 * SECONDS;
+    expect(st.bytes).toBeGreaterThan(80 + dataBytes);
+    expect(st.bytes).toBeLessThan(80 + dataBytes + 4096);
+    const head = Buffer.from(st.head);
+    expect(head.toString("latin1", 0, 4)).toBe("RIFF");
+    expect(head.readUInt32LE(4)).toBe(st.bytes - 8);
+    expect(head.toString("latin1", 72, 76)).toBe("data");
+    expect(head.readUInt32LE(76)).toBe(dataBytes);
+    console.log(`desktop: ${st.bytes} bytes in ${st.parts} parts`);
+    await expect(page.getByText("Exported: export-long_export.wav")).toBeVisible();
+    await expect(exportButton(page)).toBeEnabled();
+  });
+
+  test("closing the Save As dialog writes nothing", async ({ page }) => {
+    await asDesktopApp(page, "cancel");
+    await openRecording(page);
+    await openExportPanel(page, "WAV");
+    await exportButton(page).click();
+    await expect.poll(async () => (await saveStub(page)).dialogs.length).toBe(1);
+    await expect(exportButton(page)).toBeEnabled();
+    const st = await saveStub(page);
+    expect(st.parts).toBe(0);
+    expect(st.errors).toEqual([]);
+    await expect(page.locator(".export-error")).toHaveCount(0);
+  });
+});
