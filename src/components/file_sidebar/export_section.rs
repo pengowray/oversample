@@ -299,18 +299,18 @@ pub fn ExportPanel() -> impl IntoView {
                                         }
                                         _ => None,
                                     };
-                                    (total > 0 || chosen != VideoAnnotations::None).then(|| view! {
+                                    (total > 0).then(|| view! {
                                         <div class="setting-row" style="gap: 4px; align-items: center;">
                                             <span class="export-option-label">"Annotations:"</span>
                                             <select
                                                 class="sidebar-select export-annotations-select"
                                                 on:change=move |ev| {
                                                     let val = event_target_value(&ev);
-                                                    let choice = match val.strip_prefix("tag:") {
-                                                        Some(tag) => VideoAnnotations::Tag(tag.to_string()),
-                                                        None if val == "all" => VideoAnnotations::All,
-                                                        None => VideoAnnotations::None,
-                                                    };
+                                                    let choice = VideoAnnotations::from_key(&val);
+                                                    crate::settings::set_raw(
+                                                        crate::settings::keys::EXPORT_VIDEO_ANNOTATIONS,
+                                                        &val,
+                                                    );
                                                     state.export.video_annotations().set(choice);
                                                 }
                                             >

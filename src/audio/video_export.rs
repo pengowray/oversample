@@ -784,11 +784,24 @@ fn normalized_rate(rate: u32) -> u32 {
     rate.min(48_000)
 }
 
-/// Linear-interpolation resample of one channel from `rate` to `target_rate`.
+/// Resample one channel from `rate` to `target_rate` by linear interpolation.
+/// Going down in rate, sound above the new rate's range is filtered out
+/// first (8th-order Butterworth low-pass at 45% of `target_rate`), so
+/// ultrasound is not folded down into the audible range.
 fn resample_linear(samples: &[f32], rate: u32, target_rate: u32) -> Vec<f32> {
     if rate == target_rate {
         return samples.to_vec();
     }
+    let filtered;
+    let samples = if target_rate < rate {
+        let mut buf = samples.to_vec();
+        crate::dsp::filters::Butterworth::lowpass(8, rate as f32, 0.45 * target_rate as f32)
+            .process_in_place(&mut buf);
+        filtered = buf;
+        &filtered[..]
+    } else {
+        samples
+    };
     let ratio = rate as f64 / target_rate as f64;
     let new_len = (samples.len() as f64 / ratio).ceil() as usize;
     let mut out = Vec::with_capacity(new_len);
@@ -803,4 +816,30 @@ fn resample_linear(samples: &[f32], rate: u32, target_rate: u32) -> Vec<f32> {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tone(hz: f64, rate: u32) -> Vec<f32> {
+        (0..rate as usize)
+            .map(|i| (std::f64::consts::TAU * hz * i as f64 / rate as f64).sin() as f32)
+            .collect()
+    }
+    fn peak_db(x: &[f32]) -> f64 {
+        let peak = x[x.len() / 4..].iter().fold(0.0f32, |p, s| p.max(s.abs()));
+        20.0 * (peak as f64).log10()
+    }
+
+    /// At 192 kHz a 50 kHz tone would fold down to 2 kHz at 48 kHz. It is
+    /// filtered out, and a 5 kHz tone is kept.
+    #[test]
+    fn ultrasound_is_not_folded_into_the_video_audio() {
+        let high = resample_linear(&tone(50_000.0, 192_000), 192_000, 48_000);
+        assert_eq!(high.len(), 48_000);
+        assert!(peak_db(&high) < -60.0, "{}", peak_db(&high));
+        let low = resample_linear(&tone(5_000.0, 192_000), 192_000, 48_000);
+        assert!(peak_db(&low) > -1.0, "{}", peak_db(&low));
+    }
 }

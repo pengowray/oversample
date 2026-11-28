@@ -83,14 +83,132 @@ pub(crate) enum RegionError {
     Cancelled,
 }
 
-/// Process a time range through the DSP pipeline, once per channel view.
-/// Returns one sample buffer per view, each the same length.
+/// Processes a time range through the DSP pipeline a piece at a time, once
+/// per channel view, so a long range never has to be held whole.
 ///
 /// Each chunk is loaded before it is read, so a streamed file gives its real
 /// samples (a plain `read_region` gives silence for audio that is not in the
-/// cache). The page gets to draw between chunks. `on_progress` is called
-/// after each chunk with the part done, 0 to 1; returning false stops the
-/// work with [`RegionError::Cancelled`].
+/// cache).
+pub(crate) struct RegionProcessor<'a> {
+    source: &'a dyn AudioSource,
+    views: &'a [ChannelView],
+    sample_rate: u32,
+    params: &'a PlaybackParams,
+    plans: Vec<ChunkPlan>,
+    /// The next chunk of `plans` to process.
+    next: usize,
+    chunk_overlap: usize,
+    /// Per view: processed samples not handed out yet. Between chunks this
+    /// is the crossfade tail that the next chunk is added to.
+    pending: Vec<Vec<f32>>,
+    gain: OutputGain,
+}
+
+impl<'a> RegionProcessor<'a> {
+    pub(crate) fn new(
+        source: &'a dyn AudioSource,
+        views: &'a [ChannelView],
+        sample_rate: u32,
+        start_time: f64,
+        end_time: f64,
+        params: &'a PlaybackParams,
+    ) -> Self {
+        RegionProcessor {
+            source,
+            views,
+            sample_rate,
+            params,
+            plans: chunk_plans(
+                sample_rate,
+                start_time,
+                end_time,
+                source.total_samples() as usize,
+                params,
+            ),
+            next: 0,
+            chunk_overlap: crate::audio::streaming_playback::chunk_overlap(params),
+            pending: views.iter().map(|_| Vec::new()).collect(),
+            gain: OutputGain::new(export_output_rate(sample_rate, params), params),
+        }
+    }
+
+    /// Source frames in the range.
+    pub(crate) fn frames(&self) -> usize {
+        match (self.plans.first(), self.plans.last()) {
+            (Some(first), Some(last)) => last.chunk_end - first.pos,
+            _ => 0,
+        }
+    }
+
+    /// The part of the range processed so far, 0 to 1.
+    pub(crate) fn progress(&self) -> f64 {
+        if self.plans.is_empty() {
+            1.0
+        } else {
+            self.next as f64 / self.plans.len() as f64
+        }
+    }
+
+    /// The next piece of finished audio: one buffer per view, each the same
+    /// length, with the output gain applied. `None` after the last piece.
+    pub(crate) async fn next_piece(&mut self) -> Result<Option<Vec<Vec<f32>>>, RegionError> {
+        let Some(plan) = self.plans.get(self.next) else {
+            return Ok(None);
+        };
+        let read = crate::audio::streaming_source::read_views_ready(
+            self.source,
+            self.views,
+            plan.warmup_start as u64,
+            plan.trailing_end - plan.warmup_start,
+        )
+        .await;
+        let Some(raw_views) = read.views else {
+            return Err(RegionError::NotLoaded {
+                at_secs: plan.pos as f64 / self.sample_rate as f64,
+            });
+        };
+        for (out, raw) in self.pending.iter_mut().zip(&raw_views) {
+            add_chunk(
+                out,
+                raw,
+                plan,
+                self.sample_rate,
+                self.params,
+                self.chunk_overlap,
+                self.next == 0,
+            );
+        }
+        self.next += 1;
+        // All but the crossfade tail is final. After the last chunk, all of it.
+        let have = self.pending.iter().map(Vec::len).min().unwrap_or(0);
+        let done = if self.next == self.plans.len() {
+            have
+        } else {
+            have.saturating_sub(self.chunk_overlap)
+        };
+        let mut piece: Vec<Vec<f32>> = self
+            .pending
+            .iter_mut()
+            .map(|p| {
+                let rest = p.split_off(done);
+                std::mem::replace(p, rest)
+            })
+            .collect();
+        if self.next == self.plans.len() {
+            self.pending.iter_mut().for_each(Vec::clear);
+        }
+        self.gain.apply(&mut piece);
+        Ok(Some(piece))
+    }
+}
+
+/// Process a time range through the DSP pipeline, once per channel view.
+/// Returns one sample buffer per view, each the same length. See
+/// [`RegionProcessor`].
+///
+/// The page gets to draw between chunks. `on_progress` is called after each
+/// chunk with the part done, 0 to 1; returning false stops the work with
+/// [`RegionError::Cancelled`].
 pub(crate) async fn process_region_ready(
     source: &dyn AudioSource,
     views: &[ChannelView],
@@ -100,62 +218,48 @@ pub(crate) async fn process_region_ready(
     params: &PlaybackParams,
     mut on_progress: impl FnMut(f64) -> bool,
 ) -> Result<Vec<Vec<f32>>, RegionError> {
-    let plans = chunk_plans(
-        sample_rate,
-        start_time,
-        end_time,
-        source.total_samples() as usize,
-        params,
-    );
-    let chunk_overlap = crate::audio::streaming_playback::chunk_overlap(params);
-    let frames = plans.last().map_or(0, |last| last.chunk_end - plans[0].pos);
+    let mut region = RegionProcessor::new(source, views, sample_rate, start_time, end_time, params);
+    let frames = region.frames();
     let mut channels: Vec<Vec<f32>> = views.iter().map(|_| Vec::with_capacity(frames)).collect();
-    for (i, plan) in plans.iter().enumerate() {
-        let read = crate::audio::streaming_source::read_views_ready(
-            source,
-            views,
-            plan.warmup_start as u64,
-            plan.trailing_end - plan.warmup_start,
-        )
-        .await;
-        let Some(raw_views) = read.views else {
-            return Err(RegionError::NotLoaded {
-                at_secs: plan.pos as f64 / sample_rate as f64,
-            });
-        };
-        for (out, raw) in channels.iter_mut().zip(&raw_views) {
-            add_chunk(out, raw, plan, sample_rate, params, chunk_overlap, i == 0);
+    while let Some(piece) = region.next_piece().await? {
+        for (out, part) in channels.iter_mut().zip(&piece) {
+            out.extend_from_slice(part);
         }
-        if !on_progress((i + 1) as f64 / plans.len() as f64) {
+        if !on_progress(region.progress()) {
             return Err(RegionError::Cancelled);
         }
         crate::canvas::tile_cache::yield_to_browser().await;
     }
-    let frames = channels.iter().map(Vec::len).min().unwrap_or(0);
-    for ch in &mut channels {
-        ch.truncate(frames);
-    }
-    apply_output_gain(
-        &mut channels,
-        export_output_rate(sample_rate, params),
-        params,
-    );
     Ok(channels)
 }
 
-/// The gain stage of playback, applied to a whole processed region: none when
-/// gain is Off, the slider for Manual, the measured peak gain plus the slider
-/// for Peak, and the slider then the AGC leveler for Adaptive.
-fn apply_output_gain(channels: &mut [Vec<f32>], output_rate: u32, params: &PlaybackParams) {
-    let gain_db = fixed_gain_db(params.gain_mode, params.gain_db, params.auto_peak_gain_db);
-    for ch in channels.iter_mut() {
-        apply_gain(ch, gain_db);
+/// The gain stage of playback, applied to processed audio a piece at a time:
+/// none when gain is Off, the slider for Manual, the measured peak gain plus
+/// the slider for Peak, and the slider then the AGC leveler for Adaptive. The
+/// leveler carries on from one piece to the next.
+struct OutputGain {
+    gain_db: f64,
+    agc: Option<AgcProcessor>,
+}
+
+impl OutputGain {
+    fn new(output_rate: u32, params: &PlaybackParams) -> Self {
+        OutputGain {
+            gain_db: fixed_gain_db(params.gain_mode, params.gain_db, params.auto_peak_gain_db),
+            agc: (params.gain_mode == GainMode::Adaptive)
+                .then(|| AgcProcessor::new(AgcConfig::default(), output_rate)),
+        }
     }
-    if params.gain_mode == GainMode::Adaptive {
-        let mut agc = AgcProcessor::new(AgcConfig::default(), output_rate);
-        match channels {
-            [left, right] => agc.process_stereo(left, right),
-            _ => channels.iter_mut().for_each(|ch| agc.process(ch)),
+
+    fn apply(&mut self, channels: &mut [Vec<f32>]) {
+        for ch in channels.iter_mut() {
+            apply_gain(ch, self.gain_db);
+        }
+        if let Some(agc) = &mut self.agc {
+            match channels {
+                [left, right] => agc.process_stereo(left, right),
+                _ => channels.iter_mut().for_each(|ch| agc.process(ch)),
+            }
         }
     }
 }
@@ -998,12 +1102,30 @@ fn too_long(frames: u64, channels: usize, output_rate: u32) -> Option<TooLong> {
 }
 
 /// `Some` when the export that `format` would make of `file` right now is too
-/// long. WAV counts every selected region; MP4 exports the first one only.
+/// long to make here. WAV counts every selected region; MP4 exports the
+/// first one only.
 pub(crate) fn export_too_long(
     state: &AppState,
     file: &LoadedFile,
     format: ExportFormat,
 ) -> Option<TooLong> {
+    if format == ExportFormat::Wav && writes_long_exports_to_file(state) {
+        return None;
+    }
+    over_memory_limit(state, file, format)
+}
+
+/// True where a WAV export too long for memory is written to a file a piece
+/// at a time instead: in a browser with storage it can write to that way
+/// (`crate::opfs_audio`). The Tauri apps save through a dialog or the media
+/// store, which take the whole file at once.
+fn writes_long_exports_to_file(state: &AppState) -> bool {
+    !state.is_tauri && crate::opfs_audio::supported()
+}
+
+/// `Some` when the export that `format` would make of `file` right now is
+/// over [`MAX_EXPORT_SAMPLE_BYTES`].
+fn over_memory_limit(state: &AppState, file: &LoadedFile, format: ExportFormat) -> Option<TooLong> {
     let source = file.audio.source.as_ref();
     let views = export_channel_views(source, state.viewmode.channel_view().get_untracked());
     let jobs = export_jobs(state, file);
@@ -1099,6 +1221,7 @@ pub fn export_selected(state: &AppState) {
     // Everything the export depends on is read here, before the first await,
     // so changing the selection or the file while it runs has no effect.
     let jobs = export_jobs(&state, &file);
+    let to_file = over_memory_limit(&state, &file, ExportFormat::Wav).is_some();
 
     state.export.video_cancel().set(false);
     state.export.video_progress().set(Some(0.0));
@@ -1108,6 +1231,10 @@ pub fn export_selected(state: &AppState) {
         .set(Some("Processing audio...".to_string()));
 
     leptos::task::spawn_local(async move {
+        if to_file {
+            export_to_files(state, &file, &views, &jobs, bits, is_float, normalize).await;
+            return;
+        }
         // Collect every region's WAV bytes first, then hand them to
         // save_exports as a batch so multi-region exports are saved
         // one-at-a-time (no stacked dialogs / racing permission prompts) and
@@ -1160,6 +1287,245 @@ pub fn export_selected(state: &AppState) {
         state.export.video_progress().set(None);
         state.export.video_status().set(None);
         save_exports(&state, exports, false);
+    });
+}
+
+thread_local! {
+    /// Long exports still in the browser's storage. The browser downloads
+    /// from the stored file, so it is deleted when the next long export
+    /// starts, or by `crate::opfs_audio` after the tab closes.
+    static STORED_EXPORTS: std::cell::RefCell<Vec<crate::opfs_audio::StoredFile>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Why a long export's file was not written. `None` is a cancel.
+type FileExportError = Option<String>;
+
+fn region_error(e: RegionError) -> FileExportError {
+    match e {
+        RegionError::Cancelled => None,
+        RegionError::NotLoaded { at_secs } => Some(not_loaded_text(at_secs)),
+    }
+}
+
+/// [`export_selected`] for an export too long to hold in memory: each job is
+/// written to a file in the browser's storage a piece at a time, and the
+/// browser then downloads the files.
+async fn export_to_files(
+    state: AppState,
+    file: &LoadedFile,
+    views: &[ChannelView],
+    jobs: &[ExportJob],
+    bits: u16,
+    is_float: bool,
+    normalize: bool,
+) {
+    for stored in STORED_EXPORTS.with(|s| std::mem::take(&mut *s.borrow_mut())) {
+        crate::opfs_audio::delete(&stored).await;
+    }
+    let n_jobs = jobs.len() as f64;
+    let mut written: Vec<(String, web_sys::File)> = Vec::new();
+    for (i, job) in jobs.iter().enumerate() {
+        let name = wav_file_name(file, views, job);
+        let result =
+            export_job_to_file(file, views, job, bits, is_float, normalize, &name, |done| {
+                let progress = (i as f64 + done) / n_jobs;
+                state.export.video_progress().set(Some(progress));
+                state.export.video_status().set(Some(format!(
+                    "Processing audio... {}%",
+                    (progress * 100.0) as u32
+                )));
+                !state.export.video_cancel().get_untracked()
+            })
+            .await;
+        match result {
+            Ok((out, stored)) => {
+                STORED_EXPORTS.with(|s| s.borrow_mut().push(stored));
+                written.push((name, out));
+            }
+            Err(None) => {
+                state.export.video_progress().set(None);
+                state.export.video_status().set(None);
+                return;
+            }
+            Err(Some(message)) => {
+                show_export_failed(&state, &message);
+                return;
+            }
+        }
+    }
+    state.export.video_progress().set(None);
+    state.export.video_status().set(None);
+    for (name, out) in &written {
+        trigger_blob_download(out, name);
+    }
+}
+
+/// Processes one job and writes it as a WAV with GUANO metadata to a new
+/// file in the browser's storage. With `normalize` the job is processed
+/// twice: once for its peak, once to write it. `on_progress` gets the part
+/// done, 0 to 1, and returns false to cancel.
+#[allow(clippy::too_many_arguments)]
+async fn export_job_to_file(
+    file: &LoadedFile,
+    views: &[ChannelView],
+    job: &ExportJob,
+    bits: u16,
+    is_float: bool,
+    normalize: bool,
+    name: &str,
+    mut on_progress: impl FnMut(f64) -> bool,
+) -> Result<(web_sys::File, crate::opfs_audio::StoredFile), FileExportError> {
+    use crate::audio::wav::{WavWriteFormat, WRITE_HEADER_LEN};
+    let source = file.audio.source.as_ref();
+    let rate = file.audio.sample_rate;
+    let region = || RegionProcessor::new(source, views, rate, job.start, job.end, &job.params);
+    let fmt = WavWriteFormat::for_f32_samples(
+        export_output_rate(rate, &job.params),
+        views.len().max(1) as u16,
+        bits,
+        is_float,
+    );
+
+    let needed = WRITE_HEADER_LEN as u64
+        + region().frames() as u64 * u64::from(fmt.block_align())
+        + 64 * 1024;
+    if let Some(free) = crate::opfs_audio::free_bytes().await {
+        if free < needed {
+            return Err(Some(no_space_text(needed, free)));
+        }
+    }
+
+    let passes = if normalize { 2.0 } else { 1.0 };
+    let mut factor = 1.0f32;
+    if normalize {
+        let mut measured = region();
+        let mut peak = 0.0f32;
+        while let Some(piece) = measured.next_piece().await.map_err(region_error)? {
+            peak = piece.iter().flatten().fold(peak, |p, s| p.max(s.abs()));
+            if !on_progress(measured.progress() / passes) {
+                return Err(None);
+            }
+            crate::canvas::tile_cache::yield_to_browser().await;
+        }
+        if peak > 0.0 {
+            factor = 10f64.powf(NORMALIZE_DBFS / 20.0) as f32 / peak;
+        }
+    }
+
+    let writer = crate::opfs_audio::Writer::create(name)
+        .await
+        .map_err(Some)?;
+    let wrote = write_job(&writer, region(), &fmt, factor, file, job, |done| {
+        on_progress((passes - 1.0 + done) / passes)
+    })
+    .await;
+    match wrote {
+        Ok(()) => writer.finish().await.map_err(Some),
+        Err(e) => {
+            writer.discard().await;
+            Err(e)
+        }
+    }
+}
+
+/// Writes `region`'s audio, scaled by `factor`, as a WAV in `fmt` with
+/// GUANO metadata. The header goes in last, when the sizes are known.
+async fn write_job(
+    writer: &crate::opfs_audio::Writer,
+    mut region: RegionProcessor<'_>,
+    fmt: &crate::audio::wav::WavWriteFormat,
+    factor: f32,
+    file: &LoadedFile,
+    job: &ExportJob,
+    mut on_progress: impl FnMut(f64) -> bool,
+) -> Result<(), FileExportError> {
+    use crate::audio::wav::{encode_f32_samples, header_bytes, WRITE_HEADER_LEN};
+    let put = |bytes: Vec<u8>| async move {
+        writer
+            .write(&js_sys::Uint8Array::from(bytes.as_slice()))
+            .await
+            .map_err(Some)
+    };
+    put(vec![0u8; WRITE_HEADER_LEN]).await?;
+    let mut frames = 0usize;
+    let mut data_bytes = 0u64;
+    while let Some(mut piece) = region.next_piece().await.map_err(region_error)? {
+        if factor != 1.0 {
+            apply_gain_linear(&mut piece, factor);
+        }
+        frames += piece.first().map_or(0, Vec::len);
+        let bytes = encode_f32_samples(&interleave(piece), fmt);
+        data_bytes += bytes.len() as u64;
+        put(bytes).await?;
+        if !on_progress(region.progress()) {
+            return Err(None);
+        }
+        crate::canvas::tile_cache::yield_to_browser().await;
+    }
+    let guano = build_export_guano(
+        fmt.sample_rate,
+        frames,
+        &job.params,
+        &file.name,
+        file.audio.metadata.guano.as_ref(),
+    );
+    let after = chunks_after_data(data_bytes, &guano.to_text());
+    let after_len = after.len() as u64;
+    put(after).await?;
+    writer
+        .write_at_start(&js_sys::Uint8Array::from(
+            header_bytes(fmt, data_bytes, after_len).as_slice(),
+        ))
+        .await
+        .map_err(Some)
+}
+
+/// What follows `data_bytes` of samples in an exported WAV: the data
+/// chunk's pad byte when its length is odd, then the GUANO `guan` chunk.
+fn chunks_after_data(data_bytes: u64, guano_text: &str) -> Vec<u8> {
+    let text = guano_text.as_bytes();
+    let mut out = Vec::with_capacity(text.len() + 10);
+    if data_bytes % 2 == 1 {
+        out.push(0);
+    }
+    out.extend_from_slice(b"guan");
+    out.extend_from_slice(&(text.len() as u32).to_le_bytes());
+    out.extend_from_slice(text);
+    if text.len() % 2 == 1 {
+        out.push(0);
+    }
+    out
+}
+
+/// The message for a long export that the browser's storage has no room for.
+fn no_space_text(needed_bytes: u64, free_bytes: u64) -> String {
+    format!(
+        "not enough browser storage. The export needs {} MB. Free: {} MB.",
+        needed_bytes.div_ceil(1_000_000),
+        free_bytes / 1_000_000
+    )
+}
+
+/// Have the browser download `blob` (a file in its storage) as `filename`,
+/// without reading it into memory.
+fn trigger_blob_download(blob: &web_sys::Blob, filename: &str) {
+    let Ok(url) = web_sys::Url::create_object_url_with_blob(blob) else {
+        log::error!("Failed to create object URL");
+        return;
+    };
+    let document = web_sys::window().unwrap().document().unwrap();
+    let a: web_sys::HtmlAnchorElement = document.create_element("a").unwrap().dyn_into().unwrap();
+    a.set_href(&url);
+    a.set_download(filename);
+    a.set_attribute("style", "display:none").ok();
+    document.body().unwrap().append_child(&a).ok();
+    a.click();
+    document.body().unwrap().remove_child(&a).ok();
+    // The browser reads the file after the click, so the URL is kept a while.
+    leptos::task::spawn_local(async move {
+        crate::web_util::sleep_ms(120_000).await;
+        web_sys::Url::revoke_object_url(&url).ok();
     });
 }
 
@@ -1437,6 +1803,25 @@ mod tests {
         // Time expansion x10 writes the same samples at a tenth of the rate.
         let te = too_long(192_000 * 992, 2, 19_200).unwrap();
         assert!((te.secs - 9920.0).abs() < 1e-6);
+    }
+
+    /// A streamed export's tail matches what the in-memory export appends.
+    #[test]
+    fn chunks_after_data_match_append_guano_chunk() {
+        for (data_len, text) in [(8usize, "GUANO|Version: 1.0\n"), (7, "odd"), (6, "even")] {
+            let fmt = crate::audio::wav::WavWriteFormat::for_f32_samples(48_000, 1, 16, false);
+            let data = vec![1u8; data_len];
+            let mut whole = crate::audio::wav::header_bytes(&fmt, data_len as u64, 0);
+            whole.extend_from_slice(&data);
+            crate::audio::guano::append_guano_chunk(&mut whole, text);
+
+            let after = chunks_after_data(data_len as u64, text);
+            let mut streamed =
+                crate::audio::wav::header_bytes(&fmt, data_len as u64, after.len() as u64);
+            streamed.extend_from_slice(&data);
+            streamed.extend_from_slice(&after);
+            assert_eq!(streamed, whole, "{data_len} bytes of data, {text:?}");
+        }
     }
 
     #[test]

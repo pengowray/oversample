@@ -590,14 +590,32 @@ pub enum VideoViewMode {
 /// Which of the file's annotations an MP4 export draws.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum VideoAnnotations {
-    #[default]
     None,
+    #[default]
     All,
     /// Only annotations with this tag, as stored (`call`, `species=...`).
     Tag(String),
 }
 
 impl VideoAnnotations {
+    /// The choice as it is saved in the browser: `none`, `all` or
+    /// `tag:<stored tag>`. Also the Export panel's option values.
+    pub fn key(&self) -> String {
+        match self {
+            VideoAnnotations::None => "none".to_string(),
+            VideoAnnotations::All => "all".to_string(),
+            VideoAnnotations::Tag(tag) => format!("tag:{tag}"),
+        }
+    }
+
+    pub fn from_key(key: &str) -> Self {
+        match key.strip_prefix("tag:") {
+            Some(tag) => VideoAnnotations::Tag(tag.to_string()),
+            None if key == "none" => VideoAnnotations::None,
+            None => VideoAnnotations::All,
+        }
+    }
+
     /// True when the export draws an annotation that has `tags`.
     pub fn shows(&self, tags: &[String]) -> bool {
         match self {
@@ -3467,7 +3485,11 @@ impl AppState {
                 video_codec: VideoCodec::default(),
                 video_audio_codec: AudioCodecOption::default(),
                 video_view_mode: VideoViewMode::default(),
-                video_annotations: VideoAnnotations::default(),
+                video_annotations: crate::settings::get_raw(
+                    crate::settings::keys::EXPORT_VIDEO_ANNOTATIONS,
+                )
+                .map(|v| VideoAnnotations::from_key(&v))
+                .unwrap_or_default(),
             }),
         };
 
@@ -4849,6 +4871,14 @@ mod usb_channel_setting_tests {
         // The whole stored tag has to match, not part of it.
         assert!(!VideoAnnotations::Tag("species".into()).shows(&tags));
         assert!(!VideoAnnotations::Tag("call".into()).shows(&[]));
+        for choice in [
+            VideoAnnotations::None,
+            VideoAnnotations::All,
+            VideoAnnotations::Tag("species=Myotis".into()),
+        ] {
+            assert_eq!(VideoAnnotations::from_key(&choice.key()), choice);
+        }
+        assert_eq!(VideoAnnotations::default(), VideoAnnotations::All);
     }
 
     use super::{channel_pick_for, format_channel_pick, parse_channel_pick, ChannelPick};
