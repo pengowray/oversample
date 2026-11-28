@@ -9033,6 +9033,14 @@ button.toolbar-overflow-btn {
     font-size: 11px;
     color: #ccc;
 }
+/* Why the Export button is disabled. Amber, the app's warning colour. */
+.export-too-long {
+    color: #fc8;
+}
+.export-annotations-select {
+    min-width: 0;
+    max-width: 100%;
+}
 .export-detail-label {
     font-size: 10px;
     color: #888;
@@ -9888,7 +9896,7 @@ button.canvas-overflow-action-btn.disabled {
 }
 
 .surface-3d-note {
-    color: #e0b060;
+    color: #fc8;
 }
 
 .surface-3d-hint {

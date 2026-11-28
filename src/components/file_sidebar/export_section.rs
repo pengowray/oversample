@@ -9,8 +9,8 @@ use crate::audio::export;
 use crate::audio::video_export;
 use crate::audio::webcodecs_bindings as wc;
 use crate::state::{
-    AppState, AudioCodecOption, ExportFormat, RightSidebarTab, VideoCodec, VideoResolution,
-    VideoViewMode, WavExportDepth,
+    AppState, AudioCodecOption, ExportFormat, RightSidebarTab, VideoAnnotations, VideoCodec,
+    VideoResolution, VideoViewMode, WavExportDepth,
 };
 
 /// Open the info panel on the Export tab.
@@ -73,8 +73,51 @@ pub fn ExportPanel() -> impl IntoView {
         (!names.is_empty()).then_some(names)
     };
 
+    // Set when the export would be too long to hold in memory. The button is
+    // disabled and the reason is shown under it.
+    let too_long = move || {
+        let format = state.export.format().get();
+        export::get_export_info(&state)?;
+        state.viewmode.channel_view().track();
+        let idx = state.library.current_index().get()?;
+        let file = state
+            .library
+            .files()
+            .with(|files| files.get(idx).cloned())?;
+        export::export_too_long(&state, &file, format)
+    };
+
     let export_disabled = move || {
-        export::get_export_info(&state).is_none() || state.export.video_progress().get().is_some()
+        export::get_export_info(&state).is_none()
+            || state.export.video_progress().get().is_some()
+            || too_long().is_some()
+    };
+
+    // The "Annotations" choices of an MP4 export: how many region annotations
+    // the current file has, and each of their tags with how many have it.
+    // Other kinds of annotation are not drawn.
+    let annotation_counts = move || {
+        let mut total = 0usize;
+        let mut tags: Vec<(String, usize)> = Vec::new();
+        if let Some(id) = state.current_file_id_tracked() {
+            state.annotations.store().with(|store| {
+                let Some(set) = store.get(id) else { return };
+                for a in &set.annotations {
+                    if !matches!(a.kind, crate::annotations::AnnotationKind::Region(_)) {
+                        continue;
+                    }
+                    total += 1;
+                    for tag in &a.tags {
+                        match tags.iter_mut().find(|(t, _)| t == tag) {
+                            Some((_, n)) => *n += 1,
+                            None => tags.push((tag.clone(), 1)),
+                        }
+                    }
+                }
+            });
+        }
+        tags.sort();
+        (total, tags)
     };
 
     let on_export_click = move |_: web_sys::MouseEvent| match state.export.format().get_untracked()
@@ -246,6 +289,50 @@ pub fn ExportPanel() -> impl IntoView {
                                         </option>
                                     </select>
                                 </div>
+                                {move || {
+                                    let (total, tags) = annotation_counts();
+                                    let chosen = state.export.video_annotations().get();
+                                    // A tag chosen for another file stays in the list.
+                                    let chosen_missing = match &chosen {
+                                        VideoAnnotations::Tag(t) if !tags.iter().any(|(tag, _)| tag == t) => {
+                                            Some((t.clone(), 0))
+                                        }
+                                        _ => None,
+                                    };
+                                    (total > 0 || chosen != VideoAnnotations::None).then(|| view! {
+                                        <div class="setting-row" style="gap: 4px; align-items: center;">
+                                            <span class="export-option-label">"Annotations:"</span>
+                                            <select
+                                                class="sidebar-select export-annotations-select"
+                                                on:change=move |ev| {
+                                                    let val = event_target_value(&ev);
+                                                    let choice = match val.strip_prefix("tag:") {
+                                                        Some(tag) => VideoAnnotations::Tag(tag.to_string()),
+                                                        None if val == "all" => VideoAnnotations::All,
+                                                        None => VideoAnnotations::None,
+                                                    };
+                                                    state.export.video_annotations().set(choice);
+                                                }
+                                            >
+                                                <option value="none" selected=chosen == VideoAnnotations::None>
+                                                    "None"
+                                                </option>
+                                                <option value="all" selected=chosen == VideoAnnotations::All>
+                                                    {format!("All ({total})")}
+                                                </option>
+                                                {tags.into_iter().chain(chosen_missing).map(|(tag, n)| {
+                                                    let selected = chosen == VideoAnnotations::Tag(tag.clone());
+                                                    let shown = oversample_core::annotation_tags::Tag::from_stored(&tag).display();
+                                                    view! {
+                                                        <option value=format!("tag:{tag}") selected=selected>
+                                                            {format!("Tagged {shown} ({n})")}
+                                                        </option>
+                                                    }
+                                                }).collect_view()}
+                                            </select>
+                                        </div>
+                                    })
+                                }}
                                 <div class="setting-row" style="gap: 4px; align-items: center;">
                                     <span class="export-option-label">"Resolution:"</span>
                                     <select
@@ -382,6 +469,10 @@ pub fn ExportPanel() -> impl IntoView {
                         {export_button_text}
                     </button>
                 </div>
+
+                {move || too_long().map(|t| view! {
+                    <div class="export-detail export-too-long">{export::too_long_text(t)}</div>
+                })}
 
                 // What the export will save
                 {move || file_names().map(|names| {

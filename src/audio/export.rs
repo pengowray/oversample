@@ -74,20 +74,63 @@ pub(crate) fn export_channel_views(
     }
 }
 
+/// Why [`process_region_ready`] stopped without the audio.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum RegionError {
+    /// The file's audio at `at_secs` could not be loaded.
+    NotLoaded { at_secs: f64 },
+    /// `on_progress` returned false.
+    Cancelled,
+}
+
 /// Process a time range through the DSP pipeline, once per channel view.
 /// Returns one sample buffer per view, each the same length.
-pub(crate) fn process_region(
+///
+/// Each chunk is loaded before it is read, so a streamed file gives its real
+/// samples (a plain `read_region` gives silence for audio that is not in the
+/// cache). The page gets to draw between chunks. `on_progress` is called
+/// after each chunk with the part done, 0 to 1; returning false stops the
+/// work with [`RegionError::Cancelled`].
+pub(crate) async fn process_region_ready(
     source: &dyn AudioSource,
     views: &[ChannelView],
     sample_rate: u32,
     start_time: f64,
     end_time: f64,
     params: &PlaybackParams,
-) -> Vec<Vec<f32>> {
-    let mut channels: Vec<Vec<f32>> = views
-        .iter()
-        .map(|&view| process_region_view(source, view, sample_rate, start_time, end_time, params))
-        .collect();
+    mut on_progress: impl FnMut(f64) -> bool,
+) -> Result<Vec<Vec<f32>>, RegionError> {
+    let plans = chunk_plans(
+        sample_rate,
+        start_time,
+        end_time,
+        source.total_samples() as usize,
+        params,
+    );
+    let chunk_overlap = crate::audio::streaming_playback::chunk_overlap(params);
+    let frames = plans.last().map_or(0, |last| last.chunk_end - plans[0].pos);
+    let mut channels: Vec<Vec<f32>> = views.iter().map(|_| Vec::with_capacity(frames)).collect();
+    for (i, plan) in plans.iter().enumerate() {
+        let read = crate::audio::streaming_source::read_views_ready(
+            source,
+            views,
+            plan.warmup_start as u64,
+            plan.trailing_end - plan.warmup_start,
+        )
+        .await;
+        let Some(raw_views) = read.views else {
+            return Err(RegionError::NotLoaded {
+                at_secs: plan.pos as f64 / sample_rate as f64,
+            });
+        };
+        for (out, raw) in channels.iter_mut().zip(&raw_views) {
+            add_chunk(out, raw, plan, sample_rate, params, chunk_overlap, i == 0);
+        }
+        if !on_progress((i + 1) as f64 / plans.len() as f64) {
+            return Err(RegionError::Cancelled);
+        }
+        crate::canvas::tile_cache::yield_to_browser().await;
+    }
     let frames = channels.iter().map(Vec::len).min().unwrap_or(0);
     for ch in &mut channels {
         ch.truncate(frames);
@@ -97,7 +140,7 @@ pub(crate) fn process_region(
         export_output_rate(sample_rate, params),
         params,
     );
-    channels
+    Ok(channels)
 }
 
 /// The gain stage of playback, applied to a whole processed region: none when
@@ -149,7 +192,135 @@ pub(crate) fn export_output_rate(sample_rate: u32, params: &PlaybackParams) -> u
     }
 }
 
-/// Process one channel view of a time range through the DSP pipeline.
+/// One chunk of a region, in source samples: `pos..chunk_end` is the audio
+/// the chunk adds, and `warmup_start..trailing_end` is what is read for it.
+struct ChunkPlan {
+    pos: usize,
+    chunk_end: usize,
+    /// Start of the read: `pos` less the filter warmup.
+    warmup_start: usize,
+    /// In crossfade mode the chunk is kept past its nominal end by the
+    /// overlap, up to here.
+    keep_end: usize,
+    /// End of the read. Anything after `keep_end` is cut off once processed.
+    trailing_end: usize,
+}
+
+/// The chunks that cover `start_time..end_time` of a source with
+/// `total_samples` samples, the same chunks as playback.
+fn chunk_plans(
+    sample_rate: u32,
+    start_time: f64,
+    end_time: f64,
+    total_samples: usize,
+    params: &PlaybackParams,
+) -> Vec<ChunkPlan> {
+    let start_sample = (start_time.max(0.0) * sample_rate as f64) as usize;
+    let end_sample = ((end_time * sample_rate as f64) as usize).min(total_samples);
+    let mut plans = Vec::new();
+    let mut pos = start_sample;
+    while pos < end_sample {
+        let chunk_end = (pos + CHUNK_SAMPLES).min(end_sample);
+        let (keep_end, trailing_end) =
+            crate::audio::streaming_playback::chunk_tail(params, chunk_end, end_sample);
+        plans.push(ChunkPlan {
+            pos,
+            chunk_end,
+            warmup_start: pos.saturating_sub(FILTER_WARMUP),
+            keep_end,
+            trailing_end,
+        });
+        pos = chunk_end;
+    }
+    plans
+}
+
+/// Process one chunk's samples (`raw`, read from `plan.warmup_start` to
+/// `plan.trailing_end`) and add them to `out`, with the same crossfade
+/// between chunks as playback when `chunk_overlap` is above 0.
+fn add_chunk(
+    out: &mut Vec<f32>,
+    raw: &[f32],
+    plan: &ChunkPlan,
+    sample_rate: u32,
+    params: &PlaybackParams,
+    chunk_overlap: usize,
+    is_first_chunk: bool,
+) {
+    let warmup_len = plan.pos - plan.warmup_start;
+    let trailing_len = plan.keep_end - plan.chunk_end;
+
+    let filtered = apply_filters(raw, sample_rate, params);
+    let mut processed = apply_dsp_mode(&filtered, sample_rate, params);
+    processed.truncate(
+        processed
+            .len()
+            .saturating_sub(plan.trailing_end - plan.keep_end),
+    );
+
+    if chunk_overlap > 0 {
+        // Trim warmup but keep trailing overlap
+        let mut chunk_samples = if warmup_len < processed.len() {
+            processed[warmup_len..].to_vec()
+        } else {
+            processed.to_vec()
+        };
+
+        let core_len = plan.chunk_end - plan.pos;
+
+        // Hann fade-in on leading overlap (skip for first chunk)
+        if !is_first_chunk {
+            let fade_in_len = chunk_overlap.min(core_len).min(chunk_samples.len());
+            for (i, sample) in chunk_samples.iter_mut().enumerate().take(fade_in_len) {
+                let t = i as f32 / fade_in_len as f32;
+                let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
+                *sample *= w;
+            }
+        }
+
+        // Hann fade-out on trailing overlap
+        if trailing_len > 0 {
+            let fade_out_start = chunk_samples.len().saturating_sub(trailing_len);
+            let fade_out_len = chunk_samples.len() - fade_out_start;
+            for i in 0..fade_out_len {
+                let t = i as f32 / fade_out_len as f32;
+                let w = 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
+                chunk_samples[fade_out_start + i] *= w;
+            }
+        }
+
+        // Overlap-add into output buffer
+        if is_first_chunk {
+            out.extend_from_slice(&chunk_samples);
+        } else {
+            // The overlap region is the last `chunk_overlap` samples of the
+            // existing output, which fade out. Sum with this chunk's
+            // fade-in region.
+            let overlap = chunk_overlap.min(out.len()).min(chunk_samples.len());
+            let out_start = out.len() - overlap;
+            for i in 0..overlap {
+                out[out_start + i] += chunk_samples[i];
+            }
+            // Append the non-overlapping tail
+            if overlap < chunk_samples.len() {
+                out.extend_from_slice(&chunk_samples[overlap..]);
+            }
+        }
+    } else {
+        // Standard mode: trim warmup and trailing
+        let trim_end = processed.len().saturating_sub(trailing_len);
+        let trimmed = if warmup_len < trim_end {
+            &processed[warmup_len..trim_end]
+        } else {
+            &processed[..]
+        };
+        out.extend_from_slice(trimmed);
+    }
+}
+
+/// Process one channel view of a time range through the DSP pipeline, with
+/// plain reads: for sources that are wholly in memory.
+#[cfg(test)]
 fn process_region_view(
     source: &dyn AudioSource,
     view: ChannelView,
@@ -158,103 +329,32 @@ fn process_region_view(
     end_time: f64,
     params: &PlaybackParams,
 ) -> Vec<f32> {
-    let start_sample = (start_time * sample_rate as f64) as usize;
-    let end_sample =
-        ((end_time * sample_rate as f64) as usize).min(source.total_samples() as usize);
-
-    // The same crossfade between chunks as playback.
+    let plans = chunk_plans(
+        sample_rate,
+        start_time,
+        end_time,
+        source.total_samples() as usize,
+        params,
+    );
     let chunk_overlap = crate::audio::streaming_playback::chunk_overlap(params);
-    let crossfade_mode = chunk_overlap > 0;
-
-    let mut all_samples: Vec<f32> = Vec::new();
-    let mut pos = start_sample;
-    let mut is_first_chunk = true;
-
-    while pos < end_sample {
-        let chunk_end = (pos + CHUNK_SAMPLES).min(end_sample);
-        let warmup_start = pos.saturating_sub(FILTER_WARMUP);
-        let warmup_len = pos - warmup_start;
-
-        // In crossfade mode the chunk is kept past its nominal end by the
-        // overlap. Anything read after that is cut off once it is processed.
-        let (keep_end, trailing_end) =
-            crate::audio::streaming_playback::chunk_tail(params, chunk_end, end_sample);
-        let trailing_len = keep_end - chunk_end;
-
-        let chunk_with_warmup =
-            source.read_region(view, warmup_start as u64, trailing_end - warmup_start);
-        let filtered = apply_filters(&chunk_with_warmup, sample_rate, params);
-        let mut processed = apply_dsp_mode(&filtered, sample_rate, params);
-        processed.truncate(processed.len().saturating_sub(trailing_end - keep_end));
-
-        if crossfade_mode {
-            // Trim warmup but keep trailing overlap
-            let trim_start = warmup_len;
-            let mut chunk_samples = if trim_start < processed.len() {
-                processed[trim_start..].to_vec()
-            } else {
-                processed.to_vec()
-            };
-
-            let core_len = chunk_end - pos;
-
-            // Hann fade-in on leading overlap (skip for first chunk)
-            if !is_first_chunk {
-                let fade_in_len = chunk_overlap.min(core_len).min(chunk_samples.len());
-                for (i, sample) in chunk_samples.iter_mut().enumerate().take(fade_in_len) {
-                    let t = i as f32 / fade_in_len as f32;
-                    let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
-                    *sample *= w;
-                }
-            }
-
-            // Hann fade-out on trailing overlap
-            if trailing_len > 0 {
-                let fade_out_start = chunk_samples.len().saturating_sub(trailing_len);
-                let fade_out_len = chunk_samples.len() - fade_out_start;
-                for i in 0..fade_out_len {
-                    let t = i as f32 / fade_out_len as f32;
-                    let w = 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
-                    chunk_samples[fade_out_start + i] *= w;
-                }
-            }
-
-            // Overlap-add into output buffer
-            if is_first_chunk {
-                all_samples.extend_from_slice(&chunk_samples);
-            } else {
-                // The overlap region is the last `chunk_overlap` samples of the
-                // existing output, which fade out. Sum with this chunk's
-                // fade-in region.
-                let overlap = chunk_overlap
-                    .min(all_samples.len())
-                    .min(chunk_samples.len());
-                let out_start = all_samples.len() - overlap;
-                for i in 0..overlap {
-                    all_samples[out_start + i] += chunk_samples[i];
-                }
-                // Append the non-overlapping tail
-                if overlap < chunk_samples.len() {
-                    all_samples.extend_from_slice(&chunk_samples[overlap..]);
-                }
-            }
-        } else {
-            // Standard mode: trim warmup and trailing
-            let trim_start = warmup_len;
-            let trim_end = processed.len().saturating_sub(trailing_len);
-            let trimmed = if trim_start < trim_end {
-                &processed[trim_start..trim_end]
-            } else {
-                &processed[..]
-            };
-            all_samples.extend_from_slice(trimmed);
-        }
-
-        is_first_chunk = false;
-        pos = chunk_end;
+    let mut out = Vec::new();
+    for (i, plan) in plans.iter().enumerate() {
+        let raw = source.read_region(
+            view,
+            plan.warmup_start as u64,
+            plan.trailing_end - plan.warmup_start,
+        );
+        add_chunk(
+            &mut out,
+            &raw,
+            plan,
+            sample_rate,
+            params,
+            chunk_overlap,
+            i == 0,
+        );
     }
-
-    all_samples
+    out
 }
 
 /// Trigger a browser download of raw bytes.
@@ -293,17 +393,13 @@ pub(crate) fn trigger_browser_download(data: &[u8], filename: &str) {
     web_sys::Url::revoke_object_url(&url).ok();
 }
 
-/// Process one region and encode it as a WAV file with GUANO metadata, at
-/// `bits` bits per sample (32-bit float when `is_float`); see
-/// [`wav_export_format`]. Stereo when `views` has two entries (see
-/// [`export_channel_views`]).
+/// Encode one processed region as a WAV file with GUANO metadata, at `bits`
+/// bits per sample (32-bit float when `is_float`); see [`wav_export_format`].
+/// Stereo when `channels` has two entries (see [`export_channel_views`]).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn export_one_region(
-    source: &dyn AudioSource,
-    views: &[ChannelView],
+fn encode_region(
+    mut channels: Vec<Vec<f32>>,
     sample_rate: u32,
-    start_time: f64,
-    end_time: f64,
     params: &PlaybackParams,
     source_filename: &str,
     source_guano: Option<&crate::audio::guano::GuanoMetadata>,
@@ -311,16 +407,16 @@ pub(crate) fn export_one_region(
     is_float: bool,
     normalize: bool,
 ) -> Vec<u8> {
-    let mut channels = process_region(source, views, sample_rate, start_time, end_time, params);
     if normalize {
         normalize_peak(&mut channels, NORMALIZE_DBFS);
     }
     let frames = channels.first().map_or(0, Vec::len);
+    let n_channels = channels.len().max(1) as u16;
     let output_rate = export_output_rate(sample_rate, params);
 
     let mut wav_data = encode_wav_at(
-        &interleave(&channels),
-        channels.len().max(1) as u16,
+        &interleave(channels),
+        n_channels,
         output_rate,
         bits,
         is_float,
@@ -333,15 +429,15 @@ pub(crate) fn export_one_region(
 }
 
 /// Interleave equal-length channel buffers into L R L R ... order.
-fn interleave(channels: &[Vec<f32>]) -> Vec<f32> {
-    match channels {
-        [] => Vec::new(),
-        [mono] => mono.clone(),
+fn interleave(mut channels: Vec<Vec<f32>>) -> Vec<f32> {
+    match channels.len() {
+        0 => Vec::new(),
+        1 => channels.remove(0),
         _ => {
             let frames = channels.iter().map(Vec::len).min().unwrap_or(0);
             let mut out = Vec::with_capacity(frames * channels.len());
             for i in 0..frames {
-                for ch in channels {
+                for ch in &channels {
                     out.push(ch[i]);
                 }
             }
@@ -876,35 +972,165 @@ pub(crate) fn planned_file_names(state: &AppState, format: ExportFormat) -> Vec<
     }
 }
 
-/// Export all selected regions (or current selection) as WAV files.
+/// The most processed audio one export holds in memory, as 32-bit float
+/// samples over all its channels and files. The WAV bytes are made from these
+/// and are held at the same time, so the page needs up to about three times
+/// this while it exports.
+pub(crate) const MAX_EXPORT_SAMPLE_BYTES: u64 = 512 * 1024 * 1024;
+
+/// An export that is over [`MAX_EXPORT_SAMPLE_BYTES`]: its length and the
+/// longest length that fits, both as the exported audio plays (the same
+/// terms as [`ExportInfo::estimated_duration_secs`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct TooLong {
+    pub secs: f64,
+    pub max_secs: f64,
+}
+
+/// `Some` when `frames` source frames over `channels` channels, written at
+/// `output_rate`, are more than one export can hold.
+fn too_long(frames: u64, channels: usize, output_rate: u32) -> Option<TooLong> {
+    let max_frames = MAX_EXPORT_SAMPLE_BYTES / 4 / channels.max(1) as u64;
+    (frames > max_frames).then(|| TooLong {
+        secs: frames as f64 / output_rate.max(1) as f64,
+        max_secs: max_frames as f64 / output_rate.max(1) as f64,
+    })
+}
+
+/// `Some` when the export that `format` would make of `file` right now is too
+/// long. WAV counts every selected region; MP4 exports the first one only.
+pub(crate) fn export_too_long(
+    state: &AppState,
+    file: &LoadedFile,
+    format: ExportFormat,
+) -> Option<TooLong> {
+    let source = file.audio.source.as_ref();
+    let views = export_channel_views(source, state.viewmode.channel_view().get_untracked());
+    let jobs = export_jobs(state, file);
+    let counted = match format {
+        ExportFormat::Wav => &jobs[..],
+        ExportFormat::Mp4 => &jobs[..jobs.len().min(1)],
+    };
+    let rate = file.audio.sample_rate;
+    let file_secs = source.duration_secs();
+    let frames: f64 = counted
+        .iter()
+        .map(|job| (job.end.min(file_secs) - job.start.max(0.0)).max(0.0) * rate as f64)
+        .sum();
+    let output_rate = export_output_rate(rate, &counted.first()?.params);
+    too_long(frames as u64, views.len(), output_rate)
+}
+
+/// The message for an export that is too long, shown under the Export button
+/// and as the error if the export is started anyway.
+pub(crate) fn too_long_text(t: TooLong) -> String {
+    use crate::format_time::format_duration_compact as dur;
+    format!(
+        "Too long to export: {}. The longest export of this file is {}. Select a shorter part.",
+        dur(t.secs),
+        dur(t.max_secs)
+    )
+}
+
+/// Show `msg` as a failed export in the Export panel for 10 seconds.
+pub(crate) fn show_export_failed(state: &AppState, msg: &str) {
+    let state = *state;
+    let text = format!("Export failed: {msg}");
+    log::error!("{text}");
+    state.export.video_progress().set(None);
+    state.export.video_status().set(Some(text.clone()));
+    leptos::task::spawn_local(async move {
+        crate::web_util::sleep_ms(10_000).await;
+        if state.export.video_status().get_untracked().as_ref() == Some(&text) {
+            state.export.video_status().set(None);
+        }
+    });
+}
+
+/// The message for audio that could not be read during an export.
+pub(crate) fn not_loaded_text(at_secs: f64) -> String {
+    format!(
+        "couldn't read the file's audio at {}",
+        crate::format_time::format_duration_compact(at_secs)
+    )
+}
+
+/// Export all selected regions (or current selection) as WAV files. Runs in
+/// the background with the Export panel's progress bar and Cancel button.
 pub fn export_selected(state: &AppState) {
+    let state = *state;
     let file = match state.current_file() {
         Some(f) => f,
         None => return,
     };
-    let source = &file.audio.source;
+    if state.export.video_progress().get_untracked().is_some() {
+        return;
+    }
+    if let Some(t) = export_too_long(&state, &file, ExportFormat::Wav) {
+        show_export_failed(&state, &too_long_text(t));
+        return;
+    }
     let views = export_channel_views(
-        source.as_ref(),
+        file.audio.source.as_ref(),
         state.viewmode.channel_view().get_untracked(),
     );
-
-    // Collect every region's WAV bytes first, then hand them to save_exports
-    // as a batch so multi-region exports are saved one-at-a-time (no stacked
-    // dialogs / racing permission prompts) and reported with a single toast.
     let (bits, is_float) = wav_export_format(
         state.export.wav_depth().get_untracked(),
         &file.audio.metadata,
     );
     let normalize = state.export.normalize().get_untracked();
-    let exports: Vec<(String, Vec<u8>)> = export_jobs(state, &file)
-        .iter()
-        .map(|job| {
-            let wav_data = export_one_region(
-                source.as_ref(),
+    // Everything the export depends on is read here, before the first await,
+    // so changing the selection or the file while it runs has no effect.
+    let jobs = export_jobs(&state, &file);
+
+    state.export.video_cancel().set(false);
+    state.export.video_progress().set(Some(0.0));
+    state
+        .export
+        .video_status()
+        .set(Some("Processing audio...".to_string()));
+
+    leptos::task::spawn_local(async move {
+        // Collect every region's WAV bytes first, then hand them to
+        // save_exports as a batch so multi-region exports are saved
+        // one-at-a-time (no stacked dialogs / racing permission prompts) and
+        // reported with a single toast.
+        let mut exports: Vec<(String, Vec<u8>)> = Vec::with_capacity(jobs.len());
+        let n_jobs = jobs.len() as f64;
+        for (i, job) in jobs.iter().enumerate() {
+            let processed = process_region_ready(
+                file.audio.source.as_ref(),
                 &views,
                 file.audio.sample_rate,
                 job.start,
                 job.end,
+                &job.params,
+                |done| {
+                    let progress = (i as f64 + done) / n_jobs;
+                    state.export.video_progress().set(Some(progress));
+                    state.export.video_status().set(Some(format!(
+                        "Processing audio... {}%",
+                        (progress * 100.0) as u32
+                    )));
+                    !state.export.video_cancel().get_untracked()
+                },
+            )
+            .await;
+            let channels = match processed {
+                Ok(channels) => channels,
+                Err(RegionError::Cancelled) => {
+                    state.export.video_progress().set(None);
+                    state.export.video_status().set(None);
+                    return;
+                }
+                Err(RegionError::NotLoaded { at_secs }) => {
+                    show_export_failed(&state, &not_loaded_text(at_secs));
+                    return;
+                }
+            };
+            let wav_data = encode_region(
+                channels,
+                file.audio.sample_rate,
                 &job.params,
                 &file.name,
                 file.audio.metadata.guano.as_ref(),
@@ -912,11 +1138,12 @@ pub fn export_selected(state: &AppState) {
                 is_float,
                 normalize,
             );
-            (wav_file_name(&file, &views, job), wav_data)
-        })
-        .collect();
-
-    save_exports(state, exports, false);
+            exports.push((wav_file_name(&file, &views, job), wav_data));
+        }
+        state.export.video_progress().set(None);
+        state.export.video_status().set(None);
+        save_exports(&state, exports, false);
+    });
 }
 
 #[cfg(test)]
@@ -1002,7 +1229,10 @@ mod tests {
             let out = apply_dsp_mode(&tone, rate, &params);
             // Frequency from the zero crossings of the middle half.
             let mid = &out[out.len() / 4..out.len() * 3 / 4];
-            let crossings = mid.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count();
+            let crossings = mid
+                .windows(2)
+                .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+                .count();
             crossings as f64 / 2.0 / (mid.len() as f64 / rate as f64)
         };
         assert!((heard_hz(1.0) - 8_000.0).abs() < 200.0, "{}", heard_hz(1.0));
@@ -1181,8 +1411,20 @@ mod tests {
     }
 
     #[test]
+    fn export_length_limit() {
+        // 192 kHz stereo: 512 MB of float samples is 349.5 s.
+        assert_eq!(too_long(192_000 * 300, 2, 192_000), None);
+        let t = too_long(192_000 * 992, 2, 192_000).unwrap();
+        assert!((t.secs - 992.0).abs() < 1e-6);
+        assert!((t.max_secs - 349.5).abs() < 0.1, "{}", t.max_secs);
+        // Time expansion x10 writes the same samples at a tenth of the rate.
+        let te = too_long(192_000 * 992, 2, 19_200).unwrap();
+        assert!((te.secs - 9920.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn interleave_stereo() {
         let ch = vec![vec![1.0, 2.0], vec![-1.0, -2.0]];
-        assert_eq!(interleave(&ch), vec![1.0, -1.0, 2.0, -2.0]);
+        assert_eq!(interleave(ch), vec![1.0, -1.0, 2.0, -2.0]);
     }
 }

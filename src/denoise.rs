@@ -136,6 +136,8 @@ pub mod text {
 
     pub const TITLE: &str = "Denoised copy";
     pub const BUTTON: &str = "Make denoised copy";
+    /// The button while part of the recording is selected.
+    pub const BUTTON_SELECTION: &str = "Make denoised copy of selection";
     pub const CANCEL: &str = "Cancel";
     pub const STARTING: &str = "Loading recording and model\u{2026}";
     pub const ADDED: &str = "Denoised copy added to the file list";
@@ -174,11 +176,12 @@ pub mod text {
     }
     /// What the button does. A recording with more than two channels gives a
     /// mono copy.
-    pub fn result_line(mono_mix: bool) -> &'static str {
-        if mono_mix {
-            "Adds a mono copy and keeps the original."
-        } else {
-            "Adds a copy and keeps the original."
+    pub fn result_line(mono_mix: bool, selection: bool) -> &'static str {
+        match (mono_mix, selection) {
+            (true, false) => "Adds a mono copy and keeps the original.",
+            (false, false) => "Adds a copy and keeps the original.",
+            (true, true) => "Adds a mono copy of the selection and keeps the original.",
+            (false, true) => "Adds a copy of the selection and keeps the original.",
         }
     }
     /// Shown until the model file is on this device.
@@ -446,6 +449,56 @@ pub fn refusal(
         .then(|| text::too_long(frames, max_frames, sample_rate, copy_channels == 2))
 }
 
+/// The part of a recording a copy is made from, in samples of one channel.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CopyRange {
+    pub start: u64,
+    pub frames: u64,
+    /// True when the range is the selection and not the whole recording.
+    pub selection: bool,
+}
+
+/// The part of `file` that "Make denoised copy" would copy now: the
+/// selection's time range when there is one, else the whole recording.
+/// Reads the selection untracked.
+pub fn copy_range(state: AppState, file: &crate::state::LoadedFile) -> CopyRange {
+    use crate::state::InteractionStateStoreFields;
+    range_of(
+        state
+            .interaction
+            .selection()
+            .get_untracked()
+            .map(|s| (s.time_start, s.time_end)),
+        file.audio.sample_rate,
+        file.audio.source.total_samples(),
+    )
+}
+
+/// [`copy_range`] for a selection from `selection.0` to `selection.1` seconds
+/// in a recording of `total` samples. A selection with no samples inside the
+/// recording gives the whole recording.
+fn range_of(selection: Option<(f64, f64)>, sample_rate: u32, total: u64) -> CopyRange {
+    let whole = CopyRange {
+        start: 0,
+        frames: total,
+        selection: false,
+    };
+    let Some((from, to)) = selection else {
+        return whole;
+    };
+    let rate = f64::from(sample_rate);
+    let start = ((from.max(0.0) * rate) as u64).min(total);
+    let end = ((to.max(0.0) * rate) as u64).min(total);
+    if end <= start {
+        return whole;
+    }
+    CopyRange {
+        start,
+        frames: end - start,
+        selection: true,
+    }
+}
+
 /// Seconds the rest of a run should take, when `fraction` of it took
 /// `elapsed_s` seconds. `None` in the first seconds, when the rate is not
 /// yet steady enough to say.
@@ -471,8 +524,8 @@ pub fn cancel(state: AppState) {
     state.denoise.status().set(DenoiseStatus::Idle);
 }
 
-/// Denoise the open recording at the Strength picked in the menu, and add
-/// the result to the file list.
+/// Denoise the open recording, or the selected part of it, at the Strength
+/// picked in the menu, and add the result to the file list.
 pub fn start(state: AppState) {
     if is_busy(state) {
         return;
@@ -506,7 +559,9 @@ async fn run(state: AppState, generation: u32, strength: DenoiseStrength) -> Res
         .current_file()
         .ok_or_else(|| text::failed("no recording is open"))?;
     let sample_rate = file.audio.sample_rate;
-    let frames = file.audio.source.total_samples();
+    // Read once, here: a selection changed while the copy is made has no effect.
+    let range = copy_range(state, &file);
+    let frames = range.frames;
     if let Some(why) = refusal(
         sample_rate,
         frames,
@@ -551,15 +606,19 @@ async fn run(state: AppState, generation: u32, strength: DenoiseStrength) -> Res
         (0..channels).map(ChannelView::Channel).collect()
     };
     if in_pieces {
-        return run_in_pieces(state, generation, &file, bytes, &views, strength).await;
+        return run_in_pieces(state, generation, &file, range, bytes, &views, strength).await;
     }
-    let read =
-        crate::audio::streaming_source::read_views_ready(&*file.audio.source, &views, 0, total)
-            .await
-            .views
-            // A read that runs past the end of the file gives shorter channels.
-            .filter(|v| v.len() == views.len() && v.iter().all(|c| c.len() == v[0].len()))
-            .ok_or_else(|| text::failed("the recording could not be read"))?;
+    let read = crate::audio::streaming_source::read_views_ready(
+        &*file.audio.source,
+        &views,
+        range.start,
+        total,
+    )
+    .await
+    .views
+    // A read that runs past the end of the file gives shorter channels.
+    .filter(|v| v.len() == views.len() && v.iter().all(|c| c.len() == v[0].len()))
+    .ok_or_else(|| text::failed("the recording could not be read"))?;
     let mut samples = Some(interleave(read));
     if !live() {
         return Err(cancelled());
@@ -621,7 +680,7 @@ async fn run(state: AppState, generation: u32, strength: DenoiseStrength) -> Res
         return Err(cancelled());
     }
 
-    let name = denoised_name(&file.name, strength);
+    let name = denoised_name(&file.name, strength, range, sample_rate);
     let wav =
         crate::audio::wav_encoder::encode_wav_at(&denoised, channels as u16, sample_rate, 32, true);
     drop(denoised);
@@ -644,6 +703,7 @@ async fn run_in_pieces(
     state: AppState,
     generation: u32,
     file: &crate::state::LoadedFile,
+    range: CopyRange,
     bytes: js_sys::Uint8Array,
     views: &[ChannelView],
     strength: DenoiseStrength,
@@ -652,8 +712,8 @@ async fn run_in_pieces(
     let live = || GENERATION.with(|g| g.get()) == generation;
     let cancelled = String::new;
 
-    let name = denoised_name(&file.name, strength);
-    let total = file.audio.source.total_samples();
+    let name = denoised_name(&file.name, strength, range, file.audio.sample_rate);
+    let total = range.frames;
     let mut copy = CopyFile::create(
         state,
         &name,
@@ -669,7 +729,10 @@ async fn run_in_pieces(
     })?;
     // A cancel, or a failure, deletes what was written.
     let denoised = if live() {
-        denoise_into(state, generation, file, bytes, views, strength, &mut copy).await
+        denoise_into(
+            state, generation, file, range, bytes, views, strength, &mut copy,
+        )
+        .await
     } else {
         Err(cancelled())
     };
@@ -690,13 +753,15 @@ async fn run_in_pieces(
     Ok(())
 }
 
-/// Sends the recording to a new worker a piece at a time, first for its
+/// Sends `range` of the recording to a new worker a piece at a time, first for its
 /// noise level and then to be denoised, and writes the denoised samples to
 /// `copy` as they come back. One piece is with the worker at a time.
+#[allow(clippy::too_many_arguments)]
 async fn denoise_into(
     state: AppState,
     generation: u32,
     file: &crate::state::LoadedFile,
+    range: CopyRange,
     bytes: js_sys::Uint8Array,
     views: &[ChannelView],
     strength: DenoiseStrength,
@@ -705,7 +770,7 @@ async fn denoise_into(
     let live = || GENERATION.with(|g| g.get()) == generation;
     let cancelled = String::new;
     let source = &*file.audio.source;
-    let total = source.total_samples();
+    let total = range.frames;
     let channels = views.len() as u32;
     // Samples the copy has, over all its channels.
     let all = total * u64::from(channels);
@@ -713,17 +778,19 @@ async fn denoise_into(
     start_worker().map_err(|e| text::failed(&format!("the worker could not start ({e})")))?;
     let key = model().file.id.to_string();
     let run_id = generation;
-    // Reads the piece that starts at sample `at` and posts it with `msg`.
+    // Reads the piece that starts `at` samples into the range and posts it
+    // with `msg`.
     // Returns the samples of one channel that it sent.
     let send = |msg: ToWorker, at: u64| async move {
         let len = (total - at).min(PIECE_FRAMES as u64) as usize;
-        let read = crate::audio::streaming_source::read_views_ready(source, views, at, len)
-            .await
-            .views
-            // A recording that turns out shorter than its file said gives a
-            // short piece.
-            .filter(|v| v.len() == views.len() && v.iter().all(|c| c.len() == len))
-            .ok_or_else(|| text::failed("the recording could not be read"))?;
+        let read =
+            crate::audio::streaming_source::read_views_ready(source, views, range.start + at, len)
+                .await
+                .views
+                // A recording that turns out shorter than its file said gives a
+                // short piece.
+                .filter(|v| v.len() == views.len() && v.iter().all(|c| c.len() == len))
+                .ok_or_else(|| text::failed("the recording could not be read"))?;
         if !live() {
             return Err(cancelled());
         }
@@ -888,8 +955,16 @@ fn stream_start_message(
 }
 
 /// "bat.wav" becomes "bat (denoised).wav", or "bat (denoised, heavy).wav" at
-/// Heavy strength.
-pub fn denoised_name(name: &str, strength: DenoiseStrength) -> String {
+/// Heavy strength. A copy of a selection has the selection's seconds in its
+/// name, "bat 302.5-314.2s (denoised).wav". That stem is not the original's,
+/// so the file list does not pair the two: a pair is compared at the same
+/// times, and the selection's copy starts at 0.
+pub fn denoised_name(
+    name: &str,
+    strength: DenoiseStrength,
+    range: CopyRange,
+    sample_rate: u32,
+) -> String {
     use crate::components::file_sidebar::file_groups::{DENOISED_HEAVY_SUFFIX, DENOISED_SUFFIX};
     let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
     // The suffix pairs the copy with its original in the file list.
@@ -897,12 +972,52 @@ pub fn denoised_name(name: &str, strength: DenoiseStrength) -> String {
         DenoiseStrength::Normal => DENOISED_SUFFIX,
         DenoiseStrength::Heavy => DENOISED_HEAVY_SUFFIX,
     };
-    format!("{stem}{suffix}.wav")
+    if !range.selection {
+        return format!("{stem}{suffix}.wav");
+    }
+    let rate = f64::from(sample_rate.max(1));
+    format!(
+        "{stem} {:.1}-{:.1}s{suffix}.wav",
+        range.start as f64 / rate,
+        (range.start + range.frames) as f64 / rate
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_selection_gives_its_own_range_and_name() {
+        let whole = range_of(None, 192_000, 1_920_000);
+        assert_eq!(
+            (whole.start, whole.frames, whole.selection),
+            (0, 1_920_000, false)
+        );
+        let part = range_of(Some((2.5, 4.0)), 192_000, 1_920_000);
+        assert_eq!(
+            (part.start, part.frames, part.selection),
+            (480_000, 288_000, true)
+        );
+        // Past the end of the recording: cut off at the end.
+        assert_eq!(
+            range_of(Some((9.0, 12.0)), 192_000, 1_920_000).frames,
+            192_000
+        );
+        // Nothing inside the recording: the whole recording.
+        assert!(!range_of(Some((11.0, 12.0)), 192_000, 1_920_000).selection);
+
+        let n = DenoiseStrength::Normal;
+        assert_eq!(
+            denoised_name("bat.flac", n, whole, 192_000),
+            "bat (denoised).wav"
+        );
+        let name = denoised_name("bat.flac", DenoiseStrength::Heavy, part, 192_000);
+        assert_eq!(name, "bat 2.5-4.0s (denoised, heavy).wav");
+        use crate::components::file_sidebar::file_groups::compute_denoise_links;
+        let links = compute_denoise_links(&["bat.flac".to_string(), name]);
+        assert_eq!(links[1].original, None);
+    }
 
     #[test]
     fn recordings_over_96_khz_get_a_median_of_3_frames() {
@@ -927,16 +1042,31 @@ mod tests {
         assert_eq!(model().min_rate, 22_050);
     }
 
+    const WHOLE: CopyRange = CopyRange {
+        start: 0,
+        frames: 1,
+        selection: false,
+    };
+
     #[test]
     fn the_result_is_named_after_the_recording_and_its_strength() {
         use DenoiseStrength::{Heavy, Normal};
         assert_eq!(
-            denoised_name("XC1 - Bat.flac", Normal),
+            denoised_name("XC1 - Bat.flac", Normal, WHOLE, 48_000),
             "XC1 - Bat (denoised).wav"
         );
-        assert_eq!(denoised_name("take", Normal), "take (denoised).wav");
-        assert_eq!(denoised_name("bat.wav", Heavy), "bat (denoised, heavy).wav");
-        assert_eq!(denoised_name("take", Heavy), "take (denoised, heavy).wav");
+        assert_eq!(
+            denoised_name("take", Normal, WHOLE, 48_000),
+            "take (denoised).wav"
+        );
+        assert_eq!(
+            denoised_name("bat.wav", Heavy, WHOLE, 48_000),
+            "bat (denoised, heavy).wav"
+        );
+        assert_eq!(
+            denoised_name("take", Heavy, WHOLE, 48_000),
+            "take (denoised, heavy).wav"
+        );
     }
 
     #[test]

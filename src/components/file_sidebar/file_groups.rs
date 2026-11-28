@@ -1,5 +1,5 @@
-use oversample_core::erased_sort::SortErased;
 use crate::state::LoadedFile;
+use oversample_core::erased_sort::SortErased;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -634,7 +634,16 @@ mod scope_tests {
         // The suffixes are the ones `denoised_name` writes.
         for strength in crate::state::DenoiseStrength::ALL {
             assert_eq!(
-                denoised_original_stem(&crate::denoise::denoised_name("XC1 - Bat.flac", strength)),
+                denoised_original_stem(&crate::denoise::denoised_name(
+                    "XC1 - Bat.flac",
+                    strength,
+                    crate::denoise::CopyRange {
+                        start: 0,
+                        frames: 1,
+                        selection: false
+                    },
+                    48_000,
+                )),
                 Some("XC1 - Bat")
             );
         }

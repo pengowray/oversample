@@ -542,3 +542,71 @@ test("double-clicking Heavy makes a Heavy copy, and a double-click while a copy 
   expect(await starts()).toBe(1);
   await expect(page.locator(".file-item", { hasText: "(denoised" })).toHaveCount(1);
 });
+
+// ─── A copy of the selection ────────────────────────────────────────────
+
+type SelSnap = {
+  currentFile: string;
+  duration: number;
+  selection: { timeStart: number; timeEnd: number } | null;
+};
+const selSnap = (page: Page) =>
+  page.evaluate(() =>
+    (window as unknown as { __oversample_test: () => SelSnap }).__oversample_test(),
+  );
+
+for (const inPieces of [false, true]) {
+  test(`with a selection, the copy is of the selection only${inPieces ? " (written a piece at a time)" : ""}`, async ({
+    page,
+  }) => {
+    test.skip(
+      !process.env.DENOISE_REAL_DOWNLOAD && !fs.existsSync(modelPath),
+      `no model file at ${modelPath}`,
+    );
+    test.setTimeout(240_000);
+    await serveModel(page);
+    if (inPieces) {
+      // The selection is longer than this, so it goes a piece at a time.
+      await page.addInitScript(() => {
+        (window as unknown as Record<string, number>).__oversample_denoise_in_memory_max = 100_000;
+      });
+    }
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+
+    await page.goto("/");
+    await page
+      .locator('input[type="file"][accept*=".wav"]')
+      .first()
+      .setInputFiles({ name: "bat-part.wav", mimeType: "audio/wav", buffer: batLikeWav(96_000, 8) });
+    const canvas = page.locator(".main-view .chart-stage > canvas");
+    await expect(canvas).toBeVisible();
+    await expect.poll(async () => (await selSnap(page)).currentFile).toBe("bat-part.wav");
+
+    await page.locator(".tool-combo-btn").click();
+    await page.locator(".layer-panel button", { hasText: "Selection" }).click();
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.6, { steps: 5 });
+    await page.mouse.up();
+    const sel = (await selSnap(page)).selection!;
+    expect(sel).not.toBeNull();
+    const length = sel.timeEnd - sel.timeStart;
+    expect(length).toBeGreaterThan(0.5);
+    expect(length).toBeLessThan(7);
+
+    await page.locator('button[title="Noise filter settings"]').click();
+    const button = page.getByRole("button", { name: "Make denoised copy of selection" });
+    await expect(button).toBeEnabled();
+    await expect(page.getByText("Adds a copy of the selection and keeps the original.")).toBeVisible();
+    await page.screenshot({ path: `test-results/denoise-selection${inPieces ? "-pieces" : ""}.png` });
+    await button.click();
+
+    const name = `bat-part ${sel.timeStart.toFixed(1)}-${sel.timeEnd.toFixed(1)}s (denoised).wav`;
+    await expect.poll(async () => (await selSnap(page)).currentFile, { timeout: 200_000 }).toBe(name);
+    // The copy is as long as the selection, to within a sample.
+    expect(Math.abs((await selSnap(page)).duration - length)).toBeLessThan(0.001);
+    expect(errors).toEqual([]);
+  });
+}

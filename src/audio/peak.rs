@@ -312,9 +312,19 @@ pub(crate) fn start_processed_peak_scan(
         let mut t = range_secs.0.max(0.0);
         while t < end {
             let t1 = (t + PROCESSED_SLICE_SECS).min(end);
-            for buf in
-                crate::audio::export::process_region(source.as_ref(), &views, sr, t, t1, &params)
-            {
+            // Audio that can't be loaded is left out of the peak.
+            let bufs = crate::audio::export::process_region_ready(
+                source.as_ref(),
+                &views,
+                sr,
+                t,
+                t1,
+                &params,
+                |_| true,
+            )
+            .await
+            .unwrap_or_default();
+            for buf in bufs {
                 peak = peak.max(crate::dsp::true_peak::true_peak(&buf));
             }
             t = t1;

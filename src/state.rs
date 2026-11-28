@@ -587,6 +587,27 @@ pub enum VideoViewMode {
     ScrollingView,
 }
 
+/// Which of the file's annotations an MP4 export draws.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum VideoAnnotations {
+    #[default]
+    None,
+    All,
+    /// Only annotations with this tag, as stored (`call`, `species=...`).
+    Tag(String),
+}
+
+impl VideoAnnotations {
+    /// True when the export draws an annotation that has `tags`.
+    pub fn shows(&self, tags: &[String]) -> bool {
+        match self {
+            VideoAnnotations::None => false,
+            VideoAnnotations::All => true,
+            VideoAnnotations::Tag(tag) => tags.contains(tag),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum SpectrogramDisplay {
     #[default]
@@ -2222,6 +2243,8 @@ pub struct ExportState {
     pub video_audio_codec: AudioCodecOption,
     /// Video view mode: static playhead vs scrolling.
     pub video_view_mode: VideoViewMode,
+    /// Annotations drawn in the video.
+    pub video_annotations: VideoAnnotations,
 }
 
 /// Transform / DSP playback parameters (heterodyne, time-expansion, pitch
@@ -3444,6 +3467,7 @@ impl AppState {
                 video_codec: VideoCodec::default(),
                 video_audio_codec: AudioCodecOption::default(),
                 video_view_mode: VideoViewMode::default(),
+                video_annotations: VideoAnnotations::default(),
             }),
         };
 

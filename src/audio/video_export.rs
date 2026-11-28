@@ -11,13 +11,14 @@ use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
 use crate::audio::export::{
-    build_export_params, export_channel_views, export_output_rate, get_selected_regions,
-    process_region, save_export_bytes, video_file_name,
+    build_export_params, export_channel_views, export_output_rate, export_too_long,
+    get_selected_regions, not_loaded_text, process_region_ready, save_export_bytes,
+    show_export_failed, too_long_text, video_file_name, RegionError,
 };
 use crate::audio::webcodecs_bindings as wc;
 use crate::canvas::spectrogram_renderer::{self, ColormapMode, SpectDisplaySettings, TileSource};
 use crate::state::{AppState, AudioCodecOption, VideoCodec, VideoViewMode};
-use crate::web_util::{sleep_ms, yield_now};
+use crate::web_util::yield_now;
 
 /// Frames per second for exported video.
 const FPS: f64 = 30.0;
@@ -49,6 +50,8 @@ struct RenderParams {
     canvas_w: u32,
     canvas_h: u32,
     shield_style: crate::state::ShieldStyle,
+    /// The annotations to draw, already filtered. `None` draws none.
+    annotations: Option<crate::annotations::AnnotationSet>,
 }
 
 /// Check if video export is available in this browser.
@@ -78,28 +81,8 @@ pub fn start_export(state: &AppState) {
                 }
             }
             Err(e) => {
-                let msg = format!("{:?}", e);
-                log::error!("Video export failed: {msg}");
-                state.export.video_progress().set(None);
-                state
-                    .export
-                    .video_status()
-                    .set(Some(format!("Export failed: {msg}")));
-                // Clear error after 10 seconds
-                let state2 = state;
-                leptos::task::spawn_local(async move {
-                    sleep_ms(10_000).await;
-                    if state2
-                        .export
-                        .video_status()
-                        .get_untracked()
-                        .as_ref()
-                        .map(|s| s.starts_with("Export failed"))
-                        .unwrap_or(false)
-                    {
-                        state2.export.video_status().set(None);
-                    }
-                });
+                let msg = e.as_string().unwrap_or_else(|| format!("{e:?}"));
+                show_export_failed(&state, &msg);
             }
         }
     });
@@ -115,6 +98,10 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let file_idx = state.library.current_index().get_untracked().unwrap();
     let sample_rate = file.audio.sample_rate;
     let source = &file.audio.source;
+
+    if let Some(t) = export_too_long(state, &file, crate::state::ExportFormat::Mp4) {
+        return Err(JsValue::from_str(&too_long_text(t)));
+    }
 
     // Determine time range (same logic as WAV export)
     let regions = get_selected_regions(state);
@@ -245,6 +232,7 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         canvas_w: vid_w,
         canvas_h: vid_h,
         shield_style: state.viewmode.shield_style().get_untracked(),
+        annotations: shown_annotations(state),
     };
 
     // ── Process audio ────────────────────────────────────────────────────────
@@ -264,14 +252,30 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
         source.as_ref(),
         state.viewmode.channel_view().get_untracked(),
     );
-    let mut audio_channels = process_region(
+    let state_copy = *state;
+    let processed = process_region_ready(
         source.as_ref(),
         &views,
         sample_rate,
         start_time,
         end_time,
         &audio_params,
-    );
+        |done| {
+            state_copy.export.video_status().set(Some(format!(
+                "Processing audio... {}%",
+                (done * 100.0) as u32
+            )));
+            !state_copy.export.video_cancel().get_untracked()
+        },
+    )
+    .await;
+    let mut audio_channels = match processed {
+        Ok(channels) => channels,
+        Err(RegionError::Cancelled) => return Ok(()),
+        Err(RegionError::NotLoaded { at_secs }) => {
+            return Err(JsValue::from_str(&not_loaded_text(at_secs)));
+        }
+    };
     if state.export.normalize().get_untracked() {
         crate::audio::export::normalize_peak(
             &mut audio_channels,
@@ -661,6 +665,19 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     Ok(())
 }
 
+/// The current file's annotations that the "Annotations" export option
+/// shows, or `None` when it shows none.
+fn shown_annotations(state: &AppState) -> Option<crate::annotations::AnnotationSet> {
+    let choice = state.export.video_annotations().get_untracked();
+    let id = state.current_file_id()?;
+    let mut set = state
+        .annotations
+        .store()
+        .with_untracked(|store| store.get(id).cloned())?;
+    set.annotations.retain(|a| choice.shows(&a.tags));
+    (!set.annotations.is_empty()).then_some(set)
+}
+
 /// Render a single spectrogram frame to the offscreen canvas.
 fn render_frame(
     ctx: &CanvasRenderingContext2d,
@@ -736,6 +753,25 @@ fn render_frame(
         0.0,   // het_cutoff (not relevant for video)
         false, // labels on left
     );
+
+    if let Some(set) = &r.annotations {
+        spectrogram_renderer::draw_annotations(
+            ctx,
+            set,
+            &[],  // none drawn as selected
+            None, // no resize handles
+            r.min_freq,
+            r.max_freq,
+            scroll_offset,
+            r.time_res,
+            zoom,
+            r.canvas_w as f64,
+            r.canvas_h as f64,
+            false, // desktop label sizes
+            false,
+            0.0,
+        );
+    }
 }
 
 /// Audio rate for the video: rates above 48 kHz drop to 48 kHz (high sample

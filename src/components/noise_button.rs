@@ -626,20 +626,23 @@ fn NrSettings() -> impl IntoView {
 #[component]
 fn DenoiseSection() -> impl IntoView {
     use crate::denoise::{self, text};
-    use crate::state::{DenoiseStateStoreFields, DenoiseStatus};
+    use crate::state::{DenoiseStateStoreFields, DenoiseStatus, InteractionStateStoreFields};
     let state = expect_context::<AppState>();
     denoise::check_model_stored(state);
 
-    // Sample rate, length in samples and channels of the open recording.
-    let open = move || {
-        state.current_file().map(|f| {
-            (
-                f.audio.sample_rate,
-                f.audio.source.total_samples(),
-                f.audio.channels,
-            )
-        })
+    // Sample rate, length in samples and channels of what the button would
+    // copy: the selection when there is one, else the open recording.
+    let range = move || {
+        state.interaction.selection().track();
+        state.current_file().map(|f| denoise::copy_range(state, &f))
     };
+    let open = move || {
+        let frames = range()?.frames;
+        state
+            .current_file()
+            .map(|f| (f.audio.sample_rate, frames, f.audio.channels))
+    };
+    let of_selection = move || range().is_some_and(|r| r.selection);
     let refusal = move || {
         open().and_then(|(rate, samples, channels)| {
             denoise::refusal(rate, samples, channels, denoise::sample_limit(state))
@@ -665,7 +668,7 @@ fn DenoiseSection() -> impl IntoView {
                         title=text::TOOLTIP
                         disabled=move || !can_start()
                         on:click=move |_: web_sys::MouseEvent| denoise::start(state)
-                    >{text::BUTTON}</button>
+                    >{move || if of_selection() { text::BUTTON_SELECTION } else { text::BUTTON }}</button>
                 }.into_any()
             }}
         </div>
@@ -693,7 +696,7 @@ fn DenoiseSection() -> impl IntoView {
                             <div class="denoise-note">
                                 {text::model_line(denoise::model().trained_on)}
                             </div>
-                            <div class="denoise-note">{text::result_line(mono_mix)}</div>
+                            <div class="denoise-note">{text::result_line(mono_mix, of_selection())}</div>
                             {(!stored).then(|| view! {
                                 <div class="denoise-note">
                                     {text::download_line(&denoise::model_size_text())}
