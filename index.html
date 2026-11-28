@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+    <title>Oversample</title>
+    <!-- Start-up screen (#boot-splash in <body>), shown until the app mounts;
+         src/lib.rs removes it. Inline and ahead of style.css, so the first
+         paint is already the app's background (#1a1a1a) instead of white. -->
+    <style>
+    html, body { margin: 0; height: 100%; background: #1a1a1a; }
+    #boot-splash {
+        position: fixed; inset: 0; z-index: 10000;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+        background: #1a1a1a; color: #ddd;
+        font: 600 18px "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    /* about-icon.png at 144 px as WebP, inline: a separate request queues
+       behind the app's scripts and arrived after the app on a slow phone. */
+    #boot-splash img { width: 72px; height: 72px; }
+    /* Indeterminate: nothing reports how far loading has got. */
+    #boot-splash .boot-bar {
+        position: relative; overflow: hidden;
+        width: 160px; height: 4px; border-radius: 2px; background: #333;
+    }
+    #boot-splash .boot-bar::after {
+        content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%;
+        border-radius: 2px; background: #7f9cf5;
+        animation: boot-slide 1.3s ease-in-out infinite;
+    }
+    @keyframes boot-slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+    @keyframes boot-fade { 50% { opacity: 0.35; } }
+    @media (prefers-reduced-motion: reduce) {
+        #boot-splash .boot-bar::after { width: 100%; animation: boot-fade 2s ease-in-out infinite; }
+    }
+    #boot-splash .boot-failed { display: none; font-weight: 400; font-size: 14px; text-align: center; padding: 0 16px; }
+    #boot-splash.failed .boot-bar { display: none; }
+    #boot-splash.failed .boot-failed { display: block; }
+    #boot-splash button {
+        margin-top: 10px; font: inherit; color: #e6ecff; background: #2b3a6a;
+        border: 1px solid #3d4f8a; border-radius: 4px; padding: 6px 14px; cursor: pointer;
+    }
+    </style>
+    <link rel="icon" type="image/x-icon" href="favicon.ico"/>
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png"/>
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png"/>
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png"/>
+    <link rel="manifest" href="site.webmanifest"/>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    <link rel="stylesheet" href="/style-6475f533ced8b449.css" integrity="sha384-OaB+kXMDj6YkLiYoLvGG4N1xXcwqMJ3Po1UlB6vqaLiymxx8hT0ZOlaL3XlSgGgv"/>
+    <!-- Species map (src/components/file_sidebar/species_map.rs): BirdNET's
+         class positions (research/species-map, 26 KB), the glue, and Apache
+         ECharts, which species-map.js loads only when a map opens. -->
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    <!-- BirdNET+ V3.0's labels (src/classifier/mod.rs, birdnet_v3_labels): a
+         630 KB trimmed copy of the 8 MB label CSV, made by
+         research/birdnet-v3-bench/labels.py. The model itself is downloaded. -->
+    
+    
+    <!-- umap-js (MIT), which live-explorer.js loads only when UMAP is asked for. -->
+    
+    <!-- <script data-trunk>: Trunk puts a content hash in the file name, so
+         a new build never runs with an old cached copy of the script. The
+         libraries these scripts load later are plain copies. -->
+    <script src="/species-map-6925c1f15e4625c2.js" defer integrity="sha384-zhZasDhjgAOqcx26c3scGPsepmiaaSew/XD/at1ZvISIg2j6AyzvmYe9WoNFOU9S"></script>
+    <script src="/live-embedding-acbf008f4d1018a3.js" defer integrity="sha384-HzmysBU1WY2FgPvRoziW5V3jQoFLKDl/B1p7tV5FeOg8WdvAinpoPfw/aGxRKUoD"></script>
+    <script src="/live-explorer-df172d36199bdb5a.js" defer integrity="sha384-oE1x6cE592elEWsOu/c/ntbmlu4dGWcyjxflQmR6gSw8FCMhsFeGzoweuzJ+5Mh3"></script>
+    <script src="/mp4-muxer-cd41c07e03c0830b.js" defer integrity="sha384-j4nHiBFLIK3KcMrci0WwPV8UI6fzPk0K8aqbWvOvhDqANMNYMpsZQ0WGp4hRBBo7"></script>
+    
+    <script src="/surface-3d-b619327224040f92.js" defer integrity="sha384-1kz6X/HEktwDga8iQJSZLZRDsTBvMhAypemlbBYcWI22AFWRYaC+06u9JBW+DWMV"></script>
+    
+    
+    
+    <script src="/hfr-tour-2ab6f7d33e75c29d.js" defer integrity="sha384-XGWyf1zBNT6YfK2Qw78+nwrez8IwSPwPUf2YcMrnuKrohJyS4RUZvFq40LbnTAxM"></script>
+    <script src="/app-glue-66a98b924c29e3be.js" defer integrity="sha384-/oBdoFmcj3JsollPHwBG2Ai/Wy15PuxfoU5lKlYfl/HM+zhIGhobUBBxOyr/xQjY"></script>
+    <!-- The scripts above have `defer`, so the page does not wait for them
+         before it shows the start-up screen. The app's own script comes after
+         them here because deferred and module scripts run in page order, and
+         the app calls functions those scripts define. -->
+    <!-- The app. Named here because a second rust link (the worker below) stops
+         Trunk from adding it on its own. An explicit link also turns on
+         wasm-opt, which the implicit one never ran; data-wasm-opt="0" turns it
+         off for `trunk serve`. scripts/trunk-release.sh turns it on by
+         replacing this attribute, so keep the attributes in this order. -->
+    
+<script type="module">
+import init, * as bindings from '/oversample-e35a4e0f8649fc1f.js';
+
+const wasm = await init({ module_or_path: '/oversample-4ce8a2b551e934d4_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+    <!-- BirdNET and BattyBirdNET engine, run in a Web Worker. Trunk writes
+         birdnet-worker_loader.js, birdnet-worker.js and birdnet-worker_bg.wasm
+         (names not hashed); the app starts the worker only when someone runs a
+         model (src/classifier/). -->
+    
+    <script>
+    // .fit-text — auto-shrink text to fit its container.
+    //
+    // Any element with class "fit-text" is observed; when its width or text
+    // content changes, the font-size is binary-searched between
+    // data-fit-min (default 9) and data-fit-max (default 13) until
+    // scrollWidth <= clientWidth. Falls back to the host's CSS-ellipsis if
+    // the text still overflows at the minimum size.
+    //
+    // Avoids the layout shift you get from filling chips with variable-length
+    // text (device names, mode labels, etc.) without resorting to a JS
+    // library — vanilla ResizeObserver + MutationObserver.
+    (function() {
+        if (typeof ResizeObserver === 'undefined') return;
+        var observed = new WeakSet();
+        function measure(el) {
+            if (!el.isConnected || el.clientWidth === 0) return;
+            var max = parseFloat(el.dataset.fitMax || '13');
+            var min = parseFloat(el.dataset.fitMin || '9');
+            el.style.fontSize = max + 'px';
+            if (el.scrollWidth <= el.clientWidth) return;
+            var lo = min, hi = max;
+            for (var i = 0; i < 6; i++) {
+                var mid = (lo + hi) / 2;
+                el.style.fontSize = mid + 'px';
+                if (el.scrollWidth <= el.clientWidth) lo = mid;
+                else hi = mid;
+            }
+            el.style.fontSize = lo + 'px';
+        }
+        var ro = new ResizeObserver(function(entries) {
+            for (var i = 0; i < entries.length; i++) measure(entries[i].target);
+        });
+        function attach(el) {
+            if (observed.has(el)) return;
+            observed.add(el);
+            ro.observe(el);
+            measure(el);
+        }
+        function scan(root) {
+            if (root.nodeType !== 1) return;
+            if (root.matches && root.matches('.fit-text')) attach(root);
+            if (root.querySelectorAll) {
+                var list = root.querySelectorAll('.fit-text');
+                for (var i = 0; i < list.length; i++) attach(list[i]);
+            }
+        }
+        var mo = new MutationObserver(function(muts) {
+            for (var i = 0; i < muts.length; i++) {
+                var m = muts[i];
+                if (m.type === 'characterData') {
+                    var t = m.target.parentElement && m.target.parentElement.closest('.fit-text');
+                    if (t) measure(t);
+                } else if (m.type === 'childList') {
+                    if (m.target.nodeType === 1) {
+                        var host = m.target.closest && m.target.closest('.fit-text');
+                        if (host) measure(host);
+                    }
+                    for (var j = 0; j < m.addedNodes.length; j++) scan(m.addedNodes[j]);
+                }
+            }
+        });
+        function init() {
+            scan(document.body);
+            mo.observe(document.body, { childList: true, subtree: true, characterData: true });
+        }
+        if (document.readyState !== 'loading') init();
+        else document.addEventListener('DOMContentLoaded', init);
+        window.__fit_text = { attach: attach, measure: measure, scan: scan };
+    })();
+
+    // .lock-grow — high-water-mark width lock.
+    //
+    // Any element with class "lock-grow" remembers the widest natural
+    // size it has ever rendered at, and uses that as its min-width. The
+    // lock only grows: short labels never shrink the element after a
+    // longer label has been seen. We deliberately only set min-width
+    // (NOT max-width) — if a new render legitimately needs more width
+    // than the prior high-water mark, the element should grow to fit
+    // rather than visually clip its content. Setting max-width caused
+    // exactly that bug for combo buttons whose right halves wanted more
+    // room when their secondary caption (right_label) appeared.
+    //
+    // Applied to .combo-btn-left and .combo-btn-right inside the generic
+    // ComboButton, eliminating the "buttons jump around when state
+    // toggles" jitter.
+    (function() {
+        if (typeof ResizeObserver === 'undefined') return;
+        var locks = new WeakMap();
+        function update(el) {
+            if (!el.isConnected) return;
+            var state = locks.get(el);
+            if (!state) { state = { max: 0 }; locks.set(el, state); }
+            // Temporarily restore inner .fit-text spans to their MAX font
+            // before measuring — otherwise we'd read a natural width that's
+            // already been shrunk by fit-text, and our high-water mark
+            // would never reach the size that actually fits the unshrunk
+            // text. We restore the previous inline font-size afterwards;
+            // fit-text's own ResizeObserver will re-shrink if needed once
+            // the parent's lock changes.
+            var fits = el.querySelectorAll ? el.querySelectorAll('.fit-text') : [];
+            var prevFontSizes = [];
+            for (var i = 0; i < fits.length; i++) {
+                prevFontSizes.push(fits[i].style.fontSize);
+                var maxFont = parseFloat(fits[i].dataset.fitMax || '13');
+                fits[i].style.fontSize = maxFont + 'px';
+            }
+            // Temporarily release our width lock so we can read the
+            // natural width the browser would pick for the current
+            // content.
+            var prevMin = el.style.minWidth;
+            el.style.minWidth = '';
+            var natural = el.offsetWidth;
+            if (natural > state.max) state.max = natural;
+            if (state.max > 0) {
+                el.style.minWidth = state.max + 'px';
+            } else {
+                el.style.minWidth = prevMin;
+            }
+            // Restore fit-text font sizes. If the lock changed, fit-text's
+            // ResizeObserver will fire and re-measure on the next frame.
+            for (var k = 0; k < fits.length; k++) {
+                fits[k].style.fontSize = prevFontSizes[k];
+            }
+        }
+        function attach(el) {
+            if (locks.has(el)) return;
+            locks.set(el, { max: 0 });
+            requestAnimationFrame(function() { update(el); });
+        }
+        function scanLock(root) {
+            if (root.nodeType !== 1) return;
+            if (root.matches && root.matches('.lock-grow')) attach(root);
+            if (root.querySelectorAll) {
+                var list = root.querySelectorAll('.lock-grow');
+                for (var i = 0; i < list.length; i++) attach(list[i]);
+            }
+        }
+        // Coalesce updates within one frame to avoid repeated layout thrash
+        var pending = new Set();
+        var rafScheduled = false;
+        function schedule(el) {
+            pending.add(el);
+            if (rafScheduled) return;
+            rafScheduled = true;
+            requestAnimationFrame(function() {
+                rafScheduled = false;
+                pending.forEach(function(e) { update(e); });
+                pending.clear();
+            });
+        }
+        var mo = new MutationObserver(function(muts) {
+            for (var i = 0; i < muts.length; i++) {
+                var m = muts[i];
+                if (m.type === 'characterData') {
+                    var p = m.target.parentElement;
+                    var host = p && p.closest && p.closest('.lock-grow');
+                    if (host) schedule(host);
+                } else if (m.type === 'childList') {
+                    if (m.target.nodeType === 1) {
+                        var h = m.target.closest && m.target.closest('.lock-grow');
+                        if (h) schedule(h);
+                    }
+                    for (var j = 0; j < m.addedNodes.length; j++) scanLock(m.addedNodes[j]);
+                }
+            }
+        });
+        function initLock() {
+            scanLock(document.body);
+            mo.observe(document.body, { childList: true, subtree: true, characterData: true });
+        }
+        if (document.readyState !== 'loading') initLock();
+        else document.addEventListener('DOMContentLoaded', initLock);
+        window.__lock_grow = { attach: attach, update: update };
+    })();
+    // A hash in the Info panel is shown shortened: its middle characters are
+    // in the page at font size 0 (.hash-mid). Chromium and Firefox copy them
+    // with the rest of a selection. This puts the whole hash (data-full) on
+    // the clipboard in any browser, when the selection is inside one hash.
+    document.addEventListener('copy', function (ev) {
+        var sel = window.getSelection();
+        if (!sel || sel.isCollapsed || !ev.clipboardData) return;
+        var inHash = function (node) {
+            var el = node && (node.nodeType === 1 ? node : node.parentElement);
+            return el && el.closest ? el.closest('.hash-value[data-full]') : null;
+        };
+        var a = inHash(sel.anchorNode);
+        if (!a || a !== inHash(sel.focusNode)) return;
+        var full = a.getAttribute('data-full');
+        var picked = sel.toString().replace(/\s+/g, '');
+        // Only when the selection takes in the hidden middle; a few
+        // characters picked from one end are copied as they are.
+        if (picked.length < full.length && full.indexOf(picked) !== -1) return;
+        ev.clipboardData.setData('text/plain', full);
+        ev.preventDefault();
+    });
+    </script>
+<link rel="modulepreload" href="/oversample-e35a4e0f8649fc1f.js" crossorigin="anonymous" integrity="sha384-uL9dBmFY9PVbIJz4ctCrQxHAEMgsoJM5Gw1lTf1zJUa5lAUyM9fQ/kfpgm3iLyAw"><link rel="preload" href="/oversample-4ce8a2b551e934d4_bg.wasm" crossorigin="anonymous" integrity="sha384-sw9gJG+vt6VP80bIpWdEUy4FpzMtXY/KgMA2VJPLy4nnLaryHOIXpy0NfVyeHlDz" as="fetch" type="application/wasm"></head>
+<body>
+    <div id="boot-splash" role="progressbar" aria-label="Loading Oversample">
+        <img src="data:image/webp;base64,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" alt="" width="72" height="72"/>
+        <div>Oversample</div>
+        <div class="boot-bar"></div>
+        <div class="boot-failed">Couldn't start.<br/><button type="button" onclick="location.reload()">Reload</button></div>
+    </div>
+    <script>
+    // An error before the app mounts (the WASM failed to load or start)
+    // replaces the loading bar with a Reload button. Once the app mounts,
+    // #boot-splash is gone and this does nothing.
+    (function () {
+        function failed() {
+            var s = document.getElementById('boot-splash');
+            if (s) { s.classList.add('failed'); s.removeAttribute('role'); }
+        }
+        window.addEventListener('error', failed);
+        window.addEventListener('unhandledrejection', failed);
+    })();
+    </script>
+</body>
+</html>
