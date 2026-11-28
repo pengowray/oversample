@@ -333,6 +333,29 @@ pub fn ExportPanel() -> impl IntoView {
                                         </div>
                                     })
                                 }}
+                                {move || {
+                                    let rate = state.current_file().map(|f| f.audio.sample_rate)?;
+                                    let top = video_export::crop_hz(state.playback.mode().get(), rate)?;
+                                    Some(view! {
+                                        <div class="setting-row">
+                                            <label
+                                                class="export-radio"
+                                                title="A 1:1 video's sound goes up to 24 kHz. This leaves the picture above that out of the video."
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    prop:checked=move || state.export.video_crop_to_sound().get()
+                                                    on:change=move |ev| {
+                                                        let on = event_target_checked(&ev);
+                                                        state.export.video_crop_to_sound().set(on);
+                                                        crate::settings::set_bool(crate::settings::keys::EXPORT_VIDEO_CROP, on);
+                                                    }
+                                                />
+                                                {format!(" Crop picture at {}", crate::format_units::khz(top as i64, 0))}
+                                            </label>
+                                        </div>
+                                    })
+                                }}
                                 <div class="setting-row" style="gap: 4px; align-items: center;">
                                     <span class="export-option-label">"Resolution:"</span>
                                     <select

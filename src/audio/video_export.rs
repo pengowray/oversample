@@ -163,6 +163,14 @@ async fn export_video_impl(state: &AppState) -> Result<(), JsValue> {
     let min_display_freq = state.view.min_display_freq().get_untracked();
     let max_freq = max_display_freq.unwrap_or(file_max_freq).min(file_max_freq);
     let min_freq = min_display_freq.unwrap_or(0.0);
+    // "Crop picture at 24 kHz": leave out what a 1:1 video's sound does not
+    // reach. Ignored when the view starts above that.
+    let max_freq = match crop_hz(state.playback.mode().get_untracked(), sample_rate) {
+        Some(top) if state.export.video_crop_to_sound().get_untracked() && min_freq < top => {
+            max_freq.min(top)
+        }
+        _ => max_freq,
+    };
     let freq_crop_lo = min_freq / file_max_freq;
     let freq_crop_hi = (max_freq / file_max_freq).min(1.0);
 
@@ -800,10 +808,22 @@ fn render_frame(
     }
 }
 
+/// The top of a video's sound, in Hz, when the file's spectrogram goes above
+/// it: half the video's 48 kHz audio rate, for a file above 48 kHz played
+/// 1:1. `None` in the other modes, which bring the ultrasound down into the
+/// sound, and for files that do not go higher.
+pub fn crop_hz(mode: crate::state::PlaybackMode, sample_rate: u32) -> Option<f64> {
+    (mode == crate::state::PlaybackMode::Normal && sample_rate > VIDEO_AUDIO_RATE)
+        .then_some(VIDEO_AUDIO_RATE as f64 / 2.0)
+}
+
+/// The highest audio rate a video is given.
+const VIDEO_AUDIO_RATE: u32 = 48_000;
+
 /// Audio rate for the video: rates above 48 kHz drop to 48 kHz (high sample
 /// rates often cause playback issues in video players).
 fn normalized_rate(rate: u32) -> u32 {
-    rate.min(48_000)
+    rate.min(VIDEO_AUDIO_RATE)
 }
 
 /// Frames waiting in an encoder's queue (0 if the browser does not say).
@@ -986,6 +1006,15 @@ mod tests {
 
     /// Resampling in pieces gives the same samples as resampling the whole,
     /// at a whole ratio (192 to 48 kHz) and at one that is not (250 to 48).
+    #[test]
+    fn only_a_1_to_1_video_of_a_high_rate_file_can_be_cropped() {
+        use crate::state::PlaybackMode::*;
+        assert_eq!(crop_hz(Normal, 192_000), Some(24_000.0));
+        assert_eq!(crop_hz(Normal, 48_000), None);
+        assert_eq!(crop_hz(Heterodyne, 192_000), None);
+        assert_eq!(crop_hz(TimeExpansion, 192_000), None);
+    }
+
     #[test]
     fn resampling_in_pieces_matches_the_whole() {
         for rate in [192_000u32, 250_000, 44_100, 48_000] {

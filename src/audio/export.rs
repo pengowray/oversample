@@ -9,7 +9,7 @@ use crate::audio::playback::apply_gain;
 use crate::audio::playback::snapshot_params;
 use crate::audio::source::{AudioSource, ChannelView};
 use crate::audio::streaming_playback::{
-    apply_dsp_mode, apply_filters, fixed_gain_db, te_speed_ratio, PlaybackParams,
+    fixed_gain_db, process_chunk, te_speed_ratio, ChunkPlan, PlaybackParams,
 };
 use crate::audio::wav_encoder::encode_wav_at;
 use crate::dsp::agc::{AgcConfig, AgcProcessor};
@@ -20,7 +20,8 @@ use crate::types::FileMetadata;
 
 // Chunk size + filter warmup are shared with streaming playback so the offline
 // and live DSP pipelines stay consistent. See audio::chunk_params.
-use super::chunk_params::{CHUNK_SAMPLES, FILTER_WARMUP};
+#[cfg(test)]
+use super::chunk_params::CHUNK_SAMPLES;
 
 /// The bits per sample and float flag a WAV export of a file with `meta` is
 /// written at, after the encoder's own rounding (an 8- or 12-bit file and a
@@ -159,7 +160,7 @@ impl<'a> RegionProcessor<'a> {
             self.source,
             self.views,
             plan.warmup_start as u64,
-            plan.trailing_end - plan.warmup_start,
+            plan.read_len(),
         )
         .await;
         let Some(raw_views) = read.views else {
@@ -296,20 +297,6 @@ pub(crate) fn export_output_rate(sample_rate: u32, params: &PlaybackParams) -> u
     }
 }
 
-/// One chunk of a region, in source samples: `pos..chunk_end` is the audio
-/// the chunk adds, and `warmup_start..trailing_end` is what is read for it.
-struct ChunkPlan {
-    pos: usize,
-    chunk_end: usize,
-    /// Start of the read: `pos` less the filter warmup.
-    warmup_start: usize,
-    /// In crossfade mode the chunk is kept past its nominal end by the
-    /// overlap, up to here.
-    keep_end: usize,
-    /// End of the read. Anything after `keep_end` is cut off once processed.
-    trailing_end: usize,
-}
-
 /// The chunks that cover `start_time..end_time` of a source with
 /// `total_samples` samples, the same chunks as playback.
 fn chunk_plans(
@@ -324,24 +311,17 @@ fn chunk_plans(
     let mut plans = Vec::new();
     let mut pos = start_sample;
     while pos < end_sample {
-        let chunk_end = (pos + CHUNK_SAMPLES).min(end_sample);
-        let (keep_end, trailing_end) =
-            crate::audio::streaming_playback::chunk_tail(params, chunk_end, end_sample);
-        plans.push(ChunkPlan {
-            pos,
-            chunk_end,
-            warmup_start: pos.saturating_sub(FILTER_WARMUP),
-            keep_end,
-            trailing_end,
-        });
-        pos = chunk_end;
+        let plan = ChunkPlan::at(params, pos, end_sample);
+        pos = plan.chunk_end;
+        plans.push(plan);
     }
     plans
 }
 
 /// Process one chunk's samples (`raw`, read from `plan.warmup_start` to
-/// `plan.trailing_end`) and add them to `out`, with the same crossfade
-/// between chunks as playback when `chunk_overlap` is above 0.
+/// `plan.trailing_end`) and add them to `out`. With crossfaded chunks
+/// (`chunk_overlap` above 0) the chunk's faded start is added to the faded
+/// end of what `out` has, which is what playback's overlapping buffers do.
 fn add_chunk(
     out: &mut Vec<f32>,
     raw: &[f32],
@@ -351,75 +331,26 @@ fn add_chunk(
     chunk_overlap: usize,
     is_first_chunk: bool,
 ) {
-    let warmup_len = plan.pos - plan.warmup_start;
-    let trailing_len = plan.keep_end - plan.chunk_end;
-
-    let filtered = apply_filters(raw, sample_rate, params);
-    let mut processed = apply_dsp_mode(&filtered, sample_rate, params);
-    processed.truncate(
-        processed
-            .len()
-            .saturating_sub(plan.trailing_end - plan.keep_end),
+    let chunk = process_chunk(
+        raw,
+        plan,
+        sample_rate,
+        params,
+        chunk_overlap,
+        is_first_chunk,
     );
-
-    if chunk_overlap > 0 {
-        // Trim warmup but keep trailing overlap
-        let mut chunk_samples = if warmup_len < processed.len() {
-            processed[warmup_len..].to_vec()
-        } else {
-            processed.to_vec()
-        };
-
-        let core_len = plan.chunk_end - plan.pos;
-
-        // Hann fade-in on leading overlap (skip for first chunk)
-        if !is_first_chunk {
-            let fade_in_len = chunk_overlap.min(core_len).min(chunk_samples.len());
-            for (i, sample) in chunk_samples.iter_mut().enumerate().take(fade_in_len) {
-                let t = i as f32 / fade_in_len as f32;
-                let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
-                *sample *= w;
-            }
-        }
-
-        // Hann fade-out on trailing overlap
-        if trailing_len > 0 {
-            let fade_out_start = chunk_samples.len().saturating_sub(trailing_len);
-            let fade_out_len = chunk_samples.len() - fade_out_start;
-            for i in 0..fade_out_len {
-                let t = i as f32 / fade_out_len as f32;
-                let w = 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
-                chunk_samples[fade_out_start + i] *= w;
-            }
-        }
-
-        // Overlap-add into output buffer
-        if is_first_chunk {
-            out.extend_from_slice(&chunk_samples);
-        } else {
-            // The overlap region is the last `chunk_overlap` samples of the
-            // existing output, which fade out. Sum with this chunk's
-            // fade-in region.
-            let overlap = chunk_overlap.min(out.len()).min(chunk_samples.len());
-            let out_start = out.len() - overlap;
-            for i in 0..overlap {
-                out[out_start + i] += chunk_samples[i];
-            }
-            // Append the non-overlapping tail
-            if overlap < chunk_samples.len() {
-                out.extend_from_slice(&chunk_samples[overlap..]);
-            }
-        }
+    // The overlap region is the last `chunk_overlap` samples of the existing
+    // output, which fade out. Sum with this chunk's fade-in region.
+    let overlap = if is_first_chunk {
+        0
     } else {
-        // Standard mode: trim warmup and trailing
-        let trim_end = processed.len().saturating_sub(trailing_len);
-        let trimmed = if warmup_len < trim_end {
-            &processed[warmup_len..trim_end]
-        } else {
-            &processed[..]
-        };
-        out.extend_from_slice(trimmed);
+        chunk_overlap.min(out.len()).min(chunk.len())
+    };
+    let out_start = out.len() - overlap;
+    for i in 0..overlap {
+        out[out_start + i] += chunk[i];
     }
+    out.extend_from_slice(&chunk[overlap..]);
 }
 
 /// Process one channel view of a time range through the DSP pipeline, with
@@ -443,11 +374,7 @@ fn process_region_view(
     let chunk_overlap = crate::audio::streaming_playback::chunk_overlap(params);
     let mut out = Vec::new();
     for (i, plan) in plans.iter().enumerate() {
-        let raw = source.read_region(
-            view,
-            plan.warmup_start as u64,
-            plan.trailing_end - plan.warmup_start,
-        );
+        let raw = source.read_region(view, plan.warmup_start as u64, plan.read_len());
         add_chunk(
             &mut out,
             &raw,

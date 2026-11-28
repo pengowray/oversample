@@ -50,6 +50,8 @@ pub mod keys {
     pub const EXPORT_WAV_DEPTH: &str = "oversample_export_wav_depth";
     /// The Export panel's "Normalize peak to -3 dBFS" checkbox.
     pub const EXPORT_NORMALIZE: &str = "oversample_export_normalize";
+    /// The Export panel's MP4 "Crop picture at 24 kHz" checkbox.
+    pub const EXPORT_VIDEO_CROP: &str = "oversample_export_video_crop";
     /// The Export panel's MP4 "Annotations" choice: "none", "all" or
     /// "tag:<tag>".
     pub const EXPORT_VIDEO_ANNOTATIONS: &str = "oversample_export_video_annotations";

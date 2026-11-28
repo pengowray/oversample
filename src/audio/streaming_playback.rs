@@ -57,6 +57,92 @@ pub(crate) fn chunk_tail(
     (keep_end, read_end)
 }
 
+/// One chunk of a range that is played or exported, in source samples:
+/// `pos..chunk_end` is the audio the chunk adds, and
+/// `warmup_start..trailing_end` is what is read for it.
+pub(crate) struct ChunkPlan {
+    pub pos: usize,
+    pub chunk_end: usize,
+    /// Start of the read: `pos` less the filter warmup.
+    pub warmup_start: usize,
+    /// With crossfaded chunks the chunk is kept past its nominal end by the
+    /// overlap, up to here.
+    pub keep_end: usize,
+    /// End of the read. Anything after `keep_end` is cut off once processed.
+    pub trailing_end: usize,
+}
+
+impl ChunkPlan {
+    /// The chunk that starts at `pos` in a range that ends at `end_sample`.
+    pub(crate) fn at(params: &PlaybackParams, pos: usize, end_sample: usize) -> Self {
+        let chunk_end = (pos + CHUNK_SAMPLES).min(end_sample);
+        let (keep_end, trailing_end) = chunk_tail(params, chunk_end, end_sample);
+        ChunkPlan {
+            pos,
+            chunk_end,
+            warmup_start: pos.saturating_sub(FILTER_WARMUP),
+            keep_end,
+            trailing_end,
+        }
+    }
+
+    /// Samples to read for the chunk, from `warmup_start`.
+    pub(crate) fn read_len(&self) -> usize {
+        self.trailing_end - self.warmup_start
+    }
+}
+
+/// One chunk's samples (`raw`, read from `plan.warmup_start` to
+/// `plan.trailing_end`) through the filters and the playback mode, with the
+/// warmup and the read-ahead cut off. With crossfaded chunks (`overlap` above
+/// 0) the result runs `plan.keep_end - plan.chunk_end` samples past the
+/// chunk's nominal end and has Hann fades: a fade-in over its first `overlap`
+/// samples unless it is the range's first chunk, and a fade-out over the part
+/// past its nominal end. Playback and export both add the faded parts of
+/// neighbouring chunks together.
+pub(crate) fn process_chunk(
+    raw: &[f32],
+    plan: &ChunkPlan,
+    sample_rate: u32,
+    params: &PlaybackParams,
+    overlap: usize,
+    is_first_chunk: bool,
+) -> Vec<f32> {
+    let warmup_len = plan.pos - plan.warmup_start;
+    let trailing_len = plan.keep_end - plan.chunk_end;
+    let discard_len = plan.trailing_end - plan.keep_end;
+
+    let filtered = apply_filters(raw, sample_rate, params);
+    let processed = apply_dsp_mode(&filtered, sample_rate, params);
+    // Trim the warmup and what was read past the part that is kept.
+    let trim_end = processed.len().saturating_sub(discard_len);
+    let mut out = if warmup_len < trim_end {
+        processed[warmup_len..trim_end].to_vec()
+    } else {
+        processed
+    };
+    if overlap == 0 {
+        return out;
+    }
+    if !is_first_chunk {
+        let core_len = plan.chunk_end - plan.pos;
+        let fade_in_len = overlap.min(core_len).min(out.len());
+        for (i, sample) in out.iter_mut().enumerate().take(fade_in_len) {
+            let t = i as f32 / fade_in_len as f32;
+            *sample *= 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
+        }
+    }
+    if trailing_len > 0 {
+        let fade_out_start = out.len().saturating_sub(trailing_len);
+        let fade_out_len = out.len() - fade_out_start;
+        for i in 0..fade_out_len {
+            let t = i as f32 / fade_out_len as f32;
+            out[fade_out_start + i] *= 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
+        }
+    }
+    out
+}
+
 /// How far ahead (in seconds) to stay buffered beyond current playback time.
 const LOOKAHEAD_SECS: f64 = 1.5;
 
@@ -598,7 +684,10 @@ async fn chunk_loop(
         // Measured after scheduling, so it never delays the first sound.
         level.add(&chunk);
     }
-    level.maybe_report(generation, pos >= playback_end_bound(&source, end_sample, play_to_eof));
+    level.maybe_report(
+        generation,
+        pos >= playback_end_bound(&source, end_sample, play_to_eof),
+    );
 
     // ── Streaming phase ──────────────────────────────────────────────────────
     // Continue processing remaining chunks with lookahead throttling.
@@ -730,17 +819,8 @@ async fn process_one_chunk(
     end_sample: usize,
 ) -> (ChunkAudio, usize) {
     let overlap = chunk_overlap(params);
-
-    let warmup_start = pos.saturating_sub(FILTER_WARMUP);
-    let chunk_end = (pos + CHUNK_SAMPLES).min(end_sample);
-    let warmup_len = pos - warmup_start;
-
-    // With crossfaded chunks, the chunk is kept past its nominal end by the
-    // overlap, which is crossfaded with the next chunk's start. Anything
-    // read after that is cut off again once it has been processed.
-    let (keep_end, trailing_end) = chunk_tail(params, chunk_end, end_sample);
-    let trailing_len = keep_end - chunk_end;
-    let discard_len = trailing_end - keep_end;
+    let plan = ChunkPlan::at(params, pos, end_sample);
+    let chunk_end = plan.chunk_end;
 
     // One read per channel view: L and R in stereo, otherwise the chosen view.
     let views: &[ChannelView] = if stereo_out {
@@ -748,59 +828,36 @@ async fn process_one_chunk(
     } else {
         std::slice::from_ref(&channel_view)
     };
-    let read_len = trailing_end - warmup_start;
-    let raw_views =
-        streaming_source::read_views_ready(source.as_ref(), views, warmup_start as u64, read_len)
-            .await
-            .views
-            // If part of the region couldn't be loaded, play what is there (missing
-            // chunks are silent) rather than stalling the chunk schedule.
-            .unwrap_or_else(|| {
-                views
-                    .iter()
-                    .map(|&cv| source.read_region(cv, warmup_start as u64, read_len))
-                    .collect()
-            });
+    let read_len = plan.read_len();
+    let raw_views = streaming_source::read_views_ready(
+        source.as_ref(),
+        views,
+        plan.warmup_start as u64,
+        read_len,
+    )
+    .await
+    .views
+    // If part of the region couldn't be loaded, play what is there (missing
+    // chunks are silent) rather than stalling the chunk schedule.
+    .unwrap_or_else(|| {
+        views
+            .iter()
+            .map(|&cv| source.read_region(cv, plan.warmup_start as u64, read_len))
+            .collect()
+    });
     let mut raw_views = raw_views.into_iter();
 
-    // Hann fades for the crossfade overlap, applied after the warmup is trimmed.
-    let core_len = chunk_end - pos; // nominal chunk length (without overlap)
-    let apply_crossfade_fading = |buf: &mut Vec<f32>| {
-        // Hann fade-in on leading overlap (first chunk's start is clean)
-        if pos > start_sample {
-            let fade_in_len = overlap.min(core_len).min(buf.len());
-            for (i, sample) in buf.iter_mut().enumerate().take(fade_in_len) {
-                let t = i as f32 / fade_in_len as f32;
-                let w = 0.5 * (1.0 - (std::f32::consts::PI * t).cos());
-                *sample *= w;
-            }
-        }
-        // Hann fade-out on trailing overlap
-        if trailing_len > 0 {
-            let fade_out_start = buf.len().saturating_sub(trailing_len);
-            let fade_out_len = buf.len() - fade_out_start;
-            for i in 0..fade_out_len {
-                let t = i as f32 / fade_out_len as f32;
-                let w = 0.5 * (1.0 + (std::f32::consts::PI * t).cos());
-                buf[fade_out_start + i] *= w;
-            }
-        }
-    };
-
     // Read one channel view and run it through filters, DSP, trim and gain.
+    // The first chunk's start is clean; later ones fade in.
     let process_view = |raw: Vec<f32>| -> Vec<f32> {
-        let filtered = apply_filters(&raw, source_rate, params);
-        let processed = apply_dsp_mode(&filtered, source_rate, params);
-        // Trim the warmup and what was read past the part that is kept.
-        let trim_end = processed.len().saturating_sub(discard_len);
-        let mut out = if warmup_len < trim_end {
-            processed[warmup_len..trim_end].to_vec()
-        } else {
-            processed
-        };
-        if overlap > 0 {
-            apply_crossfade_fading(&mut out);
-        }
+        let mut out = process_chunk(
+            &raw,
+            &plan,
+            source_rate,
+            params,
+            overlap,
+            pos <= start_sample,
+        );
         apply_gain(&mut out, global_gain);
         out
     };
@@ -1319,7 +1376,9 @@ mod tests {
             .collect();
         let raised = raise_rate(&tone, 1_500, 6);
         assert_eq!(raised.len(), tone.len() * 6);
-        let peak = raised[raised.len() / 2..].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let peak = raised[raised.len() / 2..]
+            .iter()
+            .fold(0.0f32, |m, v| m.max(v.abs()));
         assert!((0.9..=1.05).contains(&peak), "peak {peak}");
     }
 }

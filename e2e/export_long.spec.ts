@@ -287,6 +287,23 @@ test.describe("export from a long recording", () => {
     expect(frames["none-static"].equals(frames["all-static"])).toBe(false);
     expect(frames["tag-call-static"].equals(frames["all-static"])).toBe(true);
 
+    // A 1:1 video of a 192 kHz file can leave out the picture above its sound.
+    const crop = page.locator(".export-mp4-options .export-radio", { hasText: "Crop picture at 24" });
+    await expect(crop).toHaveText(/Crop picture at 24\skHz/);
+    await crop.locator("input").check();
+    await annotations.selectOption("none");
+    await page.locator(".export-mp4-options select").first().selectOption("static");
+    await page.screenshot({ path: "test-results/export-mp4-crop-option.png" });
+    const cropStarted = page.waitForEvent("download", { timeout: 240_000 });
+    await exportButton(page).click();
+    const cropped = path.join(path.dirname(wavPath), "cropped.mp4");
+    await (await cropStarted).saveAs(cropped);
+    execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-i", cropped, "-frames:v", "1", "test-results/export-mp4-cropped.png"]);
+    expect(fs.readFileSync("test-results/export-mp4-cropped.png").equals(frames["none-static"])).toBe(false);
+    // In HET the ultrasound is in the sound, so there is nothing to crop.
+    await page.locator('button[title^="HET"]').first().click();
+    await expect(crop).toHaveCount(0);
+
   });
 });
 

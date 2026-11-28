@@ -2263,6 +2263,9 @@ pub struct ExportState {
     pub video_view_mode: VideoViewMode,
     /// Annotations drawn in the video.
     pub video_annotations: VideoAnnotations,
+    /// A 1:1 video shows the spectrogram only up to the top of its sound
+    /// (`video_export::crop_hz`).
+    pub video_crop_to_sound: bool,
 }
 
 /// Transform / DSP playback parameters (heterodyne, time-expansion, pitch
@@ -3485,6 +3488,10 @@ impl AppState {
                 video_codec: VideoCodec::default(),
                 video_audio_codec: AudioCodecOption::default(),
                 video_view_mode: VideoViewMode::default(),
+                video_crop_to_sound: crate::settings::get_bool(
+                    crate::settings::keys::EXPORT_VIDEO_CROP,
+                    false,
+                ),
                 video_annotations: crate::settings::get_raw(
                     crate::settings::keys::EXPORT_VIDEO_ANNOTATIONS,
                 )
